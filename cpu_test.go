@@ -214,6 +214,101 @@ func TestDmesgQuestionsFiresOnMCE(t *testing.T) {
 	}
 }
 
+func TestExtractVmstatColumnSteal(t *testing.T) {
+	si := SystemInfo{NumCPU: 4}
+	caps := []CapturedCommand{{Cmd: "vmstat 1 3", Output: sampleVmstat}}
+	v, ok := extractVmstatColumn("st")(si, caps)
+	if !ok {
+		t.Fatal("expected vmstat st extraction to succeed")
+	}
+	if v.Unit != "%" {
+		t.Errorf("expected %% unit, got %q", v.Unit)
+	}
+	want := []float64{0, 0, 0}
+	for i, w := range want {
+		if v.Samples[i] != w {
+			t.Errorf("sample[%d]: expected %v, got %v", i, w, v.Samples[i])
+		}
+	}
+}
+
+func TestVmstatStealRecallEmpty(t *testing.T) {
+	if qs := vmstatStealRecall(Value{}); qs != nil {
+		t.Errorf("expected nil for empty samples, got %d questions", len(qs))
+	}
+}
+
+func TestStealVsIowaitNoisyNeighbour(t *testing.T) {
+	si := SystemInfo{}
+	vs := map[string]Value{
+		"vmstat_wa": {Samples: []float64{1, 2, 1}},
+		"vmstat_st": {Samples: []float64{8, 10, 9}},
+	}
+	q, ok := stealVsIowaitDistinction.Generate(si, vs)
+	if !ok {
+		t.Fatal("expected synthesis to fire")
+	}
+	if !strings.Contains(q.Correct, "hypervisor contention") || !strings.Contains(q.Correct, "noisy neighbour") {
+		t.Errorf("wrong branch: %q", q.Correct)
+	}
+}
+
+func TestStealVsIowaitGenuineIO(t *testing.T) {
+	si := SystemInfo{}
+	vs := map[string]Value{
+		"vmstat_wa": {Samples: []float64{12, 18, 15}},
+		"vmstat_st": {Samples: []float64{0, 0, 0}},
+	}
+	q, ok := stealVsIowaitDistinction.Generate(si, vs)
+	if !ok {
+		t.Fatal("expected synthesis to fire")
+	}
+	if !strings.Contains(q.Correct, "genuine I/O wait") {
+		t.Errorf("wrong branch: %q", q.Correct)
+	}
+}
+
+func TestStealVsIowaitBothElevated(t *testing.T) {
+	si := SystemInfo{}
+	vs := map[string]Value{
+		"vmstat_wa": {Samples: []float64{15, 18, 12}},
+		"vmstat_st": {Samples: []float64{6, 8, 7}},
+	}
+	q, ok := stealVsIowaitDistinction.Generate(si, vs)
+	if !ok {
+		t.Fatal("expected synthesis to fire")
+	}
+	if !strings.Contains(q.Correct, "Both are elevated") {
+		t.Errorf("wrong branch: %q", q.Correct)
+	}
+}
+
+func TestStealVsIowaitBothLow(t *testing.T) {
+	si := SystemInfo{}
+	vs := map[string]Value{
+		"vmstat_wa": {Samples: []float64{1, 2, 0}},
+		"vmstat_st": {Samples: []float64{0, 0, 0}},
+	}
+	q, ok := stealVsIowaitDistinction.Generate(si, vs)
+	if !ok {
+		t.Fatal("expected synthesis to fire")
+	}
+	if !strings.Contains(q.Correct, "Both are low") {
+		t.Errorf("wrong branch: %q", q.Correct)
+	}
+}
+
+func TestStealVsIowaitAmbiguousReturnsFalse(t *testing.T) {
+	si := SystemInfo{}
+	vs := map[string]Value{
+		"vmstat_wa": {Samples: []float64{6, 7, 5}},
+		"vmstat_st": {Samples: []float64{2, 3, 2}},
+	}
+	if _, ok := stealVsIowaitDistinction.Generate(si, vs); ok {
+		t.Error("expected synthesis to skip the ambiguous middle case")
+	}
+}
+
 func TestLoadavgIdleSynthesisLightLoad(t *testing.T) {
 	si := SystemInfo{NumCPU: 8}
 	vs := map[string]Value{

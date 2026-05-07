@@ -56,7 +56,9 @@ func cpuSteps(si SystemInfo) []GuideStep {
 		Teaching: fmt.Sprintf(
 			"If `r` consistently exceeds %d (= NumCPU on this system), the run-queue is\n"+
 				"saturated. High `wa` means CPUs are idle waiting on I/O — the bottleneck is\n"+
-				"storage, not CPU.",
+				"storage, not CPU. Non-zero `st` means the hypervisor is giving cycles to\n"+
+				"another tenant; on cloud VMs, sustained `st` is contention you can't fix\n"+
+				"from inside the guest.",
 			si.NumCPU),
 	})
 
@@ -225,6 +227,13 @@ var cpuObservations = []Observation{
 		Extract: extractVmstatColumn("wa"),
 	},
 	{
+		Name:    "vmstat_st",
+		Title:   "vmstat st (hypervisor steal)",
+		Section: "Saturation",
+		Extract: extractVmstatColumn("st"),
+		Recall:  vmstatStealRecall,
+	},
+	{
 		Name:    "dmesg_cpu_keywords",
 		Title:   "dmesg CPU/thermal/MCE",
 		Section: "Errors",
@@ -364,7 +373,7 @@ func extractVmstatColumn(col string) func(SystemInfo, []CapturedCommand) (Value,
 		if col == "r" {
 			v.Note = fmt.Sprintf("NumCPU=%d", si.NumCPU)
 		}
-		if col == "wa" {
+		if col == "wa" || col == "st" || col == "us" || col == "sy" || col == "id" {
 			v.Unit = "%"
 		}
 		return v, true
@@ -462,6 +471,27 @@ func vmstatRRecall(v Value) []Question {
 	}}
 }
 
+func vmstatStealRecall(v Value) []Question {
+	if len(v.Samples) == 0 {
+		return nil
+	}
+	max := v.Samples[0]
+	for _, x := range v.Samples {
+		if x > max {
+			max = x
+		}
+	}
+	return []Question{{
+		Stem:    "What was the highest `st` (steal-time) sample you observed in vmstat?",
+		Correct: fmt.Sprintf("%.0f%%", max),
+		Distractors: []string{
+			fmt.Sprintf("%.0f%%", clamp(max+15, 0, 100)),
+			fmt.Sprintf("%.0f%%", clamp(max-5, 0, 100)),
+			"100%",
+		},
+	}}
+}
+
 func clamp(x, lo, hi float64) float64 {
 	if x < lo {
 		return lo
@@ -476,6 +506,7 @@ func clamp(x, lo, hi float64) float64 {
 
 var cpuSynthesisRules = []SynthesisRule{
 	loadavgIdleConsistency,
+	stealVsIowaitDistinction,
 }
 
 var loadavgIdleConsistency = SynthesisRule{
@@ -522,6 +553,68 @@ var loadavgIdleConsistency = SynthesisRule{
 					"Mean %%idle observed was %.1f%%.\n"+
 					"Which best describes the relationship between these two numbers?",
 				loadavg, si.NumCPU, ratio, idle),
+			Correct:     correct,
+			Distractors: distractors,
+		}, true
+	},
+}
+
+// stealVsIowaitDistinction teaches the cloud-VM diagnostic point: high `wa`
+// is often misread as "disk problem" but on a virtualised host it can also
+// reflect time stolen by the hypervisor. Comparing `st` and `wa` directly
+// disambiguates the two.
+var stealVsIowaitDistinction = SynthesisRule{
+	Requires: []string{"vmstat_wa", "vmstat_st"},
+	Generate: func(si SystemInfo, vs map[string]Value) (Question, bool) {
+		waMax := 0.0
+		for _, x := range vs["vmstat_wa"].Samples {
+			if x > waMax {
+				waMax = x
+			}
+		}
+		stMax := 0.0
+		for _, x := range vs["vmstat_st"].Samples {
+			if x > stMax {
+				stMax = x
+			}
+		}
+
+		var correct string
+		switch {
+		case stMax >= 5 && waMax < 5:
+			correct = "Steal exceeds I/O wait — the bottleneck is hypervisor contention (a noisy neighbour on the same host), not local disk. This isn't fixable from inside the VM."
+		case stMax < 1 && waMax >= 10:
+			correct = "Steal is negligible; the cpu-stall signal is genuine I/O wait. Investigate disk performance."
+		case stMax >= 5 && waMax >= 10:
+			correct = "Both are elevated — hypervisor contention and I/O wait coexist. The disk may itself be a contended resource at the hypervisor layer."
+		case stMax < 1 && waMax < 5:
+			correct = "Both are low — neither hypervisor contention nor I/O wait is significant. Look elsewhere for the bottleneck."
+		default:
+			return Question{}, false
+		}
+
+		pool := []string{
+			"Steal exceeds I/O wait — the bottleneck is hypervisor contention (a noisy neighbour on the same host), not local disk. This isn't fixable from inside the VM.",
+			"Steal is negligible; the cpu-stall signal is genuine I/O wait. Investigate disk performance.",
+			"Both are elevated — hypervisor contention and I/O wait coexist. The disk may itself be a contended resource at the hypervisor layer.",
+			"Both are low — neither hypervisor contention nor I/O wait is significant. Look elsewhere for the bottleneck.",
+			"Cannot be compared — `wa` and `st` measure entirely unrelated subsystems.",
+		}
+		var distractors []string
+		for _, p := range pool {
+			if p != correct {
+				distractors = append(distractors, p)
+			}
+		}
+		if len(distractors) > 3 {
+			distractors = distractors[:3]
+		}
+
+		return Question{
+			Stem: fmt.Sprintf(
+				"Highest `wa` (cpu I/O wait) sample was %.1f%%; highest `st` (hypervisor steal) sample was %.1f%%.\n"+
+					"Which best describes what these two numbers tell you?",
+				waMax, stMax),
 			Correct:     correct,
 			Distractors: distractors,
 		}, true

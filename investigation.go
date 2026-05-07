@@ -53,6 +53,7 @@ type CommandRef struct {
 var investigations = map[string]*Investigation{
 	"cpu":    cpuInvestigation,
 	"memory": memoryInvestigation,
+	"disk":   diskInvestigation,
 }
 
 func resourceNames() []string {

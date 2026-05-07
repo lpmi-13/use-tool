@@ -48,10 +48,20 @@ removed deliberately so the tool stays system-agnostic.
   detects what's installed and adapts (e.g. the guided walkthrough skips the
   per-CPU step if `mpstat` is missing).
 
-## Build
+## Install
 
 ```sh
-go build -o cpu-use ./...
+go install github.com/lpmi-13/use-tool@latest
+```
+
+This places a `use-tool` binary in `$(go env GOBIN)` (or `$(go env GOPATH)/bin`).
+Pre-built binaries for tagged releases are also published on the
+[Releases page](https://github.com/lpmi-13/use-tool/releases).
+
+## Build from source
+
+```sh
+go build -o use-tool ./...
 ```
 
 Produces a single static binary in the project root.
@@ -60,16 +70,16 @@ Produces a single static binary in the project root.
 
 ```sh
 # Step-by-step USE walkthrough
-./cpu-use guide cpu
+use-tool guide cpu
 
 # Free-form practice + assessment
-./cpu-use practice cpu
+use-tool practice cpu
 
 # Command reference (no REPL)
-./cpu-use commands cpu
+use-tool commands cpu
 
 # List available resources
-./cpu-use list
+use-tool list
 ```
 
 Inside `practice` mode you can also run `commands` and `report` as REPL

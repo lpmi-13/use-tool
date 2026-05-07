@@ -8,7 +8,7 @@ import (
 
 func cmdPractice(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: cpu-use practice <resource>")
+		fmt.Fprintln(os.Stderr, "usage: use-tool practice <resource>")
 		os.Exit(2)
 	}
 	inv, err := getInvestigation(args[0])

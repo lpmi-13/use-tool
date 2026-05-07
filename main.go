@@ -36,7 +36,7 @@ func main() {
 	case "list":
 		cmdList()
 	case "version", "--version", "-v":
-		fmt.Printf("use-method %s\n", version)
+		fmt.Printf("use-tool %s\n", version)
 	case "help", "--help", "-h":
 		usage(0)
 	default:
@@ -49,15 +49,15 @@ func usage(code int) {
 	if code != 0 {
 		out = os.Stderr
 	}
-	fmt.Fprintf(out, `use-method %s — practice the USE method on a live Linux system
+	fmt.Fprintf(out, `use-tool %s — practice the USE method on a live Linux system
 
 Usage:
-  cpu-use guide <resource>     Walk through the USE method as a guided checklist
-  cpu-use practice <resource>  Free-form investigation, then comprehension assessment
-  cpu-use commands <resource>  Print a reference of relevant commands and what they show
-  cpu-use list                 Show available resources
-  cpu-use version              Print version
-  cpu-use help                 This message
+  use-tool guide <resource>     Walk through the USE method as a guided checklist
+  use-tool practice <resource>  Free-form investigation, then comprehension assessment
+  use-tool commands <resource>  Print a reference of relevant commands and what they show
+  use-tool list                 Show available resources
+  use-tool version              Print version
+  use-tool help                 This message
 
 Available resources: %s
 `, version, strings.Join(resourceNames(), ", "))
@@ -72,7 +72,7 @@ func cmdList() {
 
 func cmdCommands(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: cpu-use commands <resource>")
+		fmt.Fprintln(os.Stderr, "usage: use-tool commands <resource>")
 		os.Exit(2)
 	}
 	inv, err := getInvestigation(args[0])

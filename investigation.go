@@ -102,13 +102,9 @@ func askQuestion(q Question) bool {
 }
 
 func extractQuestions(inv *Investigation, si SystemInfo, c CapturedCommand) []Question {
-	fields := strings.Fields(c.Cmd)
-	if len(fields) == 0 {
+	base := baseCmd(c.Cmd)
+	if base == "" {
 		return nil
-	}
-	base := fields[0]
-	if base == "sudo" && len(fields) > 1 {
-		base = fields[1]
 	}
 	var qs []Question
 	for _, e := range inv.Extractors {
@@ -117,6 +113,22 @@ func extractQuestions(inv *Investigation, si SystemInfo, c CapturedCommand) []Qu
 		}
 	}
 	return qs
+}
+
+// baseCmd returns the first whitespace-separated token of a command line,
+// skipping a leading `sudo`. Returns "" for empty input. Used to match
+// captured commands against an extractor without false positives like
+// `vim dmesg.txt` matching dmesg.
+func baseCmd(cmd string) string {
+	fields := strings.Fields(cmd)
+	if len(fields) == 0 {
+		return ""
+	}
+	base := fields[0]
+	if base == "sudo" && len(fields) > 1 {
+		base = fields[1]
+	}
+	return base
 }
 
 func recallQuestions(inv *Investigation, snap Snapshot) []Question {

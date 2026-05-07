@@ -433,7 +433,8 @@ func extractDmesgOOM(si SystemInfo, caps []CapturedCommand) (Value, bool) {
 	matched := 0
 	totalLines := 0
 	for _, c := range caps {
-		if !strings.Contains(c.Cmd, "dmesg") && !strings.Contains(c.Cmd, "journalctl") {
+		b := baseCmd(c.Cmd)
+		if b != "dmesg" && b != "journalctl" {
 			continue
 		}
 		seen = true

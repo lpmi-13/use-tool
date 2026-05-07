@@ -232,6 +232,21 @@ func TestExtractDmesgOOMRequiresDmesgCommand(t *testing.T) {
 	}
 }
 
+func TestExtractDmesgOOMIgnoresFalsePositiveCmds(t *testing.T) {
+	si := SystemInfo{}
+	cases := []string{
+		"vim dmesg.txt",
+		"cat /var/log/old-dmesg",
+		"grep dmesg /etc/issue",
+	}
+	for _, cmd := range cases {
+		caps := []CapturedCommand{{Cmd: cmd, Output: sampleDmesgOOM}}
+		if _, ok := extractDmesgOOM(si, caps); ok {
+			t.Errorf("expected %q not to match dmesg", cmd)
+		}
+	}
+}
+
 func TestOOMQuestionsFiresOnOOMOutput(t *testing.T) {
 	si := SystemInfo{}
 	c := CapturedCommand{Cmd: "dmesg", Output: sampleDmesgOOM}

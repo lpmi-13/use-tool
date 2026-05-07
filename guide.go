@@ -73,7 +73,7 @@ func guideStepCommand(s *Session, step GuideStep) *CapturedCommand {
 			os.Exit(0)
 		}
 		c := runCommand(line)
-		s.Captured = append(s.Captured, c)
+		s.appendCaptured(c)
 		if step.AcceptAny {
 			return &c
 		}

@@ -53,7 +53,7 @@ func practiceLoop(s *Session) {
 				return
 			}
 		default:
-			s.Captured = append(s.Captured, runCommand(line))
+			s.appendCaptured(runCommand(line))
 		}
 	}
 }

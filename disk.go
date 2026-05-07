@@ -314,15 +314,15 @@ func parseIostat(output string) []iostatRow {
 		// Older sysstat writes "Device:" with a trailing colon; modern is "Device".
 		if fields[0] == "Device" || fields[0] == "Device:" {
 			current = colMap{
-				device:  0,
-				rps:     indexOf(fields, "r/s"),
-				wps:     indexOf(fields, "w/s"),
-				util:    indexOf(fields, "%util"),
-				await:   indexOf(fields, "await"),
-				rAwait:  indexOf(fields, "r_await"),
-				wAwait:  indexOf(fields, "w_await"),
-				aquSz:   indexOf(fields, "aqu-sz"),
-				count:   len(fields),
+				device: 0,
+				rps:    indexOf(fields, "r/s"),
+				wps:    indexOf(fields, "w/s"),
+				util:   indexOf(fields, "%util"),
+				await:  indexOf(fields, "await"),
+				rAwait: indexOf(fields, "r_await"),
+				wAwait: indexOf(fields, "w_await"),
+				aquSz:  indexOf(fields, "aqu-sz"),
+				count:  len(fields),
 			}
 			if current.aquSz == -1 {
 				current.aquSz = indexOf(fields, "avgqu-sz") // older sysstat

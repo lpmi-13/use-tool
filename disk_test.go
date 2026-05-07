@@ -286,9 +286,9 @@ Linux 6.1.0  10/05/2024
 func TestUtilAwaitConsistencySSDPattern(t *testing.T) {
 	// SSD-like: %util high, queue low, await low.
 	vs := map[string]Value{
-		"iostat_max_util_pct":  {Number: 98},
-		"iostat_max_aqu_sz":    {Number: 0.5},
-		"iostat_max_await_ms":  {Number: 1.2},
+		"iostat_max_util_pct": {Number: 98},
+		"iostat_max_aqu_sz":   {Number: 0.5},
+		"iostat_max_await_ms": {Number: 1.2},
 	}
 	q, ok := utilAwaitConsistency.Generate(SystemInfo{}, vs)
 	if !ok {
@@ -301,9 +301,9 @@ func TestUtilAwaitConsistencySSDPattern(t *testing.T) {
 
 func TestUtilAwaitConsistencyTrueSaturation(t *testing.T) {
 	vs := map[string]Value{
-		"iostat_max_util_pct":  {Number: 99},
-		"iostat_max_aqu_sz":    {Number: 12},
-		"iostat_max_await_ms":  {Number: 65},
+		"iostat_max_util_pct": {Number: 99},
+		"iostat_max_aqu_sz":   {Number: 12},
+		"iostat_max_await_ms": {Number: 65},
 	}
 	q, ok := utilAwaitConsistency.Generate(SystemInfo{}, vs)
 	if !ok {
@@ -316,9 +316,9 @@ func TestUtilAwaitConsistencyTrueSaturation(t *testing.T) {
 
 func TestUtilAwaitConsistencyHeadroom(t *testing.T) {
 	vs := map[string]Value{
-		"iostat_max_util_pct":  {Number: 20},
-		"iostat_max_aqu_sz":    {Number: 0.1},
-		"iostat_max_await_ms":  {Number: 0.8},
+		"iostat_max_util_pct": {Number: 20},
+		"iostat_max_aqu_sz":   {Number: 0.1},
+		"iostat_max_await_ms": {Number: 0.8},
 	}
 	q, ok := utilAwaitConsistency.Generate(SystemInfo{}, vs)
 	if !ok {
@@ -332,9 +332,9 @@ func TestUtilAwaitConsistencyHeadroom(t *testing.T) {
 func TestUtilAwaitConsistencyAmbiguousReturnsFalse(t *testing.T) {
 	// In between: not clearly saturated, not clearly idle, not clearly SSD-pattern.
 	vs := map[string]Value{
-		"iostat_max_util_pct":  {Number: 70},
-		"iostat_max_aqu_sz":    {Number: 2.5},
-		"iostat_max_await_ms":  {Number: 8},
+		"iostat_max_util_pct": {Number: 70},
+		"iostat_max_aqu_sz":   {Number: 2.5},
+		"iostat_max_await_ms": {Number: 8},
 	}
 	if _, ok := utilAwaitConsistency.Generate(SystemInfo{}, vs); ok {
 		t.Error("expected synthesis to skip the ambiguous middle case")

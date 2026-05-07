@@ -5,17 +5,20 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"math/rand"
 	"os"
 	"os/exec"
 	"os/signal"
 	"runtime"
 	"strings"
 	"syscall"
-	"time"
 )
 
 const version = "0.2.0"
+
+const (
+	maxCaptureBytes  = 1 << 20 // per-command output cap (1 MB)
+	maxCapturedItems = 50      // per-session command-history cap
+)
 
 var stdin = bufio.NewReader(os.Stdin)
 
@@ -23,7 +26,6 @@ func main() {
 	if len(os.Args) < 2 {
 		usage(2)
 	}
-	rand.Seed(time.Now().UnixNano())
 	swallowSigint()
 
 	switch os.Args[1] {
@@ -124,12 +126,52 @@ func fileExists(path string) bool {
 
 func runCommand(cmdStr string) CapturedCommand {
 	cmd := exec.Command("sh", "-c", cmdStr)
-	var buf bytes.Buffer
-	cmd.Stdout = io.MultiWriter(os.Stdout, &buf)
-	cmd.Stderr = io.MultiWriter(os.Stderr, &buf)
+	buf := &cappedBuffer{limit: maxCaptureBytes}
+	cmd.Stdout = io.MultiWriter(os.Stdout, buf)
+	cmd.Stderr = io.MultiWriter(os.Stderr, buf)
 	cmd.Stdin = os.Stdin
 	_ = cmd.Run()
 	return CapturedCommand{Cmd: cmdStr, Output: buf.String()}
+}
+
+// cappedBuffer accepts unlimited writes (so the user still sees full output on
+// stdout via MultiWriter) but only retains the first `limit` bytes for capture.
+type cappedBuffer struct {
+	buf       bytes.Buffer
+	limit     int
+	truncated bool
+}
+
+func (c *cappedBuffer) Write(p []byte) (int, error) {
+	remaining := c.limit - c.buf.Len()
+	if remaining <= 0 {
+		c.truncated = true
+		return len(p), nil
+	}
+	if len(p) > remaining {
+		c.buf.Write(p[:remaining])
+		c.truncated = true
+		return len(p), nil
+	}
+	return c.buf.Write(p)
+}
+
+func (c *cappedBuffer) String() string {
+	if c.truncated {
+		return c.buf.String() + "\n[output truncated at 1 MB]\n"
+	}
+	return c.buf.String()
+}
+
+// appendCaptured records a command in the session, dropping the oldest entry
+// (with a one-line note) once the history cap is reached.
+func (s *Session) appendCaptured(c CapturedCommand) {
+	if len(s.Captured) >= maxCapturedItems {
+		dropped := s.Captured[0].Cmd
+		s.Captured = append(s.Captured[:0], s.Captured[1:]...)
+		fmt.Fprintf(os.Stderr, "(history cap reached; dropped oldest: %q)\n", dropped)
+	}
+	s.Captured = append(s.Captured, c)
 }
 
 func readLine() (string, bool) {

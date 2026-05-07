@@ -7,7 +7,7 @@ import (
 
 func cmdGuide(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: cpu-use guide <resource>")
+		fmt.Fprintln(os.Stderr, "usage: use-tool guide <resource>")
 		os.Exit(2)
 	}
 	inv, err := getInvestigation(args[0])

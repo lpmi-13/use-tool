@@ -144,6 +144,58 @@ func TestExtractDmesgCpuKeywordsRequiresDmesgCommand(t *testing.T) {
 	}
 }
 
+func TestExtractDmesgCpuKeywordsIgnoresFalsePositiveCmds(t *testing.T) {
+	si := SystemInfo{}
+	cases := []string{
+		"vim dmesg.txt",
+		"cat /etc/dmesg.conf",
+		"grep dmesg notes.md",
+		"echo journalctl",
+	}
+	for _, cmd := range cases {
+		caps := []CapturedCommand{{Cmd: cmd, Output: sampleDmesgWithMCE}}
+		if _, ok := extractDmesgCpuKeywords(si, caps); ok {
+			t.Errorf("expected %q not to match dmesg/journalctl", cmd)
+		}
+	}
+}
+
+func TestExtractDmesgCpuKeywordsAcceptsSudoAndPipelines(t *testing.T) {
+	si := SystemInfo{}
+	cases := []string{
+		"dmesg",
+		"dmesg -T | tail -50",
+		"sudo dmesg --level=err,warn",
+		"journalctl -k -p err",
+	}
+	for _, cmd := range cases {
+		caps := []CapturedCommand{{Cmd: cmd, Output: sampleDmesgWithMCE}}
+		if _, ok := extractDmesgCpuKeywords(si, caps); !ok {
+			t.Errorf("expected %q to match dmesg/journalctl", cmd)
+		}
+	}
+}
+
+func TestBaseCmd(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"", ""},
+		{"   ", ""},
+		{"dmesg", "dmesg"},
+		{"dmesg -T | tail", "dmesg"},
+		{"sudo dmesg", "dmesg"},
+		{"sudo", "sudo"}, // bare sudo with no following command
+		{"vim dmesg.txt", "vim"},
+		{"cat /etc/dmesg.conf", "cat"},
+	}
+	for _, tc := range cases {
+		if got := baseCmd(tc.in); got != tc.want {
+			t.Errorf("baseCmd(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestDmesgQuestionsFiresOnMCE(t *testing.T) {
 	si := SystemInfo{}
 	c := CapturedCommand{Cmd: "dmesg", Output: sampleDmesgWithMCE}

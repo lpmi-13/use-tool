@@ -336,3 +336,83 @@ func TestMemoryInvestigationRegistered(t *testing.T) {
 		t.Error("memory investigation is missing observations/commands/extractors")
 	}
 }
+
+// ----- recall edge cases -----
+
+func TestMemUsedPctRecallAtZeroAndFull(t *testing.T) {
+	for _, pct := range []float64{0, 100} {
+		v := Value{Number: pct}
+		qs := memUsedPctRecall(v)
+		if len(qs) != 1 {
+			t.Fatalf("expected 1 question at pct=%v, got %d", pct, len(qs))
+		}
+		q := qs[0]
+		seen := map[string]bool{q.Correct: true}
+		for _, d := range q.Distractors {
+			if seen[d] {
+				t.Errorf("duplicate option at pct=%v: %v", pct, q.Distractors)
+			}
+			seen[d] = true
+		}
+	}
+}
+
+func TestSwapSamplesRecallAtZero(t *testing.T) {
+	// On a host with no swap activity, samples are all 0 — the original
+	// implementation included literal "0" as a distractor, colliding with
+	// correct. Helper must dedupe.
+	v := Value{Samples: []float64{0, 0, 0}}
+	qs := swapSamplesRecall("si")(v)
+	if len(qs) != 1 {
+		t.Fatalf("expected 1 question, got %d", len(qs))
+	}
+	q := qs[0]
+	if q.Correct != "0" {
+		t.Errorf("correct: got %q, want 0", q.Correct)
+	}
+	for _, d := range q.Distractors {
+		if d == q.Correct {
+			t.Errorf("distractor matches correct: %v", q.Distractors)
+		}
+	}
+}
+
+func TestVmstatMemoryQuestionsCoversBothDirections(t *testing.T) {
+	c := CapturedCommand{Cmd: "vmstat 1 2", Output: sampleVmstatPaging}
+	seen := map[string]bool{}
+	for i := 0; i < 100; i++ {
+		qs := vmstatMemoryQuestions(SystemInfo{}, c)
+		if len(qs) < 1 {
+			t.Fatalf("iteration %d: expected at least 1 question", i)
+		}
+		seen[qs[0].Correct] = true
+	}
+	for _, want := range []string{
+		"Pages swapped in from swap to memory per second",
+		"Pages swapped out from memory to swap per second",
+	} {
+		if !seen[want] {
+			t.Errorf("direction %q never appeared across 100 iterations; saw %v", want, seen)
+		}
+	}
+}
+
+func TestPSIMemoryQuestionsCoversBothMetrics(t *testing.T) {
+	c := CapturedCommand{Cmd: "cat /proc/pressure/memory", Output: samplePSIMemory}
+	seen := map[string]bool{}
+	for i := 0; i < 100; i++ {
+		qs := psiMemoryQuestions(SystemInfo{}, c)
+		if len(qs) < 1 {
+			t.Fatalf("iteration %d: expected at least 1 question", i)
+		}
+		seen[qs[0].Correct] = true
+	}
+	for _, want := range []string{
+		"The percentage of time during which at least one task was stalled on memory",
+		"The percentage of time during which all non-idle tasks were simultaneously stalled on memory",
+	} {
+		if !seen[want] {
+			t.Errorf("metric %q never appeared across 100 iterations; saw %v", want, seen)
+		}
+	}
+}

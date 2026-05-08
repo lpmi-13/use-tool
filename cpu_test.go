@@ -36,8 +36,14 @@ func TestUptimeQuestionsExtractsLoadavg(t *testing.T) {
 	if !strings.Contains(qs[0].Stem, "1.42") || !strings.Contains(qs[0].Stem, "0.93") {
 		t.Errorf("stem missing loadavg numbers: %q", qs[0].Stem)
 	}
-	if qs[0].Correct != "The 5-minute load average" {
-		t.Errorf("unexpected correct answer: %q", qs[0].Correct)
+	// Position is randomized, so the correct answer can be any of the three.
+	valid := map[string]bool{
+		"The 1-minute load average":  true,
+		"The 5-minute load average":  true,
+		"The 15-minute load average": true,
+	}
+	if !valid[qs[0].Correct] {
+		t.Errorf("correct answer not in expected set: %q", qs[0].Correct)
 	}
 }
 
@@ -362,5 +368,139 @@ func TestLoadavgIdleSynthesisAmbiguousReturnsFalse(t *testing.T) {
 	}
 	if _, ok := loadavgIdleConsistency.Generate(si, vs); ok {
 		t.Error("expected synthesis to skip the ambiguous middle case")
+	}
+}
+
+// ----- recall edge cases -----
+
+func TestLoadavgRecallAtZero(t *testing.T) {
+	// Just-booted system: load average is 0.00. Recall question must still
+	// produce three distinct distractors (none of which equal "0.00").
+	v := Value{Number: 0}
+	qs := loadavgRecall("1-minute")(v)
+	if len(qs) != 1 {
+		t.Fatalf("expected 1 question even at zero, got %d", len(qs))
+	}
+	q := qs[0]
+	if q.Correct != "0.00" {
+		t.Errorf("correct: got %q, want 0.00", q.Correct)
+	}
+	if len(q.Distractors) != 3 {
+		t.Fatalf("expected 3 distractors, got %d (%v)", len(q.Distractors), q.Distractors)
+	}
+	seen := map[string]bool{q.Correct: true}
+	for _, d := range q.Distractors {
+		if seen[d] {
+			t.Errorf("duplicate option in question: distractor %q matches correct or another distractor", d)
+		}
+		seen[d] = true
+	}
+}
+
+func TestUptimeQuestionsAnswerableWhenAllLoadavgsEqual(t *testing.T) {
+	// All three loadavgs are 0.00 — historically this made the question
+	// "what does the value 0.00 refer to?" ambiguous. Position-based phrasing
+	// keeps it answerable regardless of which position is randomly picked.
+	si := SystemInfo{NumCPU: 4}
+	c := CapturedCommand{
+		Cmd:    "uptime",
+		Output: " 14:32:01 up 1 min,  1 user,  load average: 0.00, 0.00, 0.00",
+	}
+	qs := uptimeQuestions(si, c)
+	if len(qs) != 1 {
+		t.Fatalf("expected 1 question, got %d", len(qs))
+	}
+	usesPosition := strings.Contains(qs[0].Stem, "first") ||
+		strings.Contains(qs[0].Stem, "middle") ||
+		strings.Contains(qs[0].Stem, "last")
+	if !usesPosition {
+		t.Errorf("expected stem to use position-based language (first/middle/last); got %q", qs[0].Stem)
+	}
+	valid := map[string]bool{
+		"The 1-minute load average":  true,
+		"The 5-minute load average":  true,
+		"The 15-minute load average": true,
+	}
+	if !valid[qs[0].Correct] {
+		t.Errorf("correct answer not in expected set: %q", qs[0].Correct)
+	}
+}
+
+func TestVmstatStealRecallAtMaxPercent(t *testing.T) {
+	// st = 100% (degenerate hypervisor scenario). clamp(100+15, 0, 100) == 100,
+	// which would have collided with correct. Helper must dedupe.
+	v := Value{Samples: []float64{100, 100}}
+	qs := vmstatStealRecall(v)
+	if len(qs) != 1 {
+		t.Fatalf("expected 1 question, got %d", len(qs))
+	}
+	q := qs[0]
+	seen := map[string]bool{q.Correct: true}
+	for _, d := range q.Distractors {
+		if seen[d] {
+			t.Errorf("duplicate option in question at 100%%: %q in %v", d, q.Distractors)
+		}
+		seen[d] = true
+	}
+}
+
+func TestVmstatRRecallAtZero(t *testing.T) {
+	v := Value{Samples: []float64{0, 0, 0}}
+	qs := vmstatRRecall(v)
+	if len(qs) != 1 {
+		t.Fatalf("expected 1 question, got %d", len(qs))
+	}
+	q := qs[0]
+	if q.Correct != "0" {
+		t.Errorf("correct: got %q, want 0", q.Correct)
+	}
+	for _, d := range q.Distractors {
+		if d == q.Correct {
+			t.Errorf("distractor matches correct (0): %v", q.Distractors)
+		}
+	}
+}
+
+func TestMpstatIdleRangeRecallAtMax(t *testing.T) {
+	// max = 100%; clamp(100-15, 0, 100) = 85, clamp(100-50, 0, 100) = 50, etc.
+	// All distinct; correct is "100.0%" and constants pool guarantees fallback.
+	v := Value{Samples: []float64{100.0, 100.0, 100.0}}
+	qs := mpstatIdleRangeRecall(v)
+	if len(qs) != 1 {
+		t.Fatalf("expected 1 question, got %d", len(qs))
+	}
+	q := qs[0]
+	seen := map[string]bool{q.Correct: true}
+	for _, d := range q.Distractors {
+		if seen[d] {
+			t.Errorf("duplicate at 100%%: %v", q.Distractors)
+		}
+		seen[d] = true
+	}
+}
+
+func TestUptimeQuestionsCoversAllPositions(t *testing.T) {
+	// Run many iterations and confirm that the random pick covers all three
+	// positions over time. With 3 outcomes and 100 trials, the probability
+	// of missing one is (2/3)^100 ≈ 2.5e-18 — effectively zero false negative
+	// for catching a "always picks the same" regression.
+	si := SystemInfo{NumCPU: 4}
+	c := CapturedCommand{Cmd: "uptime", Output: sampleUptime}
+	seen := map[string]bool{}
+	for i := 0; i < 100; i++ {
+		qs := uptimeQuestions(si, c)
+		if len(qs) != 1 {
+			t.Fatalf("iteration %d: expected 1 question, got %d", i, len(qs))
+		}
+		seen[qs[0].Correct] = true
+	}
+	for _, want := range []string{
+		"The 1-minute load average",
+		"The 5-minute load average",
+		"The 15-minute load average",
+	} {
+		if !seen[want] {
+			t.Errorf("position %q never appeared across 100 iterations; saw %v", want, seen)
+		}
 	}
 }

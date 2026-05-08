@@ -133,6 +133,55 @@ func baseCmd(cmd string) string {
 	return base
 }
 
+// pickUniqueDistractors selects up to `want` strings from `pool`, skipping
+// any that equal `correct` or that have already been picked. Order is
+// preserved. Used by recall-question generators to ensure distractor lists
+// don't accidentally duplicate the correct answer (which can happen when
+// arithmetic distractor formulae degenerate at extreme values like 0 or
+// 100, e.g. clamp(0-15, 0, 100) == 0 == correct).
+func pickUniqueDistractors(correct string, pool []string, want int) []string {
+	seen := map[string]bool{correct: true}
+	out := make([]string, 0, want)
+	for _, c := range pool {
+		if seen[c] {
+			continue
+		}
+		seen[c] = true
+		out = append(out, c)
+		if len(out) >= want {
+			break
+		}
+	}
+	return out
+}
+
+// makeRecallQuestion builds a single-element []Question slice from a stem,
+// correct answer, and a candidate pool of distractors. Returns nil if fewer
+// than 2 distinct distractors can be produced from the pool — a question
+// with 0 or 1 distractor isn't a quiz. Recall functions should pass a pool
+// that includes both arithmetic variants of the correct answer (for
+// plausibility) and a few constants (for fallback when arithmetic
+// degenerates).
+func makeRecallQuestion(stem, correct string, pool []string) []Question {
+	distractors := pickUniqueDistractors(correct, pool, 3)
+	if len(distractors) < 2 {
+		return nil
+	}
+	return []Question{{
+		Stem:        stem,
+		Correct:     correct,
+		Distractors: distractors,
+	}}
+}
+
+// pickRandom returns one element from xs, chosen uniformly at random. Used by
+// comprehension-question generators that have several equally valid teaching
+// prompts (e.g. asking about the 1-minute, 5-minute, or 15-minute load
+// average) and shouldn't always pick the same one.
+func pickRandom[T any](xs []T) T {
+	return xs[rand.Intn(len(xs))]
+}
+
 func recallQuestions(inv *Investigation, snap Snapshot) []Question {
 	var qs []Question
 	for _, obs := range inv.Observations {

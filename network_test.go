@@ -411,3 +411,70 @@ func TestNetworkInvestigationRegistered(t *testing.T) {
 		t.Error("network investigation is missing observations/commands/extractors")
 	}
 }
+
+// ----- recall edge cases & randomization coverage -----
+
+func TestNetRxDropsRecallAtZero(t *testing.T) {
+	// Quiet network — zero drops. Original implementation included literal
+	// "0.0" in the distractor list, colliding with correct. Helper must dedupe.
+	v := Value{Number: 0}
+	qs := netRxDropsRecall(v)
+	if len(qs) != 1 {
+		t.Fatalf("expected 1 question at zero, got %d", len(qs))
+	}
+	q := qs[0]
+	if q.Correct != "0.0" {
+		t.Errorf("correct: got %q, want 0.0", q.Correct)
+	}
+	for _, d := range q.Distractors {
+		if d == q.Correct {
+			t.Errorf("distractor matches correct: %v", q.Distractors)
+		}
+	}
+}
+
+func TestSarDevQuestionsCoversBothDirections(t *testing.T) {
+	c := CapturedCommand{Cmd: "sar -n DEV 1 2", Output: sampleSarDev}
+	seenRx, seenTx := false, false
+	for i := 0; i < 100; i++ {
+		qs := sarDevQuestions(SystemInfo{}, c)
+		if len(qs) < 1 {
+			t.Fatalf("iteration %d: expected at least 1 question", i)
+		}
+		if strings.Contains(qs[0].Stem, "rxkB/s") {
+			seenRx = true
+		}
+		if strings.Contains(qs[0].Stem, "txkB/s") {
+			seenTx = true
+		}
+	}
+	if !seenRx {
+		t.Error("rxkB/s never appeared across 100 iterations")
+	}
+	if !seenTx {
+		t.Error("txkB/s never appeared across 100 iterations")
+	}
+}
+
+func TestSarEdevQuestionsCoversBothDirections(t *testing.T) {
+	c := CapturedCommand{Cmd: "sar -n EDEV 1 2", Output: sampleSarEdev}
+	seenRx, seenTx := false, false
+	for i := 0; i < 100; i++ {
+		qs := sarEdevQuestions(SystemInfo{}, c)
+		if len(qs) != 1 {
+			t.Fatalf("iteration %d: expected 1 question", i)
+		}
+		if strings.Contains(qs[0].Stem, "rxdrop/s") {
+			seenRx = true
+		}
+		if strings.Contains(qs[0].Stem, "txdrop/s") {
+			seenTx = true
+		}
+	}
+	if !seenRx {
+		t.Error("rxdrop/s never appeared across 100 iterations")
+	}
+	if !seenTx {
+		t.Error("txdrop/s never appeared across 100 iterations")
+	}
+}

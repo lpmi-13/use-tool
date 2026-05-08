@@ -5,8 +5,7 @@ system. The tool captures the commands you run, parses their output into a
 structured snapshot, and asks targeted questions about what you observed —
 without making assumptions about what state the system is "supposed" to be in.
 
-Currently covers **CPU**, **memory**, and **disk I/O**, with network designed
-to slot in as a sibling resource without changing the core code.
+Currently covers **CPU**, **memory**, **disk I/O**, and **network**.
 
 ## What it does
 
@@ -96,13 +95,15 @@ cpu.go             CPU-specific: observations, extractors, recall fns,
                    synthesis rules, command reference, guide steps
 memory.go          Memory-specific: same shape as cpu.go
 disk.go            Disk I/O-specific: same shape as cpu.go
+network.go         Network-specific: same shape as cpu.go
 guide.go           guided walkthrough flow
 practice.go        free-form REPL flow
 *_test.go          unit tests for parsers, extractors, synthesis rules
 ```
 
-To add another resource (e.g. network): create `network.go` mirroring the
-existing files' shape and register it in `investigations` in
+To add another resource: create a `<name>.go` file mirroring the existing
+shape (Investigation struct with StepsFn / Extractors / Observations /
+SynthesisRules / Commands) and register it in `investigations` in
 `investigation.go`. Nothing else changes.
 
 ## Scope intentionally left out

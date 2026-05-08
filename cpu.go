@@ -93,16 +93,32 @@ func uptimeQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if m == nil {
 		return nil
 	}
+	// Pick which of the three positions to ask about so the question doesn't
+	// always test the same one. Phrased by position word ("first" / "middle" /
+	// "last") rather than by value so the question stays answerable even when
+	// all three load averages are identical (common right after boot, when
+	// all three are 0.00).
+	type loadavgPick struct {
+		position string
+		correct  string
+	}
+	pick := pickRandom([]loadavgPick{
+		{"first", "The 1-minute load average"},
+		{"middle", "The 5-minute load average"},
+		{"last", "The 15-minute load average"},
+	})
+	distractorPool := []string{
+		"The 1-minute load average",
+		"The 5-minute load average",
+		"The 15-minute load average",
+		"The current number of running processes",
+	}
 	return []Question{{
 		Stem: fmt.Sprintf(
-			"You ran a command whose output included:\n  load average: %s, %s, %s\nWhat does the value %s refer to?",
-			m[1], m[2], m[3], m[2]),
-		Correct: "The 5-minute load average",
-		Distractors: []string{
-			"The 1-minute load average",
-			"The 15-minute load average",
-			"The current number of running processes",
-		},
+			"You ran a command whose output included:\n  load average: %s, %s, %s\nWhat does the *%s* of these three numbers refer to?",
+			m[1], m[2], m[3], pick.position),
+		Correct:     pick.correct,
+		Distractors: pickUniqueDistractors(pick.correct, distractorPool, 3),
 	}}
 }
 
@@ -417,15 +433,16 @@ func extractDmesgCpuKeywords(si SystemInfo, caps []CapturedCommand) (Value, bool
 func loadavgRecall(label string) func(Value) []Question {
 	return func(v Value) []Question {
 		correct := fmt.Sprintf("%.2f", v.Number)
-		return []Question{{
-			Stem:    fmt.Sprintf("What %s load average did you observe?", label),
-			Correct: correct,
-			Distractors: []string{
-				fmt.Sprintf("%.2f", v.Number*1.75+0.05),
-				fmt.Sprintf("%.2f", v.Number*0.5),
-				fmt.Sprintf("%.2f", v.Number+1.5),
-			},
-		}}
+		pool := []string{
+			fmt.Sprintf("%.2f", v.Number+0.5),
+			fmt.Sprintf("%.2f", v.Number+1.5),
+			fmt.Sprintf("%.2f", v.Number*2+1),
+			fmt.Sprintf("%.2f", v.Number*0.5+0.25),
+			"0.00", "1.00", "2.50", "5.00",
+		}
+		return makeRecallQuestion(
+			fmt.Sprintf("What %s load average did you observe?", label),
+			correct, pool)
 	}
 }
 
@@ -439,15 +456,16 @@ func mpstatIdleRangeRecall(v Value) []Question {
 			max = x
 		}
 	}
-	return []Question{{
-		Stem:    "Across all per-CPU samples in your `mpstat` output, what was the highest %idle value?",
-		Correct: fmt.Sprintf("%.1f%%", max),
-		Distractors: []string{
-			fmt.Sprintf("%.1f%%", max*0.5),
-			fmt.Sprintf("%.1f%%", clamp(max-15, 0, 100)),
-			"99.0%",
-		},
-	}}
+	correct := fmt.Sprintf("%.1f%%", max)
+	pool := []string{
+		fmt.Sprintf("%.1f%%", clamp(max-15, 0, 100)),
+		fmt.Sprintf("%.1f%%", clamp(max-30, 0, 100)),
+		fmt.Sprintf("%.1f%%", clamp(max-50, 0, 100)),
+		"0.0%", "25.0%", "50.0%", "75.0%", "99.0%",
+	}
+	return makeRecallQuestion(
+		"Across all per-CPU samples in your `mpstat` output, what was the highest %idle value?",
+		correct, pool)
 }
 
 func vmstatRRecall(v Value) []Question {
@@ -460,15 +478,16 @@ func vmstatRRecall(v Value) []Question {
 			max = x
 		}
 	}
-	return []Question{{
-		Stem:    "What was the highest run-queue length (`r`) you observed in your `vmstat` samples?",
-		Correct: fmt.Sprintf("%.0f", max),
-		Distractors: []string{
-			fmt.Sprintf("%.0f", max+2),
-			fmt.Sprintf("%.0f", max*3+1),
-			"0",
-		},
-	}}
+	correct := fmt.Sprintf("%.0f", max)
+	pool := []string{
+		fmt.Sprintf("%.0f", max+2),
+		fmt.Sprintf("%.0f", max+5),
+		fmt.Sprintf("%.0f", max*3+1),
+		"0", "1", "5", "100",
+	}
+	return makeRecallQuestion(
+		"What was the highest run-queue length (`r`) you observed in your `vmstat` samples?",
+		correct, pool)
 }
 
 func vmstatStealRecall(v Value) []Question {
@@ -481,15 +500,16 @@ func vmstatStealRecall(v Value) []Question {
 			max = x
 		}
 	}
-	return []Question{{
-		Stem:    "What was the highest `st` (steal-time) sample you observed in vmstat?",
-		Correct: fmt.Sprintf("%.0f%%", max),
-		Distractors: []string{
-			fmt.Sprintf("%.0f%%", clamp(max+15, 0, 100)),
-			fmt.Sprintf("%.0f%%", clamp(max-5, 0, 100)),
-			"100%",
-		},
-	}}
+	correct := fmt.Sprintf("%.0f%%", max)
+	pool := []string{
+		fmt.Sprintf("%.0f%%", clamp(max+15, 0, 100)),
+		fmt.Sprintf("%.0f%%", clamp(max+5, 0, 100)),
+		fmt.Sprintf("%.0f%%", clamp(max+30, 0, 100)),
+		"0%", "5%", "25%", "50%", "100%",
+	}
+	return makeRecallQuestion(
+		"What was the highest `st` (steal-time) sample you observed in vmstat?",
+		correct, pool)
 }
 
 func clamp(x, lo, hi float64) float64 {

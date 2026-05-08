@@ -154,13 +154,30 @@ func sarDevQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !sarDevHeaderRe.MatchString(c.Output) {
 		return nil
 	}
+	type tputPick struct {
+		col, correct, packetDistractor, totalDistractor string
+	}
+	pick := pickRandom([]tputPick{
+		{
+			col:              "rxkB/s",
+			correct:          "Receive throughput in kilobytes per second, averaged over the sample interval",
+			packetDistractor: "Receive packets per second, ignoring packet size",
+			totalDistractor:  "Total kilobytes received since the sar process started",
+		},
+		{
+			col:              "txkB/s",
+			correct:          "Transmit throughput in kilobytes per second, averaged over the sample interval",
+			packetDistractor: "Transmit packets per second, ignoring packet size",
+			totalDistractor:  "Total kilobytes transmitted since the sar process started",
+		},
+	})
 	return []Question{
 		{
-			Stem:    "In `sar -n DEV` output, what does `rxkB/s` measure?",
-			Correct: "Receive throughput in kilobytes per second, averaged over the sample interval",
+			Stem:    fmt.Sprintf("In `sar -n DEV` output, what does `%s` measure?", pick.col),
+			Correct: pick.correct,
 			Distractors: []string{
-				"Receive packets per second, ignoring packet size",
-				"Total kilobytes received since the sar process started",
+				pick.packetDistractor,
+				pick.totalDistractor,
 				"Maximum link-capacity headroom currently free, in kilobytes per second",
 			},
 		},
@@ -182,9 +199,22 @@ func sarEdevQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !sarEdevHeaderRe.MatchString(c.Output) {
 		return nil
 	}
+	type dropPick struct {
+		col, correct string
+	}
+	pick := pickRandom([]dropPick{
+		{
+			col:     "rxdrop/s",
+			correct: "The NIC ring buffer or kernel queue is filling faster than the system can drain incoming packets (can be tuned with `ethtool -G`)",
+		},
+		{
+			col:     "txdrop/s",
+			correct: "The kernel transmit queue (qdisc) is dropping outgoing packets, often because tx_queue_len is too small for offered load",
+		},
+	})
 	return []Question{{
-		Stem:    "Sustained `rxdrop/s` > 0 on a physical interface most commonly indicates:",
-		Correct: "The NIC ring buffer or kernel queue is filling faster than the system can drain it (can be tuned with `ethtool -G`)",
+		Stem:    fmt.Sprintf("Sustained `%s` > 0 on a physical interface most commonly indicates:", pick.col),
+		Correct: pick.correct,
 		Distractors: []string{
 			"The peer is sending malformed frames that the NIC rejects",
 			"Disk I/O latency is causing TCP buffers to back up",
@@ -710,15 +740,16 @@ func extractDmesgNetKeywords(si SystemInfo, caps []CapturedCommand) (Value, bool
 // ----- Recall question generators -----
 
 func netRxDropsRecall(v Value) []Question {
-	return []Question{{
-		Stem:    "What was the highest `rxdrop/s` value you observed across non-loopback interfaces?",
-		Correct: fmt.Sprintf("%.1f", v.Number),
-		Distractors: []string{
-			fmt.Sprintf("%.1f", v.Number*5+1),
-			fmt.Sprintf("%.1f", v.Number*0.25),
-			"0.0",
-		},
-	}}
+	correct := fmt.Sprintf("%.1f", v.Number)
+	pool := []string{
+		fmt.Sprintf("%.1f", v.Number+5.0),
+		fmt.Sprintf("%.1f", v.Number+50.0),
+		fmt.Sprintf("%.1f", v.Number*5+1.0),
+		"0.0", "1.0", "5.0", "20.0",
+	}
+	return makeRecallQuestion(
+		"What was the highest `rxdrop/s` value you observed across non-loopback interfaces?",
+		correct, pool)
 }
 
 // ----- Synthesis rules -----

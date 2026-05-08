@@ -159,14 +159,34 @@ func pidstatDQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !strings.Contains(c.Output, "kB_rd/s") && !strings.Contains(c.Output, "kB_wr/s") {
 		return nil
 	}
-	return []Question{{
-		Stem:    "In `pidstat -d` output, what does the `kB_wr/s` column measure for each process?",
-		Correct: "The rate at which the process is causing data to be written to storage, in kilobytes per second",
-		Distractors: []string{
-			"The rate at which the process is writing to memory-mapped files only",
-			"Total bytes written by the process since it started, divided by uptime",
-			"The size of pending writes still in the kernel's writeback queue",
+	// Randomize between read and write directions.
+	type ioPick struct {
+		col     string
+		correct string
+		dMapped string // distractor: "...memory-mapped files only"
+		dUptime string // distractor: "...divided by uptime"
+		dQueue  string // distractor: "...still in the kernel's queue"
+	}
+	pick := pickRandom([]ioPick{
+		{
+			col:     "kB_rd/s",
+			correct: "The rate at which the process is causing data to be read from storage, in kilobytes per second",
+			dMapped: "The rate at which the process is reading from memory-mapped files only",
+			dUptime: "Total bytes read by the process since it started, divided by uptime",
+			dQueue:  "The size of pending reads still in the kernel's I/O queue",
 		},
+		{
+			col:     "kB_wr/s",
+			correct: "The rate at which the process is causing data to be written to storage, in kilobytes per second",
+			dMapped: "The rate at which the process is writing to memory-mapped files only",
+			dUptime: "Total bytes written by the process since it started, divided by uptime",
+			dQueue:  "The size of pending writes still in the kernel's writeback queue",
+		},
+	})
+	return []Question{{
+		Stem:        fmt.Sprintf("In `pidstat -d` output, what does the `%s` column measure for each process?", pick.col),
+		Correct:     pick.correct,
+		Distractors: []string{pick.dMapped, pick.dUptime, pick.dQueue},
 	}}
 }
 
@@ -179,13 +199,20 @@ func psiIOQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !psiIOHeaderRe.MatchString(c.Output) {
 		return nil
 	}
+	type psiPick struct {
+		metric, correct, sibling string
+	}
+	pick := pickRandom([]psiPick{
+		{"some", "The percentage of time during which at least one task was stalled on I/O", "The percentage of time during which all non-idle tasks were simultaneously stalled on I/O"},
+		{"full", "The percentage of time during which all non-idle tasks were simultaneously stalled on I/O", "The percentage of time during which at least one task was stalled on I/O"},
+	})
 	return []Question{
 		{
-			Stem:    "In /proc/pressure/io, what does the `full` line measure?",
-			Correct: "The percentage of time during which all non-idle tasks were simultaneously stalled on I/O",
+			Stem:    fmt.Sprintf("In /proc/pressure/io, what does the `%s` line measure?", pick.metric),
+			Correct: pick.correct,
 			Distractors: []string{
+				pick.sibling,
 				"The percentage of disk capacity currently consumed",
-				"The total time the system has spent doing any I/O since boot",
 				"The percentage of I/O requests that completed within their target latency",
 			},
 		},
@@ -557,15 +584,16 @@ func extractDmesgIOErrors(si SystemInfo, caps []CapturedCommand) (Value, bool) {
 // ----- Recall question generators -----
 
 func iostatMaxUtilRecall(v Value) []Question {
-	return []Question{{
-		Stem:    "What was the highest `%util` value you observed in iostat across all devices?",
-		Correct: fmt.Sprintf("%.0f%%", v.Number),
-		Distractors: []string{
-			fmt.Sprintf("%.0f%%", clamp(v.Number-25, 0, 100)),
-			fmt.Sprintf("%.0f%%", clamp(v.Number-50, 0, 100)),
-			"100%",
-		},
-	}}
+	correct := fmt.Sprintf("%.0f%%", v.Number)
+	pool := []string{
+		fmt.Sprintf("%.0f%%", clamp(v.Number-10, 0, 100)),
+		fmt.Sprintf("%.0f%%", clamp(v.Number-25, 0, 100)),
+		fmt.Sprintf("%.0f%%", clamp(v.Number-50, 0, 100)),
+		"0%", "25%", "50%", "75%", "100%",
+	}
+	return makeRecallQuestion(
+		"What was the highest `%util` value you observed in iostat across all devices?",
+		correct, pool)
 }
 
 // ----- Synthesis rules -----

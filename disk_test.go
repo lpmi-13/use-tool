@@ -353,3 +353,70 @@ func TestDiskInvestigationRegistered(t *testing.T) {
 		t.Error("disk investigation is missing observations/commands/extractors")
 	}
 }
+
+// ----- recall edge cases -----
+
+func TestIostatMaxUtilRecallAtBoundaries(t *testing.T) {
+	for _, util := range []float64{0, 100} {
+		v := Value{Number: util}
+		qs := iostatMaxUtilRecall(v)
+		if len(qs) != 1 {
+			t.Fatalf("expected 1 question at %%util=%v, got %d", util, len(qs))
+		}
+		q := qs[0]
+		seen := map[string]bool{q.Correct: true}
+		for _, d := range q.Distractors {
+			if seen[d] {
+				t.Errorf("duplicate option at %%util=%v: %v", util, q.Distractors)
+			}
+			seen[d] = true
+		}
+	}
+}
+
+func TestPidstatDQuestionsCoversReadAndWrite(t *testing.T) {
+	c := CapturedCommand{Cmd: "pidstat -d 1 1", Output: `
+Linux 6.1.0  10/05/2024
+14:00:00       UID       PID   kB_rd/s   kB_wr/s kB_ccwr/s iodelay  Command
+14:00:01      1000      1234     12.50    400.00      0.00       2  postgres
+`}
+	seenRead, seenWrite := false, false
+	for i := 0; i < 100; i++ {
+		qs := pidstatDQuestions(SystemInfo{}, c)
+		if len(qs) != 1 {
+			t.Fatalf("iteration %d: expected 1 question", i)
+		}
+		if strings.Contains(qs[0].Stem, "kB_rd/s") {
+			seenRead = true
+		}
+		if strings.Contains(qs[0].Stem, "kB_wr/s") {
+			seenWrite = true
+		}
+	}
+	if !seenRead {
+		t.Error("kB_rd/s never appeared across 100 iterations")
+	}
+	if !seenWrite {
+		t.Error("kB_wr/s never appeared across 100 iterations")
+	}
+}
+
+func TestPSIIOQuestionsCoversBothMetrics(t *testing.T) {
+	c := CapturedCommand{Cmd: "cat /proc/pressure/io", Output: samplePSIIO}
+	seen := map[string]bool{}
+	for i := 0; i < 100; i++ {
+		qs := psiIOQuestions(SystemInfo{}, c)
+		if len(qs) < 1 {
+			t.Fatalf("iteration %d: expected at least 1 question", i)
+		}
+		seen[qs[0].Correct] = true
+	}
+	for _, want := range []string{
+		"The percentage of time during which at least one task was stalled on I/O",
+		"The percentage of time during which all non-idle tasks were simultaneously stalled on I/O",
+	} {
+		if !seen[want] {
+			t.Errorf("metric %q never appeared across 100 iterations; saw %v", want, seen)
+		}
+	}
+}

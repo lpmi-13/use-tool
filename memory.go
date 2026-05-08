@@ -149,12 +149,21 @@ func vmstatMemoryQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !vmstatMemHeaderRe.MatchString(c.Output) {
 		return nil
 	}
+	// Randomize whether we ask about `si` or `so` so the learner has to
+	// distinguish direction rather than memorising one column.
+	type swapPick struct {
+		col, correct, sibling string
+	}
+	pick := pickRandom([]swapPick{
+		{"si", "Pages swapped in from swap to memory per second", "Pages swapped out from memory to swap per second"},
+		{"so", "Pages swapped out from memory to swap per second", "Pages swapped in from swap to memory per second"},
+	})
 	return []Question{
 		{
-			Stem:    "In `vmstat` output, what does the `si` column under `swap` represent?",
-			Correct: "Pages swapped in from swap to memory per second",
+			Stem:    fmt.Sprintf("In `vmstat` output, what does the `%s` column under `swap` represent?", pick.col),
+			Correct: pick.correct,
 			Distractors: []string{
-				"Pages swapped out from memory to swap per second",
+				pick.sibling, // the OTHER direction is the strongest distractor
 				"Number of context switches per second",
 				"Free swap space in kilobytes",
 			},
@@ -177,14 +186,23 @@ func psiMemoryQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !psiMemoryHeaderRe.MatchString(c.Output) {
 		return nil
 	}
+	// Randomize whether we ask about `some` or `full` — the two PSI lines
+	// measure adjacent but different things, and learners need to distinguish.
+	type psiPick struct {
+		metric, correct, sibling string
+	}
+	pick := pickRandom([]psiPick{
+		{"some", "The percentage of time during which at least one task was stalled on memory", "The percentage of time during which all non-idle tasks were simultaneously stalled on memory"},
+		{"full", "The percentage of time during which all non-idle tasks were simultaneously stalled on memory", "The percentage of time during which at least one task was stalled on memory"},
+	})
 	return []Question{
 		{
-			Stem:    "In /proc/pressure/memory, what does the `full` line measure?",
-			Correct: "The percentage of time during which all non-idle tasks were simultaneously stalled on memory",
+			Stem:    fmt.Sprintf("In /proc/pressure/memory, what does the `%s` line measure?", pick.metric),
+			Correct: pick.correct,
 			Distractors: []string{
+				pick.sibling, // the OTHER PSI line is the strongest distractor
 				"The percentage of physical memory currently in use",
 				"The total time the system has spent in any memory pressure since boot",
-				"The percentage of memory that is fully allocated and non-reclaimable",
 			},
 		},
 		{
@@ -463,15 +481,15 @@ func extractDmesgOOM(si SystemInfo, caps []CapturedCommand) (Value, bool) {
 
 func memUsedPctRecall(v Value) []Question {
 	correct := fmt.Sprintf("%.0f%%", v.Number)
-	return []Question{{
-		Stem:    "What memory-used percentage did you observe (treating reclaimable cache as available)?",
-		Correct: correct,
-		Distractors: []string{
-			fmt.Sprintf("%.0f%%", clamp(v.Number+25, 0, 100)),
-			fmt.Sprintf("%.0f%%", clamp(v.Number-20, 0, 100)),
-			"99%",
-		},
-	}}
+	pool := []string{
+		fmt.Sprintf("%.0f%%", clamp(v.Number+25, 0, 100)),
+		fmt.Sprintf("%.0f%%", clamp(v.Number-20, 0, 100)),
+		fmt.Sprintf("%.0f%%", clamp(v.Number+10, 0, 100)),
+		"0%", "25%", "50%", "75%", "99%",
+	}
+	return makeRecallQuestion(
+		"What memory-used percentage did you observe (treating reclaimable cache as available)?",
+		correct, pool)
 }
 
 func swapSamplesRecall(col string) func(Value) []Question {
@@ -485,15 +503,16 @@ func swapSamplesRecall(col string) func(Value) []Question {
 				max = x
 			}
 		}
-		return []Question{{
-			Stem:    fmt.Sprintf("What was the highest `%s` (swap) sample you observed in vmstat?", col),
-			Correct: fmt.Sprintf("%.0f", max),
-			Distractors: []string{
-				fmt.Sprintf("%.0f", max+10),
-				fmt.Sprintf("%.0f", max*5+1),
-				"0",
-			},
-		}}
+		correct := fmt.Sprintf("%.0f", max)
+		pool := []string{
+			fmt.Sprintf("%.0f", max+10),
+			fmt.Sprintf("%.0f", max+50),
+			fmt.Sprintf("%.0f", max*5+1),
+			"0", "10", "100", "1000",
+		}
+		return makeRecallQuestion(
+			fmt.Sprintf("What was the highest `%s` (swap) sample you observed in vmstat?", col),
+			correct, pool)
 	}
 }
 

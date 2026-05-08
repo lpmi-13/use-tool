@@ -418,7 +418,7 @@ func loadavgRecall(label string) func(Value) []Question {
 	return func(v Value) []Question {
 		correct := fmt.Sprintf("%.2f", v.Number)
 		return []Question{{
-			Stem: fmt.Sprintf("What %s load average did you observe?", label),
+			Stem:    fmt.Sprintf("What %s load average did you observe?", label),
 			Correct: correct,
 			Distractors: []string{
 				fmt.Sprintf("%.2f", v.Number*1.75+0.05),
@@ -440,7 +440,7 @@ func mpstatIdleRangeRecall(v Value) []Question {
 		}
 	}
 	return []Question{{
-		Stem: "Across all per-CPU samples in your `mpstat` output, what was the highest %idle value?",
+		Stem:    "Across all per-CPU samples in your `mpstat` output, what was the highest %idle value?",
 		Correct: fmt.Sprintf("%.1f%%", max),
 		Distractors: []string{
 			fmt.Sprintf("%.1f%%", max*0.5),
@@ -461,7 +461,7 @@ func vmstatRRecall(v Value) []Question {
 		}
 	}
 	return []Question{{
-		Stem: "What was the highest run-queue length (`r`) you observed in your `vmstat` samples?",
+		Stem:    "What was the highest run-queue length (`r`) you observed in your `vmstat` samples?",
 		Correct: fmt.Sprintf("%.0f", max),
 		Distractors: []string{
 			fmt.Sprintf("%.0f", max+2),

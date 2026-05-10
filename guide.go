@@ -15,6 +15,7 @@ func cmdGuide(args []string) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	requireInteractive("guide")
 	si := detectSystem()
 	s := &Session{Investigation: inv, System: si}
 

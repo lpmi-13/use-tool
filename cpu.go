@@ -655,9 +655,10 @@ var cpuCommands = []CommandRef{
 		Summary: "Load averages plus per-user session info.\nSimilar info to uptime, with logged-in users.",
 	},
 	{
-		Cmd:     "mpstat -P ALL 1 N",
-		Section: "Utilization",
-		Summary: "Per-CPU breakdown (%usr, %sys, %iowait, %idle, ...)\nover N one-second intervals. Distinguishes\nall-cores-busy from one-core-pegged. (sysstat package.)",
+		Cmd:      "mpstat -P ALL 1 N",
+		Section:  "Utilization",
+		Summary:  "Per-CPU breakdown (%usr, %sys, %iowait, %idle, ...)\nover N one-second intervals. Distinguishes\nall-cores-busy from one-core-pegged. (sysstat package.)",
+		Requires: []string{"mpstat"},
 	},
 	{
 		Cmd:     "top -bn1",
@@ -665,9 +666,10 @@ var cpuCommands = []CommandRef{
 		Summary: "One-shot batch snapshot of processes sorted by CPU.\nBatch mode (-b -n1) avoids needing a TTY.",
 	},
 	{
-		Cmd:     "pidstat 1 N",
-		Section: "Utilization",
-		Summary: "Per-process CPU usage over N intervals.\nFinds which process is consuming time. (sysstat package.)",
+		Cmd:      "pidstat 1 N",
+		Section:  "Utilization",
+		Summary:  "Per-process CPU usage over N intervals.\nFinds which process is consuming time. (sysstat package.)",
+		Requires: []string{"pidstat"},
 	},
 	{
 		Cmd:     "ps -eo pid,pcpu,comm --sort=-pcpu | head",
@@ -685,14 +687,16 @@ var cpuCommands = []CommandRef{
 		Summary: "Same load averages as uptime, plus current\nrunnable/total task counts and last PID.",
 	},
 	{
-		Cmd:     "cat /proc/pressure/cpu",
-		Section: "Saturation",
-		Summary: "PSI: time-share of tasks stalled on CPU.\nLinux 4.20+ with PSI enabled (kernel.org/PSI).",
+		Cmd:      "cat /proc/pressure/cpu",
+		Section:  "Saturation",
+		Summary:  "PSI: time-share of tasks stalled on CPU.\nLinux 4.20+ with PSI enabled (kernel.org/PSI).",
+		Requires: []string{"psi"},
 	},
 	{
-		Cmd:     "sar -u 1 N",
-		Section: "Saturation",
-		Summary: "Historical CPU utilization, N samples.\nCan also read archived data with -f. (sysstat package.)",
+		Cmd:      "sar -u 1 N",
+		Section:  "Saturation",
+		Summary:  "Historical CPU utilization, N samples.\nCan also read archived data with -f. (sysstat package.)",
+		Requires: []string{"sar"},
 	},
 	{
 		Cmd:     "dmesg --level=err,warn | tail -30",

@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,9 +12,13 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
+	"unsafe"
 )
 
-const version = "0.2.0"
+const (
+	appName = "use-tool"
+	version = "0.2.0"
+)
 
 const (
 	maxCaptureBytes  = 1 << 20 // per-command output cap (1 MB)
@@ -38,12 +43,23 @@ func main() {
 	case "list":
 		cmdList()
 	case "version", "--version", "-v":
-		fmt.Printf("use-tool %s\n", version)
+		fmt.Printf("%s %s\n", appName, version)
 	case "help", "--help", "-h":
 		usage(0)
 	default:
-		usage(2)
+		unknownCommand(os.Args[1])
 	}
+}
+
+var topLevelCommands = []string{"guide", "practice", "commands", "list", "version", "help"}
+
+func unknownCommand(name string) {
+	fmt.Fprintf(os.Stderr, "unknown command %q", name)
+	if suggestion, ok := suggestCommand(name, topLevelCommands); ok {
+		fmt.Fprintf(os.Stderr, "; did you mean %q?", suggestion)
+	}
+	fmt.Fprintln(os.Stderr)
+	usage(2)
 }
 
 func usage(code int) {
@@ -51,7 +67,9 @@ func usage(code int) {
 	if code != 0 {
 		out = os.Stderr
 	}
-	fmt.Fprintf(out, `use-tool %s — practice the USE method on a live Linux system
+	fmt.Fprintf(out, `%s %s — practice the USE method on a live Linux system
+
+New here? Run: use-tool guide cpu
 
 Usage:
   use-tool guide <resource>     Walk through the USE method as a guided checklist
@@ -62,7 +80,7 @@ Usage:
   use-tool help                 This message
 
 Available resources: %s
-`, version, strings.Join(resourceNames(), ", "))
+`, appName, version, strings.Join(resourceNames(), ", "))
 	os.Exit(code)
 }
 
@@ -82,7 +100,7 @@ func cmdCommands(args []string) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	printCommands(inv)
+	printCommands(inv, detectSystem())
 }
 
 type CapturedCommand struct {
@@ -130,7 +148,17 @@ func runCommand(cmdStr string) CapturedCommand {
 	cmd.Stdout = io.MultiWriter(os.Stdout, buf)
 	cmd.Stderr = io.MultiWriter(os.Stderr, buf)
 	cmd.Stdin = os.Stdin
-	_ = cmd.Run()
+	if err := cmd.Run(); err != nil {
+		if buf.Len() > 0 && !bytes.HasSuffix(buf.Bytes(), []byte("\n")) {
+			fmt.Fprintln(os.Stderr)
+		}
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() >= 0 {
+			fmt.Fprintf(os.Stderr, "[command exited with status %d]\n", exitErr.ExitCode())
+		} else {
+			fmt.Fprintf(os.Stderr, "[command failed: %v]\n", err)
+		}
+	}
 	return CapturedCommand{Cmd: cmdStr, Output: buf.String()}
 }
 
@@ -163,6 +191,14 @@ func (c *cappedBuffer) String() string {
 	return c.buf.String()
 }
 
+func (c *cappedBuffer) Len() int {
+	return c.buf.Len()
+}
+
+func (c *cappedBuffer) Bytes() []byte {
+	return c.buf.Bytes()
+}
+
 // appendCaptured records a command in the session, dropping the oldest entry
 // (with a one-line note) once the history cap is reached.
 func (s *Session) appendCaptured(c CapturedCommand) {
@@ -191,9 +227,89 @@ func swallowSigint() {
 	}()
 }
 
+func requireInteractive(mode string) {
+	if stdinIsTerminal() {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "use-tool %s requires an interactive terminal on stdin.\n", mode)
+	fmt.Fprintln(os.Stderr, "Run `use-tool commands cpu` for a non-interactive command reference.")
+	os.Exit(2)
+}
+
+func stdinIsTerminal() bool {
+	var termios syscall.Termios
+	_, _, errno := syscall.Syscall(
+		syscall.SYS_IOCTL,
+		os.Stdin.Fd(),
+		uintptr(syscall.TCGETS),
+		uintptr(unsafe.Pointer(&termios)),
+	)
+	return errno == 0
+}
+
 func plural(n int) string {
 	if n == 1 {
 		return ""
 	}
 	return "s"
+}
+
+func suggestCommand(input string, candidates []string) (string, bool) {
+	best := ""
+	bestDistance := 0
+	for _, candidate := range candidates {
+		dist := levenshtein(input, candidate)
+		if best == "" || dist < bestDistance {
+			best = candidate
+			bestDistance = dist
+		}
+	}
+	if best == "" || bestDistance > 2 {
+		return "", false
+	}
+	return best, true
+}
+
+func levenshtein(a, b string) int {
+	if a == b {
+		return 0
+	}
+	if len(a) == 0 {
+		return len(b)
+	}
+	if len(b) == 0 {
+		return len(a)
+	}
+
+	prev := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur := make([]int, len(b)+1)
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = minInt(
+				cur[j-1]+1,
+				prev[j]+1,
+				prev[j-1]+cost,
+			)
+		}
+		prev = cur
+	}
+	return prev[len(b)]
+}
+
+func minInt(xs ...int) int {
+	m := xs[0]
+	for _, x := range xs[1:] {
+		if x < m {
+			m = x
+		}
+	}
+	return m
 }

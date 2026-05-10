@@ -45,9 +45,10 @@ type SynthesisRule struct {
 }
 
 type CommandRef struct {
-	Cmd     string
-	Section string
-	Summary string
+	Cmd      string
+	Section  string
+	Summary  string
+	Requires []string
 }
 
 var investigations = map[string]*Investigation{
@@ -217,7 +218,7 @@ func synthesisQuestions(inv *Investigation, si SystemInfo, snap Snapshot) []Ques
 	return qs
 }
 
-func printCommands(inv *Investigation) {
+func printCommands(inv *Investigation, si SystemInfo) {
 	fmt.Printf("\n%s — command reference\n", inv.Title)
 	fmt.Println(strings.Repeat("=", 60))
 	bySection := map[string][]CommandRef{}
@@ -231,11 +232,56 @@ func printCommands(inv *Investigation) {
 		}
 		fmt.Printf("\n%s\n%s\n", sec, strings.Repeat("-", len(sec)))
 		for _, c := range cmds {
-			fmt.Printf("\n  %s\n", c.Cmd)
+			status := commandStatus(c, si)
+			if status == "" {
+				fmt.Printf("\n  %s\n", c.Cmd)
+			} else {
+				fmt.Printf("\n  %s  [%s]\n", c.Cmd, status)
+			}
 			for _, line := range strings.Split(c.Summary, "\n") {
 				fmt.Printf("      %s\n", line)
 			}
 		}
 	}
 	fmt.Println()
+}
+
+func commandStatus(c CommandRef, si SystemInfo) string {
+	var missing []string
+	for _, req := range c.Requires {
+		if requirementAvailable(req, si) {
+			continue
+		}
+		missing = append(missing, requirementHint(req))
+	}
+	if len(missing) == 0 {
+		return ""
+	}
+	return "unavailable: " + strings.Join(missing, ", ")
+}
+
+func requirementAvailable(req string, si SystemInfo) bool {
+	switch req {
+	case "mpstat":
+		return si.HasMpstat
+	case "pidstat":
+		return si.HasPidstat
+	case "sar":
+		return si.HasSar
+	case "psi":
+		return si.HasPSI
+	default:
+		return haveCmd(req)
+	}
+}
+
+func requirementHint(req string) string {
+	switch req {
+	case "mpstat", "pidstat", "sar":
+		return req + " not found; install sysstat"
+	case "psi":
+		return "/proc/pressure/cpu not available"
+	default:
+		return req + " not found"
+	}
 }

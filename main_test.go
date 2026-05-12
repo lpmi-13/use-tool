@@ -99,3 +99,33 @@ func TestAskQuestionRunsPromptCommandThenAcceptsAnswer(t *testing.T) {
 		t.Fatalf("runner commands = %v, want [cat /proc/pressure/memory]", ran)
 	}
 }
+
+func TestRunAndCaptureSkipsFailedCommand(t *testing.T) {
+	s := &Session{}
+	c := s.runAndCapture("echo 'unterminated")
+
+	if !c.Failed {
+		t.Fatal("expected command to be marked failed")
+	}
+	if len(s.Captured) != 0 {
+		t.Fatalf("captured failed command: %+v", s.Captured)
+	}
+}
+
+func TestGuideStepCommandRetriesFailedAcceptAnyCommand(t *testing.T) {
+	oldStdin := stdin
+	defer func() { stdin = oldStdin }()
+	stdin = bufio.NewReader(strings.NewReader("echo 'unterminated\necho ok\n"))
+
+	s := &Session{}
+	captured := guideStepCommand(s, GuideStep{AcceptAny: true, Suggested: "echo ok"})
+	if captured == nil {
+		t.Fatal("expected successful retry to be captured")
+	}
+	if captured.Cmd != "echo ok" || captured.Failed {
+		t.Fatalf("captured = %+v, want successful echo retry", captured)
+	}
+	if len(s.Captured) != 1 || s.Captured[0].Cmd != "echo ok" {
+		t.Fatalf("session captured = %+v, want only successful retry", s.Captured)
+	}
+}

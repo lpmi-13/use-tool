@@ -104,6 +104,10 @@ func guideStepCommand(s *Session, step GuideStep) *CapturedCommand {
 			os.Exit(0)
 		}
 		c := s.runAndCapture(line)
+		if c.Failed {
+			fmt.Println("(Command failed; fix it and try again, or `skip`.)")
+			continue
+		}
 		if step.AcceptAny {
 			return &c
 		}

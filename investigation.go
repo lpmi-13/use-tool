@@ -118,6 +118,10 @@ func askQuestionWithCommandRunner(q Question, run questionCommandRunner) Questio
 			if c.Output != "" && !strings.HasSuffix(c.Output, "\n") {
 				fmt.Println()
 			}
+			if c.Failed {
+				fmt.Printf("(Command failed; try another `$ <command>`, or pick a number 1-%d.)\n", len(options))
+				continue
+			}
 			fmt.Printf("(Ran `%s`; now pick a number 1-%d.)\n", cmd, len(options))
 			continue
 		}

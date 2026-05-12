@@ -104,8 +104,10 @@ func cmdCommands(args []string) {
 }
 
 type CapturedCommand struct {
-	Cmd    string
-	Output string
+	Cmd      string
+	Output   string
+	Failed   bool
+	ExitCode int
 }
 
 type Session struct {
@@ -148,22 +150,30 @@ func runCommand(cmdStr string) CapturedCommand {
 	cmd.Stdout = io.MultiWriter(os.Stdout, buf)
 	cmd.Stderr = io.MultiWriter(os.Stderr, buf)
 	cmd.Stdin = os.Stdin
+	failed := false
+	exitCode := 0
 	if err := cmd.Run(); err != nil {
+		failed = true
 		if buf.Len() > 0 && !bytes.HasSuffix(buf.Bytes(), []byte("\n")) {
 			fmt.Fprintln(os.Stderr)
 		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() >= 0 {
-			fmt.Fprintf(os.Stderr, "[command exited with status %d]\n", exitErr.ExitCode())
+			exitCode = exitErr.ExitCode()
+			fmt.Fprintf(os.Stderr, "[command exited with status %d]\n", exitCode)
 		} else {
+			exitCode = -1
 			fmt.Fprintf(os.Stderr, "[command failed: %v]\n", err)
 		}
 	}
-	return CapturedCommand{Cmd: cmdStr, Output: buf.String()}
+	return CapturedCommand{Cmd: cmdStr, Output: buf.String(), Failed: failed, ExitCode: exitCode}
 }
 
 func (s *Session) runAndCapture(cmdStr string) CapturedCommand {
 	c := runCommand(cmdStr)
+	if c.Failed {
+		return c
+	}
 	s.appendCaptured(c)
 	return c
 }

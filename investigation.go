@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Investigation struct {
@@ -20,12 +21,13 @@ type Investigation struct {
 }
 
 type GuideStep struct {
-	Name        string
-	Intro       string
-	Suggested   string
-	QuestionsFn func(SystemInfo, CapturedCommand) []Question
-	AcceptAny   bool
-	Teaching    string
+	Name               string
+	Intro              string
+	Suggested          string
+	QuestionsFn        func(SystemInfo, CapturedCommand) []Question
+	AcceptAny          bool
+	EmptyOutputMessage string
+	Teaching           string
 }
 
 type Extractor struct {
@@ -65,6 +67,8 @@ var investigations = map[string]*Investigation{
 	"network": networkInvestigation,
 }
 
+var appRand = rand.New(rand.NewSource(time.Now().UnixNano()))
+
 func resourceNames() []string {
 	out := make([]string, 0, len(investigations))
 	for k := range investigations {
@@ -88,7 +92,7 @@ func askQuestion(q Question) QuestionResult {
 
 func askQuestionWithCommandRunner(q Question, run questionCommandRunner) QuestionResult {
 	options := append([]string{q.Correct}, q.Distractors...)
-	rand.Shuffle(len(options), func(i, j int) { options[i], options[j] = options[j], options[i] })
+	appRand.Shuffle(len(options), func(i, j int) { options[i], options[j] = options[j], options[i] })
 	fmt.Println()
 	fmt.Println("--- Check ---")
 	fmt.Println(q.Stem)
@@ -229,7 +233,7 @@ func makeRecallQuestion(stem, correct string, pool []string) []Question {
 // prompts (e.g. asking about the 1-minute, 5-minute, or 15-minute load
 // average) and shouldn't always pick the same one.
 func pickRandom[T any](xs []T) T {
-	return xs[rand.Intn(len(xs))]
+	return xs[appRand.Intn(len(xs))]
 }
 
 func recallQuestions(inv *Investigation, snap Snapshot) []Question {

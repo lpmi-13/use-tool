@@ -76,11 +76,12 @@ func networkSteps(si SystemInfo) []GuideStep {
 				"that ListenOverflows is about to climb.",
 		},
 		{
-			Name:        "errors",
-			Intro:       "Step 6: kernel network errors — link state changes and NIC issues.",
-			Suggested:   "dmesg -T 2>/dev/null | grep -iE 'link is down|link up|carrier|nic|ethernet' | tail",
-			QuestionsFn: networkDmesgQuestions,
-			AcceptAny:   true,
+			Name:               "errors",
+			Intro:              "Step 6: kernel network errors — link state changes and NIC issues.",
+			Suggested:          "dmesg -T 2>/dev/null | grep -iE 'link is down|link up|carrier|nic|ethernet' | tail",
+			QuestionsFn:        networkDmesgQuestions,
+			AcceptAny:          true,
+			EmptyOutputMessage: "No matching link or NIC errors found.",
 			Teaching: "Repeated link-up/link-down sequences mean a flapping cable, transceiver,\n" +
 				"or peer port. NIC driver errors point at hardware or firmware faults.",
 		},

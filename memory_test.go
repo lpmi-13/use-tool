@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math/rand"
 	"strings"
 	"testing"
 )
@@ -47,6 +48,47 @@ func TestMeminfoQuestionsFiresOnMeminfoOutput(t *testing.T) {
 	qs := meminfoQuestions(si, c)
 	if len(qs) == 0 {
 		t.Fatal("expected questions for /proc/meminfo output")
+	}
+}
+
+func TestMeminfoQuestionsUseObservedValues(t *testing.T) {
+	si := SystemInfo{}
+	c := CapturedCommand{Cmd: "cat /proc/meminfo", Output: sampleMeminfo}
+	qs := meminfoQuestions(si, c)
+	if len(qs) < 3 {
+		t.Fatalf("expected several observed-value questions, got %d", len(qs))
+	}
+	var stems []string
+	for _, q := range qs {
+		stems = append(stems, q.Stem)
+	}
+	joined := strings.Join(stems, "\n")
+	for _, want := range []string{"15.6 GiB", "7.8 GiB", "5.7 GiB"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("meminfo question stems did not include observed value %q:\n%s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "If `Cached` is 6 GiB") {
+		t.Fatalf("meminfo questions still include fixed cache example:\n%s", joined)
+	}
+}
+
+func TestGuideQuestionSelectionCanVaryForMeminfo(t *testing.T) {
+	oldRand := appRand
+	defer func() { appRand = oldRand }()
+	appRand = rand.New(rand.NewSource(1))
+
+	qs := meminfoQuestions(SystemInfo{}, CapturedCommand{Cmd: "cat /proc/meminfo", Output: sampleMeminfo})
+	seen := map[string]bool{}
+	for i := 0; i < 20; i++ {
+		q, ok := chooseGuideQuestion(qs)
+		if !ok {
+			t.Fatal("expected guide question")
+		}
+		seen[q.Stem] = true
+	}
+	if len(seen) < 2 {
+		t.Fatalf("guide selection did not vary across repeated picks; saw %d unique stem(s)", len(seen))
 	}
 }
 
@@ -411,6 +453,21 @@ func TestVmstatMemoryQuestionsCoversBothDirections(t *testing.T) {
 	}
 }
 
+func TestVmstatMemoryQuestionsUseObservedSamples(t *testing.T) {
+	c := CapturedCommand{Cmd: "vmstat 1 2", Output: sampleVmstatPaging}
+	qs := vmstatMemoryQuestions(SystemInfo{}, c)
+	var stems []string
+	for _, q := range qs {
+		stems = append(stems, q.Stem)
+	}
+	joined := strings.Join(stems, "\n")
+	for _, want := range []string{"`si` samples [120, 80]", "`so` samples [80, 60]", "max `si` 120", "max `so` 80"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("vmstat questions did not include observed value %q:\n%s", want, joined)
+		}
+	}
+}
+
 func TestPSIMemoryQuestionsCoversBothMetrics(t *testing.T) {
 	c := CapturedCommand{Cmd: "cat /proc/pressure/memory", Output: samplePSIMemory}
 	seen := map[string]bool{}
@@ -441,6 +498,39 @@ func TestPSIMemoryQuestionsCoversBothMetrics(t *testing.T) {
 	for _, want := range []string{"`some`", "`full`"} {
 		if !seen[want] {
 			t.Errorf("metric %q never appeared across 100 iterations; saw %v", want, seen)
+		}
+	}
+}
+
+func TestPSIMemoryQuestionsUseObservedValues(t *testing.T) {
+	c := CapturedCommand{Cmd: "cat /proc/pressure/memory", Output: samplePSIMemory}
+	qs := psiMemoryQuestions(SystemInfo{}, c)
+	var stems []string
+	for _, q := range qs {
+		stems = append(stems, q.Stem)
+	}
+	joined := strings.Join(stems, "\n")
+	for _, want := range []string{"some avg10=4.20", "full avg10=0.80"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("PSI questions did not include observed value %q:\n%s", want, joined)
+		}
+	}
+}
+
+func TestPSRSSQuestionsUseObservedTopProcess(t *testing.T) {
+	c := CapturedCommand{Cmd: "ps -eo pid,rss,comm --sort=-rss | head -10", Output: `    PID   RSS COMMAND
+   2576 1466312 qemu-system-x86
+ 475978 862308 k3s-server
+`}
+	qs := psRssQuestions(SystemInfo{}, c)
+	var stems []string
+	for _, q := range qs {
+		stems = append(stems, q.Stem)
+	}
+	joined := strings.Join(stems, "\n")
+	for _, want := range []string{"qemu-system-x86", "1.4 GiB"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("RSS questions did not include observed value %q:\n%s", want, joined)
 		}
 	}
 }

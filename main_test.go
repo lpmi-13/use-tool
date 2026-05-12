@@ -129,3 +129,77 @@ func TestGuideStepCommandRetriesFailedAcceptAnyCommand(t *testing.T) {
 		t.Fatalf("session captured = %+v, want only successful retry", s.Captured)
 	}
 }
+
+func TestGuideQuestionsNilSafe(t *testing.T) {
+	got := guideQuestions(SystemInfo{}, GuideStep{}, CapturedCommand{Cmd: "lsblk", Output: "NAME TYPE\n"})
+	if got != nil {
+		t.Fatalf("guideQuestions with nil QuestionsFn = %v, want nil", got)
+	}
+}
+
+func TestDiskDeviceStepHasLsblkQuestions(t *testing.T) {
+	steps := diskSteps(SystemInfo{})
+	if len(steps) == 0 {
+		t.Fatal("expected disk guide steps")
+	}
+	if steps[0].Name != "devices" {
+		t.Fatalf("first disk step = %q, want devices", steps[0].Name)
+	}
+	qs := guideQuestions(SystemInfo{}, steps[0], CapturedCommand{
+		Cmd:    "lsblk",
+		Output: "NAME MAJ:MIN RM SIZE RO TYPE MOUNTPOINTS\nnvme0n1 259:0 0 238.5G 0 disk\nnvme0n1p1 259:1 0 512M 0 part /boot/efi\n",
+	})
+	if len(qs) == 0 {
+		t.Fatal("expected lsblk questions for disk devices step")
+	}
+}
+
+func TestGuideStepCommandPrintsEmptyOutputMessage(t *testing.T) {
+	oldStdin := stdin
+	defer func() { stdin = oldStdin }()
+	stdin = bufio.NewReader(strings.NewReader("printf ''\n"))
+
+	out := captureStdout(func() {
+		captured := guideStepCommand(&Session{}, GuideStep{
+			Suggested:          "printf ''",
+			AcceptAny:          true,
+			EmptyOutputMessage: "No matching errors found.",
+		})
+		if captured == nil {
+			t.Fatal("expected command to be captured")
+		}
+	})
+	if !strings.Contains(out, "No matching errors found.") {
+		t.Fatalf("expected empty-output message in output:\n%s", out)
+	}
+}
+
+func TestErrorGuideStepsHaveEmptyOutputMessages(t *testing.T) {
+	cases := []struct {
+		resource string
+		steps    []GuideStep
+	}{
+		{"cpu", cpuSteps(SystemInfo{})},
+		{"memory", memorySteps(SystemInfo{HasPSI: true})},
+		{"disk", diskSteps(SystemInfo{HasPSI: true})},
+		{"network", networkSteps(SystemInfo{})},
+	}
+	for _, tc := range cases {
+		step, ok := findGuideStep(tc.steps, "errors")
+		if !ok {
+			t.Fatalf("%s: expected errors step", tc.resource)
+		}
+		if step.EmptyOutputMessage == "" {
+			t.Fatalf("%s: expected empty-output message for errors step", tc.resource)
+		}
+	}
+}
+
+func findGuideStep(steps []GuideStep, name string) (GuideStep, bool) {
+	for _, step := range steps {
+		if step.Name == name {
+			return step, true
+		}
+	}
+	return GuideStep{}, false
+}

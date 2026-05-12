@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"math/rand"
 	"os"
 )
 
@@ -83,7 +82,7 @@ func practiceEvaluate(s *Session) bool {
 		return false
 	}
 
-	rand.Shuffle(len(qs), func(i, j int) { qs[i], qs[j] = qs[j], qs[i] })
+	appRand.Shuffle(len(qs), func(i, j int) { qs[i], qs[j] = qs[j], qs[i] })
 	n := 4
 	if len(qs) < n {
 		n = len(qs)

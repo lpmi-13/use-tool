@@ -68,11 +68,12 @@ func memorySteps(si SystemInfo) []GuideStep {
 			"at PSS via `smem` or /proc/<pid>/smaps_rollup.",
 	})
 	steps = append(steps, GuideStep{
-		Name:        "errors",
-		Intro:       "Step 5: kernel memory errors mean OOM kills.\nEven if the system is fine *now*, recent OOM events explain flapping services.",
-		Suggested:   "dmesg -T 2>/dev/null | grep -iE 'killed process|out of memory|oom-killer' | tail",
-		QuestionsFn: oomQuestions,
-		AcceptAny:   true,
+		Name:               "errors",
+		Intro:              "Step 5: kernel memory errors mean OOM kills.\nEven if the system is fine *now*, recent OOM events explain flapping services.",
+		Suggested:          "dmesg -T 2>/dev/null | grep -iE 'killed process|out of memory|oom-killer' | tail",
+		QuestionsFn:        oomQuestions,
+		AcceptAny:          true,
+		EmptyOutputMessage: "No matching OOM errors found.",
 		Teaching: "When the kernel runs out of memory it picks a victim by `oom_score`\n" +
 			"and kills it. The dmesg line records the victim's PID, RSS at time of\n" +
 			"kill, and which cgroup hit its limit (if container-scoped).",
@@ -106,26 +107,83 @@ func meminfoQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !meminfoMarkerRe.MatchString(c.Output) {
 		return nil
 	}
-	return []Question{
-		{
-			Stem:    "In /proc/meminfo, what does `MemAvailable` represent that `MemFree` does not?",
+	total, tok := parseMeminfoKB(c.Output, "MemTotal")
+	free, fok := parseMeminfoKB(c.Output, "MemFree")
+	avail, aok := parseMeminfoKB(c.Output, "MemAvailable")
+	cached, cok := parseMeminfoKB(c.Output, "Cached")
+	buffers, bok := parseMeminfoKB(c.Output, "Buffers")
+	swapFree, sfok := parseMeminfoKB(c.Output, "SwapFree")
+
+	var qs []Question
+	if fok && aok {
+		qs = append(qs, Question{
+			Stem: fmt.Sprintf(
+				"This run reported `MemFree` as %s and `MemAvailable` as %s.\n"+
+					"What does `MemAvailable` include that makes it the better USE baseline?",
+				formatKiBGiB(free), formatKiBGiB(avail)),
 			Correct: "An estimate of memory allocatable without swapping, including reclaimable cache",
 			Distractors: []string{
 				"Memory mapped by user-space processes only",
 				"The size of the largest contiguous free block",
 				"Memory minus what the kernel has reserved for buffers",
 			},
-		},
-		{
-			Stem:    "If `Cached` is 6 GiB and the system feels memory-constrained, what's the right next step?",
+		})
+	}
+	if tok && aok && total > 0 {
+		usedPct := (total - avail) / total * 100
+		correct := fmt.Sprintf("%.0f%%", usedPct)
+		pool := []string{
+			fmt.Sprintf("%.0f%%", clamp(usedPct+25, 0, 100)),
+			fmt.Sprintf("%.0f%%", clamp(usedPct-20, 0, 100)),
+			fmt.Sprintf("%.0f%%", clamp(usedPct+10, 0, 100)),
+			"0%", "25%", "50%", "75%", "99%",
+		}
+		qs = append(qs, makeRecallQuestion(
+			fmt.Sprintf(
+				"This run reported `MemTotal` as %s and `MemAvailable` as %s.\n"+
+					"About what memory-used percentage does that imply when reclaimable cache is treated as available?",
+				formatKiBGiB(total), formatKiBGiB(avail)),
+			correct, pool)...)
+	}
+	if cok && aok {
+		cacheText := formatKiBGiB(cached)
+		if bok {
+			cacheText = fmt.Sprintf("%s (`Cached`) plus %s (`Buffers`)", formatKiBGiB(cached), formatKiBGiB(buffers))
+		}
+		qs = append(qs, Question{
+			Stem: fmt.Sprintf(
+				"This run reported %s and `MemAvailable` as %s.\n"+
+					"If the system feels memory-constrained, what's the right next step?",
+				cacheText, formatKiBGiB(avail)),
 			Correct: "Check `MemAvailable` — most page cache is reclaimable, so high `Cached` is not itself a problem",
 			Distractors: []string{
 				"Run `echo 3 > /proc/sys/vm/drop_caches` to free it",
 				"Conclude the system is out of memory and needs more RAM",
 				"Restart the largest process to release its cached pages",
 			},
-		},
+		})
 	}
+	if aok {
+		correct := fmt.Sprintf("`MemAvailable`: %s", formatKiBGiB(avail))
+		var pool []string
+		if fok {
+			pool = append(pool, fmt.Sprintf("`MemFree`: %s", formatKiBGiB(free)))
+		}
+		if cok {
+			pool = append(pool, fmt.Sprintf("`Cached`: %s", formatKiBGiB(cached)))
+		}
+		if sfok {
+			pool = append(pool, fmt.Sprintf("`SwapFree`: %s", formatKiBGiB(swapFree)))
+		}
+		qs = append(qs, makeRecallQuestion(
+			"From this /proc/meminfo output, which field is the best first estimate of memory available for new allocations without swapping?",
+			correct, pool)...)
+	}
+	return qs
+}
+
+func formatKiBGiB(kib float64) string {
+	return fmt.Sprintf("%.1f GiB", kib/1024/1024)
 }
 
 func freeQuestions(si SystemInfo, c CapturedCommand) []Question {
@@ -158,7 +216,7 @@ func vmstatMemoryQuestions(si SystemInfo, c CapturedCommand) []Question {
 		{"si", "Pages swapped in from swap to memory per second", "Pages swapped out from memory to swap per second"},
 		{"so", "Pages swapped out from memory to swap per second", "Pages swapped in from swap to memory per second"},
 	})
-	return []Question{
+	qs := []Question{
 		{
 			Stem:    fmt.Sprintf("In `vmstat` output, what does the `%s` column under `swap` represent?", pick.col),
 			Correct: pick.correct,
@@ -168,19 +226,86 @@ func vmstatMemoryQuestions(si SystemInfo, c CapturedCommand) []Question {
 				"Free swap space in kilobytes",
 			},
 		},
-		{
-			Stem:    "If `vmstat` shows `si`/`so` consistently at zero but the system feels slow, what should you check next?",
-			Correct: "PSI (/proc/pressure/memory) — pressure can exist at the cgroup level without host-level swap activity",
-			Distractors: []string{
-				"The `swpd` column to confirm swap is configured",
-				"`free -h` again, since vmstat samples are often stale",
-				"Disable swap and re-test — swap is the only source of memory pressure",
-			},
-		},
 	}
+
+	siV, siOK := extractVmstatColumn("si")(si, []CapturedCommand{c})
+	soV, soOK := extractVmstatColumn("so")(si, []CapturedCommand{c})
+	if siOK && soOK {
+		swapMax := maxFloat(siV.Max(), soV.Max())
+		correct := fmt.Sprintf("%.0f", swapMax)
+		pool := []string{
+			fmt.Sprintf("%.0f", swapMax+10),
+			fmt.Sprintf("%.0f", swapMax+50),
+			fmt.Sprintf("%.0f", swapMax*5+1),
+			"0", "10", "100", "1000",
+		}
+		qs = append(qs, makeRecallQuestion(
+			fmt.Sprintf(
+				"This `vmstat` run reported `si` samples %s and `so` samples %s.\n"+
+					"What was the highest observed swap-activity sample across those two columns?",
+				formatSamples(siV.Samples), formatSamples(soV.Samples)),
+			correct, pool)...)
+
+		var correctInterpretation string
+		var distractors []string
+		if swapMax == 0 {
+			correctInterpretation = "No host-level swap-in or swap-out activity was observed in these samples; check PSI if the system still feels slow"
+			distractors = []string{
+				"Memory pressure is impossible because swap activity is zero",
+				"The system is definitely swapping because `swpd` was present in the header",
+				"The `si`/`so` columns show free swap capacity, not activity",
+			}
+		} else {
+			correctInterpretation = "At least one sample showed paging activity, so the working set may be exceeding RAM during the sample window"
+			distractors = []string{
+				"Non-zero `si`/`so` is harmless because it only counts page cache reclamation",
+				"Swap activity rules out memory pressure and points to disk errors only",
+				"The `si`/`so` columns show free swap capacity, not activity",
+			}
+		}
+		qs = append(qs, Question{
+			Stem: fmt.Sprintf(
+				"This `vmstat` run had max `si` %.0f and max `so` %.0f.\n"+
+					"Which interpretation best fits these samples?",
+				siV.Max(), soV.Max()),
+			Correct:     correctInterpretation,
+			Distractors: distractors,
+		})
+		if swapMax == 0 {
+			qs = append(qs, Question{
+				Stem: fmt.Sprintf(
+					"This `vmstat` run showed max `si` %.0f and max `so` %.0f.\n"+
+						"If the system still feels slow, what should you check next?",
+					siV.Max(), soV.Max()),
+				Correct: "PSI (/proc/pressure/memory) — pressure can exist at the cgroup level without host-level swap activity",
+				Distractors: []string{
+					"The `swpd` column to confirm swap is configured",
+					"`free -h` again, since vmstat samples are often stale",
+					"Disable swap and re-test — swap is the only source of memory pressure",
+				},
+			})
+		}
+	}
+	return qs
 }
 
-var psiMemoryHeaderRe = regexp.MustCompile(`(?m)^some avg10=`)
+func formatSamples(samples []float64) string {
+	if len(samples) == 0 {
+		return "[]"
+	}
+	out := make([]string, 0, len(samples))
+	for _, sample := range samples {
+		out = append(out, fmt.Sprintf("%.0f", sample))
+	}
+	return "[" + strings.Join(out, ", ") + "]"
+}
+
+func maxFloat(a, b float64) float64 {
+	if a > b {
+		return a
+	}
+	return b
+}
 
 func psiMemoryQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !psiMemoryHeaderRe.MatchString(c.Output) {
@@ -195,7 +320,7 @@ func psiMemoryQuestions(si SystemInfo, c CapturedCommand) []Question {
 		{"some", "The percentage of time during which at least one task was stalled on memory", "The percentage of time during which all non-idle tasks were simultaneously stalled on memory"},
 		{"full", "The percentage of time during which all non-idle tasks were simultaneously stalled on memory", "The percentage of time during which at least one task was stalled on memory"},
 	})
-	return []Question{
+	qs := []Question{
 		{
 			Stem:    fmt.Sprintf("In /proc/pressure/memory, what does the `%s` line measure?", pick.metric),
 			Correct: pick.correct,
@@ -215,13 +340,53 @@ func psiMemoryQuestions(si SystemInfo, c CapturedCommand) []Question {
 			},
 		},
 	}
+	someV, someOK := extractPSIMemory("some")(si, []CapturedCommand{c})
+	fullV, fullOK := extractPSIMemory("full")(si, []CapturedCommand{c})
+	if someOK && fullOK {
+		qs = append(qs, Question{
+			Stem: fmt.Sprintf(
+				"This PSI sample reported `some avg10=%.2f` and `full avg10=%.2f`.\n"+
+					"Which reading is the stronger saturation signal for throughput?",
+				someV.Number, fullV.Number),
+			Correct: fmt.Sprintf("`full avg10=%.2f` — it means all non-idle tasks were simultaneously stalled during that time-share", fullV.Number),
+			Distractors: []string{
+				fmt.Sprintf("`some avg10=%.2f` — it is always stronger because it is usually larger", someV.Number),
+				"`MemFree` — PSI does not describe stalls",
+				"`total` — it directly reports the current percent of memory in use",
+			},
+		})
+
+		var correct string
+		switch {
+		case fullV.Number > 0:
+			correct = "There was measurable full memory pressure in the avg10 window; tasks were stalled together for part of that interval"
+		case someV.Number > 0:
+			correct = "Some task stalled on memory, but there was no full-system stall in the avg10 window"
+		default:
+			correct = "The avg10 window showed no current memory stalls in either PSI line"
+		}
+		qs = append(qs, Question{
+			Stem: fmt.Sprintf(
+				"Given `some avg10=%.2f` and `full avg10=%.2f` from this run, what should you conclude?",
+				someV.Number, fullV.Number),
+			Correct: correct,
+			Distractors: []string{
+				"These values are memory utilization percentages, so compare them to 100% used memory",
+				"`some` and `full` are cumulative counters, so their avg10 values cannot describe the current window",
+				"Any zero in either line proves there is no memory pressure anywhere on the host",
+			},
+		})
+	}
+	return qs
 }
+
+var psiMemoryHeaderRe = regexp.MustCompile(`(?m)^some avg10=`)
 
 func psRssQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !strings.Contains(c.Output, "RSS") && !strings.Contains(strings.ToLower(c.Output), "rss") {
 		return nil
 	}
-	return []Question{{
+	qs := []Question{{
 		Stem:    "Summing RSS across all processes can exceed total physical memory used. Why?",
 		Correct: "Shared pages (libc, mmaped binaries) are counted once in each process's RSS",
 		Distractors: []string{
@@ -230,6 +395,36 @@ func psRssQuestions(si SystemInfo, c CapturedCommand) []Question {
 			"The kernel double-counts pages that are also in the page cache",
 		},
 	}}
+	if proc, rss, ok := topRSSProcess(c.Output); ok {
+		qs = append(qs, Question{
+			Stem: fmt.Sprintf(
+				"In this `ps` output, the largest RSS entry is `%s` at %s.\n"+
+					"What is the most important caveat when interpreting that number?",
+				proc, formatKiBGiB(rss)),
+			Correct: "RSS includes shared pages, so this is not the process's fully private memory footprint",
+			Distractors: []string{
+				"RSS includes memory that has already been swapped out",
+				"RSS is a cumulative lifetime allocation counter",
+				"RSS is the amount of swap reserved for the process",
+			},
+		})
+	}
+	return qs
+}
+
+func topRSSProcess(output string) (string, float64, bool) {
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 || strings.EqualFold(fields[1], "RSS") {
+			continue
+		}
+		rss, err := strconv.ParseFloat(fields[1], 64)
+		if err != nil {
+			continue
+		}
+		return fields[2], rss, true
+	}
+	return "", 0, false
 }
 
 func oomQuestions(si SystemInfo, c CapturedCommand) []Question {

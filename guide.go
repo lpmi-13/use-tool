@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 func cmdGuide(args []string) {
@@ -34,7 +35,7 @@ func cmdGuide(args []string) {
 
 		captured := guideStepCommand(s, step)
 		if captured != nil {
-			for _, q := range step.QuestionsFn(si, *captured) {
+			if q, ok := chooseGuideQuestion(guideQuestions(si, step, *captured)); ok {
 				total++
 				result := askQuestionWithCommandRunner(q, s.runAndCapture)
 				if result.Quit {
@@ -57,13 +58,29 @@ func cmdGuide(args []string) {
 	}
 
 	fmt.Println("\n--- Snapshot of what you observed ---")
-	s.Snapshot().Print()
+	snap := s.Snapshot()
+	snap.Print()
+	printSynopsis(inv, si, snap)
 
 	if total > 0 {
 		fmt.Printf("=== Walkthrough complete: %d / %d on the inline questions ===\n", score, total)
 	} else {
 		fmt.Println("=== Walkthrough complete ===")
 	}
+}
+
+func guideQuestions(si SystemInfo, step GuideStep, captured CapturedCommand) []Question {
+	if step.QuestionsFn == nil {
+		return nil
+	}
+	return step.QuestionsFn(si, captured)
+}
+
+func chooseGuideQuestion(questions []Question) (Question, bool) {
+	if len(questions) == 0 {
+		return Question{}, false
+	}
+	return pickRandom(questions), true
 }
 
 func pauseGuide() bool {
@@ -108,10 +125,13 @@ func guideStepCommand(s *Session, step GuideStep) *CapturedCommand {
 			fmt.Println("(Command failed; fix it and try again, or `skip`.)")
 			continue
 		}
+		if strings.TrimSpace(c.Output) == "" && step.EmptyOutputMessage != "" {
+			fmt.Println(step.EmptyOutputMessage)
+		}
 		if step.AcceptAny {
 			return &c
 		}
-		if len(step.QuestionsFn(s.System, c)) > 0 {
+		if len(guideQuestions(s.System, step, c)) > 0 {
 			return &c
 		}
 		fmt.Printf("(That command didn't produce output this step recognizes — try `%s`, or `skip`.)\n", step.Suggested)

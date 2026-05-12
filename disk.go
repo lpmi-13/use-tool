@@ -26,10 +26,11 @@ var diskInvestigation = &Investigation{
 func diskSteps(si SystemInfo) []GuideStep {
 	steps := []GuideStep{
 		{
-			Name:      "devices",
-			Intro:     "Step 1: orient yourself to what block devices the system has.",
-			Suggested: "lsblk",
-			AcceptAny: true,
+			Name:        "devices",
+			Intro:       "Step 1: orient yourself to what block devices the system has.",
+			Suggested:   "lsblk",
+			QuestionsFn: lsblkQuestions,
+			AcceptAny:   true,
 			Teaching: "Note which devices are physical disks (TYPE=disk) vs partitions (part)\n" +
 				"vs LVM volumes (lvm). Per-device metrics from iostat will use the disk\n" +
 				"names you see here.",
@@ -72,11 +73,12 @@ func diskSteps(si SystemInfo) []GuideStep {
 			"that's where to look next.",
 	})
 	steps = append(steps, GuideStep{
-		Name:        "errors",
-		Intro:       "Step 5: kernel I/O errors. Filesystem-level errors are the smoking\ngun for failing media.",
-		Suggested:   "dmesg -T 2>/dev/null | grep -iE 'i/o error|EXT4-fs error|XFS|Buffer I/O error|read-only' | tail",
-		QuestionsFn: diskDmesgQuestions,
-		AcceptAny:   true,
+		Name:               "errors",
+		Intro:              "Step 5: kernel I/O errors. Filesystem-level errors are the smoking\ngun for failing media.",
+		Suggested:          "dmesg -T 2>/dev/null | grep -iE 'i/o error|EXT4-fs error|XFS|Buffer I/O error|read-only' | tail",
+		QuestionsFn:        diskDmesgQuestions,
+		AcceptAny:          true,
+		EmptyOutputMessage: "No matching I/O errors found.",
 		Teaching: "Recurring `I/O error` lines or a kernel-initiated read-only remount\n" +
 			"(`Remounting filesystem read-only`) indicate hardware that's failing or\n" +
 			"already failed. Apps will see EROFS on writes from that point on.",

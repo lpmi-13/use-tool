@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"math"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -72,4 +75,66 @@ func TestSnapshotSourcesDeduped(t *testing.T) {
 	if count != 1 {
 		t.Errorf("expected dedup of identical commands, got %d entries", count)
 	}
+}
+
+func TestSnapshotPrintAlignsValueColumnToLongestTitle(t *testing.T) {
+	snap := Snapshot{
+		Sources: []string{"iostat -xz 1 3"},
+		Sections: []SnapshotSection{{
+			Title: "Utilization",
+			Items: []SnapshotItem{
+				{Title: "Max %util across devices", Value: Value{Number: 2.31, Unit: "%"}},
+				{Title: "Peak per-device IOPS (r/s + w/s)", Value: Value{Number: 19.1, Unit: " IOPS"}},
+			},
+		}},
+	}
+
+	out := captureStdout(func() {
+		snap.Print()
+	})
+
+	lines := strings.Split(out, "\n")
+	positions := []int{}
+	for _, line := range lines {
+		switch {
+		case strings.Contains(line, "Max %util across devices"):
+			positions = append(positions, strings.Index(line, "2.31%"))
+		case strings.Contains(line, "Peak per-device IOPS"):
+			positions = append(positions, strings.Index(line, "19.1 IOPS"))
+		}
+	}
+	if len(positions) != 2 {
+		t.Fatalf("expected 2 snapshot item lines, got positions %v in output:\n%s", positions, out)
+	}
+	if positions[0] != positions[1] {
+		t.Fatalf("value columns not aligned: positions %v in output:\n%s", positions, out)
+	}
+}
+
+func TestSnapshotItemTitleWidthHasMinimumAndExpands(t *testing.T) {
+	short := Snapshot{Sections: []SnapshotSection{{Items: []SnapshotItem{{Title: "short"}}}}}
+	if got := short.itemTitleWidth(); got != 30 {
+		t.Fatalf("short title width = %d, want 30", got)
+	}
+	longTitle := "Peak per-device IOPS (r/s + w/s)"
+	long := Snapshot{Sections: []SnapshotSection{{Items: []SnapshotItem{{Title: longTitle}}}}}
+	if got := long.itemTitleWidth(); got != len(longTitle) {
+		t.Fatalf("long title width = %d, want %d", got, len(longTitle))
+	}
+}
+
+func captureStdout(fn func()) string {
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		panic(err)
+	}
+	os.Stdout = w
+	fn()
+	w.Close()
+	os.Stdout = old
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	r.Close()
+	return buf.String()
 }

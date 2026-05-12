@@ -118,10 +118,11 @@ func (s Snapshot) Print() {
 	}
 	fmt.Printf("Captured from: %s\n", strings.Join(s.Sources, "; "))
 	fmt.Println()
+	titleWidth := s.itemTitleWidth()
 	for _, sec := range s.Sections {
 		fmt.Println(sec.Title)
 		for _, it := range sec.Items {
-			fmt.Printf("  %-30s %s\n", it.Title, formatValue(it.Value))
+			fmt.Printf("  %-*s %s\n", titleWidth, it.Title, formatValue(it.Value))
 		}
 		fmt.Println()
 	}
@@ -132,6 +133,21 @@ func (s Snapshot) Print() {
 		}
 		fmt.Println()
 	}
+}
+
+func (s Snapshot) itemTitleWidth() int {
+	width := 0
+	for _, sec := range s.Sections {
+		for _, it := range sec.Items {
+			if len(it.Title) > width {
+				width = len(it.Title)
+			}
+		}
+	}
+	if width < 30 {
+		return 30
+	}
+	return width
 }
 
 func formatValue(v Value) string {

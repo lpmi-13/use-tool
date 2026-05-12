@@ -435,46 +435,68 @@ func TestNetRxDropsRecallAtZero(t *testing.T) {
 
 func TestSarDevQuestionsCoversBothDirections(t *testing.T) {
 	c := CapturedCommand{Cmd: "sar -n DEV 1 2", Output: sampleSarDev}
-	seenRx, seenTx := false, false
+	seen := map[string]bool{}
+	wantCorrect := map[string]string{
+		"rxkB/s": "Receive throughput in kilobytes per second, averaged over the sample interval",
+		"txkB/s": "Transmit throughput in kilobytes per second, averaged over the sample interval",
+	}
 	for i := 0; i < 100; i++ {
 		qs := sarDevQuestions(SystemInfo{}, c)
 		if len(qs) < 1 {
 			t.Fatalf("iteration %d: expected at least 1 question", i)
 		}
-		if strings.Contains(qs[0].Stem, "rxkB/s") {
-			seenRx = true
+		column := ""
+		for candidate := range wantCorrect {
+			if strings.Contains(qs[0].Stem, candidate) {
+				column = candidate
+				break
+			}
 		}
-		if strings.Contains(qs[0].Stem, "txkB/s") {
-			seenTx = true
+		if column == "" {
+			t.Fatalf("iteration %d: stem does not ask about rx/tx throughput: %q", i, qs[0].Stem)
 		}
+		if qs[0].Correct != wantCorrect[column] {
+			t.Fatalf("iteration %d: column %q had correct answer %q, want %q", i, column, qs[0].Correct, wantCorrect[column])
+		}
+		seen[column] = true
 	}
-	if !seenRx {
-		t.Error("rxkB/s never appeared across 100 iterations")
-	}
-	if !seenTx {
-		t.Error("txkB/s never appeared across 100 iterations")
+	for _, want := range []string{"rxkB/s", "txkB/s"} {
+		if !seen[want] {
+			t.Errorf("column %q never appeared across 100 iterations; saw %v", want, seen)
+		}
 	}
 }
 
 func TestSarEdevQuestionsCoversBothDirections(t *testing.T) {
 	c := CapturedCommand{Cmd: "sar -n EDEV 1 2", Output: sampleSarEdev}
-	seenRx, seenTx := false, false
+	seen := map[string]bool{}
+	wantCorrect := map[string]string{
+		"rxdrop/s": "The NIC ring buffer or kernel queue is filling faster than the system can drain incoming packets (can be tuned with `ethtool -G`)",
+		"txdrop/s": "The kernel transmit queue (qdisc) is dropping outgoing packets, often because tx_queue_len is too small for offered load",
+	}
 	for i := 0; i < 100; i++ {
 		qs := sarEdevQuestions(SystemInfo{}, c)
 		if len(qs) != 1 {
 			t.Fatalf("iteration %d: expected 1 question", i)
 		}
-		if strings.Contains(qs[0].Stem, "rxdrop/s") {
-			seenRx = true
+		column := ""
+		for candidate := range wantCorrect {
+			if strings.Contains(qs[0].Stem, candidate) {
+				column = candidate
+				break
+			}
 		}
-		if strings.Contains(qs[0].Stem, "txdrop/s") {
-			seenTx = true
+		if column == "" {
+			t.Fatalf("iteration %d: stem does not ask about rx/tx drops: %q", i, qs[0].Stem)
 		}
+		if qs[0].Correct != wantCorrect[column] {
+			t.Fatalf("iteration %d: column %q had correct answer %q, want %q", i, column, qs[0].Correct, wantCorrect[column])
+		}
+		seen[column] = true
 	}
-	if !seenRx {
-		t.Error("rxdrop/s never appeared across 100 iterations")
-	}
-	if !seenTx {
-		t.Error("txdrop/s never appeared across 100 iterations")
+	for _, want := range []string{"rxdrop/s", "txdrop/s"} {
+		if !seen[want] {
+			t.Errorf("column %q never appeared across 100 iterations; saw %v", want, seen)
+		}
 	}
 }

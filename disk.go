@@ -109,35 +109,101 @@ func iostatQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !iostatHeaderRe.MatchString(c.Output) {
 		return nil
 	}
-	return []Question{
-		{
-			Stem:    "In `iostat -x` output, what does the `%util` column literally measure?",
-			Correct: "The fraction of wall-clock time during which at least one I/O request was in flight",
-			Distractors: []string{
-				"The fraction of the device's IOPS capacity currently in use",
-				"The percentage of disk space currently allocated",
-				"The percentage of throughput consumed relative to the bus bandwidth",
-			},
-		},
-		{
-			Stem:    "Why is `%util` near 100% NOT a reliable saturation signal on an NVMe or SSD device?",
-			Correct: "Non-rotational devices serve I/O in parallel; \"at least one in flight\" can be true continuously without the device queueing or slowing down",
-			Distractors: []string{
-				"iostat does not actually support non-rotational devices",
-				"%util is computed differently for NVMe and is always near 100%",
-				"%util is reset on each sample, so high values are sampling artifacts",
-			},
-		},
-		{
-			Stem:    "What does the `aqu-sz` (or `avgqu-sz`) column represent in iostat?",
-			Correct: "Average number of I/O requests outstanding to the device (queued plus in service)",
-			Distractors: []string{
-				"Average request size in kilobytes",
-				"Average time each request spent in queue, in milliseconds",
-				"Maximum queue depth supported by the device driver",
-			},
-		},
+	picks := availableIostatQuestionPicks(c.Output)
+	if len(picks) == 0 {
+		return nil
 	}
+	pick := pickRandom(picks)
+	return []Question{{
+		Stem:        fmt.Sprintf("In `iostat -x` output, what does the `%s` column represent?", pick.Column),
+		Correct:     pick.Correct,
+		Distractors: pick.Distractors,
+	}}
+}
+
+var iostatQuestionPicks = []columnQuestionPick{
+	{
+		Column:  "r/s",
+		Correct: "Read requests completed per second for the device",
+		Distractors: []string{
+			"Read kilobytes completed per second for the device",
+			"Read requests currently queued for the device",
+			"Average read request latency in milliseconds",
+		},
+	},
+	{
+		Column:  "w/s",
+		Correct: "Write requests completed per second for the device",
+		Distractors: []string{
+			"Write kilobytes completed per second for the device",
+			"Write requests currently queued for the device",
+			"Average write request latency in milliseconds",
+		},
+	},
+	{
+		Column:  "r_await",
+		Correct: "Average read request latency in milliseconds, including queueing and service time",
+		Distractors: []string{
+			"Average read request size in kilobytes",
+			"Read requests completed per second",
+			"Average number of reads waiting in the queue only",
+		},
+	},
+	{
+		Column:  "w_await",
+		Correct: "Average write request latency in milliseconds, including queueing and service time",
+		Distractors: []string{
+			"Average write request size in kilobytes",
+			"Write requests completed per second",
+			"Average number of writes waiting in the queue only",
+		},
+	},
+	{
+		Column:  "await",
+		Correct: "Average request latency in milliseconds, including queueing and service time",
+		Distractors: []string{
+			"Average request size in kilobytes",
+			"Average number of requests outstanding",
+			"Percent of time the device had at least one request in flight",
+		},
+	},
+	{
+		Column:  "aqu-sz",
+		Correct: "Average number of I/O requests outstanding to the device (queued plus in service)",
+		Distractors: []string{
+			"Average request size in kilobytes",
+			"Average time each request spent in queue, in milliseconds",
+			"Maximum queue depth supported by the device driver",
+		},
+	},
+	{
+		Column:  "avgqu-sz",
+		Correct: "Average number of I/O requests outstanding to the device (queued plus in service)",
+		Distractors: []string{
+			"Average request size in sectors",
+			"Average request latency in milliseconds",
+			"Maximum queue depth supported by the device driver",
+		},
+	},
+	{
+		Column:  "%util",
+		Correct: "The fraction of wall-clock time during which at least one I/O request was in flight",
+		Distractors: []string{
+			"The fraction of the device's IOPS capacity currently in use",
+			"The percentage of disk space currently allocated",
+			"The percentage of throughput consumed relative to the bus bandwidth",
+		},
+	},
+}
+
+func availableIostatQuestionPicks(output string) []columnQuestionPick {
+	var picks []columnQuestionPick
+	for _, pick := range iostatQuestionPicks {
+		if outputHasColumn(output, pick.Column) {
+			picks = append(picks, pick)
+		}
+	}
+	return picks
 }
 
 func lsblkQuestions(si SystemInfo, c CapturedCommand) []Question {

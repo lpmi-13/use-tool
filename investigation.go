@@ -39,6 +39,11 @@ type Question struct {
 	Distractors []string
 }
 
+type QuestionResult struct {
+	Correct bool
+	Quit    bool
+}
+
 type SynthesisRule struct {
 	Requires []string
 	Generate func(SystemInfo, map[string]Value) (Question, bool)
@@ -75,10 +80,11 @@ func getInvestigation(name string) (*Investigation, error) {
 	return inv, nil
 }
 
-func askQuestion(q Question) bool {
+func askQuestion(q Question) QuestionResult {
 	options := append([]string{q.Correct}, q.Distractors...)
 	rand.Shuffle(len(options), func(i, j int) { options[i], options[j] = options[j], options[i] })
 	fmt.Println()
+	fmt.Println("--- Check ---")
 	fmt.Println(q.Stem)
 	for i, o := range options {
 		fmt.Printf("  %d. %s\n", i+1, o)
@@ -87,7 +93,11 @@ func askQuestion(q Question) bool {
 		fmt.Print("Choice: ")
 		line, ok := readLine()
 		if !ok {
-			return false
+			return QuestionResult{Quit: true}
+		}
+		if isExitCommand(line) {
+			fmt.Println("Exiting.")
+			return QuestionResult{Quit: true}
 		}
 		n, err := strconv.Atoi(line)
 		if err != nil || n < 1 || n > len(options) {
@@ -95,11 +105,24 @@ func askQuestion(q Question) bool {
 			continue
 		}
 		chosen := options[n-1]
+		fmt.Println()
+		fmt.Println("--- Feedback ---")
+		fmt.Printf("Your answer: %s\n", chosen)
 		if chosen == q.Correct {
-			fmt.Println("Correct.")
-			return true
+			fmt.Println("Result: correct")
+			return QuestionResult{Correct: true}
 		}
-		fmt.Printf("Not quite. Correct answer: %s\n", q.Correct)
+		fmt.Println("Result: not quite")
+		fmt.Printf("Correct answer: %s\n", q.Correct)
+		return QuestionResult{}
+	}
+}
+
+func isExitCommand(line string) bool {
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "exit", "quit":
+		return true
+	default:
 		return false
 	}
 }

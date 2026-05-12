@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -176,6 +177,66 @@ func TestIostatQuestionsRejectsUnrelated(t *testing.T) {
 	c := CapturedCommand{Cmd: "iostat", Output: "no extended header here"}
 	if qs := iostatQuestions(si, c); qs != nil {
 		t.Error("expected nil for output without %util header")
+	}
+}
+
+func TestIostatQuestionsCoversModernColumns(t *testing.T) {
+	c := CapturedCommand{Cmd: "iostat -xz 1 1", Output: sampleIostatModern}
+	wantCorrect := map[string]string{
+		"r/s":     "Read requests completed per second for the device",
+		"w/s":     "Write requests completed per second for the device",
+		"r_await": "Average read request latency in milliseconds, including queueing and service time",
+		"w_await": "Average write request latency in milliseconds, including queueing and service time",
+		"aqu-sz":  "Average number of I/O requests outstanding to the device (queued plus in service)",
+		"%util":   "The fraction of wall-clock time during which at least one I/O request was in flight",
+	}
+	available := availableIostatQuestionPicks(c.Output)
+	if len(available) != len(wantCorrect) {
+		t.Fatalf("expected %d available iostat columns, got %d (%v)", len(wantCorrect), len(available), available)
+	}
+
+	seen := map[string]bool{}
+	for i := 0; i < 500; i++ {
+		qs := iostatQuestions(SystemInfo{}, c)
+		if len(qs) != 1 {
+			t.Fatalf("iteration %d: expected 1 question, got %d", i, len(qs))
+		}
+		column := ""
+		for candidate := range wantCorrect {
+			if strings.Contains(qs[0].Stem, fmt.Sprintf("`%s`", candidate)) {
+				column = candidate
+				break
+			}
+		}
+		if column == "" {
+			t.Fatalf("iteration %d: stem does not ask about a known iostat column: %q", i, qs[0].Stem)
+		}
+		if qs[0].Correct != wantCorrect[column] {
+			t.Fatalf("iteration %d: column %q had correct answer %q, want %q", i, column, qs[0].Correct, wantCorrect[column])
+		}
+		seen[column] = true
+	}
+	for column := range wantCorrect {
+		if !seen[column] {
+			t.Errorf("column %q never appeared across 500 iterations; saw %v", column, seen)
+		}
+	}
+}
+
+func TestIostatQuestionsCoversOlderColumns(t *testing.T) {
+	c := CapturedCommand{Cmd: "iostat -xz 1 1", Output: sampleIostatOlder}
+	wantCorrect := map[string]string{
+		"r/s":      "Read requests completed per second for the device",
+		"w/s":      "Write requests completed per second for the device",
+		"await":    "Average request latency in milliseconds, including queueing and service time",
+		"r_await":  "Average read request latency in milliseconds, including queueing and service time",
+		"w_await":  "Average write request latency in milliseconds, including queueing and service time",
+		"avgqu-sz": "Average number of I/O requests outstanding to the device (queued plus in service)",
+		"%util":    "The fraction of wall-clock time during which at least one I/O request was in flight",
+	}
+	available := availableIostatQuestionPicks(c.Output)
+	if len(available) != len(wantCorrect) {
+		t.Fatalf("expected %d available iostat columns, got %d (%v)", len(wantCorrect), len(available), available)
 	}
 }
 
@@ -380,41 +441,66 @@ Linux 6.1.0  10/05/2024
 14:00:00       UID       PID   kB_rd/s   kB_wr/s kB_ccwr/s iodelay  Command
 14:00:01      1000      1234     12.50    400.00      0.00       2  postgres
 `}
-	seenRead, seenWrite := false, false
+	seen := map[string]bool{}
+	wantCorrect := map[string]string{
+		"kB_rd/s": "The rate at which the process is causing data to be read from storage, in kilobytes per second",
+		"kB_wr/s": "The rate at which the process is causing data to be written to storage, in kilobytes per second",
+	}
 	for i := 0; i < 100; i++ {
 		qs := pidstatDQuestions(SystemInfo{}, c)
 		if len(qs) != 1 {
 			t.Fatalf("iteration %d: expected 1 question", i)
 		}
-		if strings.Contains(qs[0].Stem, "kB_rd/s") {
-			seenRead = true
+		column := ""
+		for candidate := range wantCorrect {
+			if strings.Contains(qs[0].Stem, candidate) {
+				column = candidate
+				break
+			}
 		}
-		if strings.Contains(qs[0].Stem, "kB_wr/s") {
-			seenWrite = true
+		if column == "" {
+			t.Fatalf("iteration %d: stem does not ask about read/write rate: %q", i, qs[0].Stem)
 		}
+		if qs[0].Correct != wantCorrect[column] {
+			t.Fatalf("iteration %d: column %q had correct answer %q, want %q", i, column, qs[0].Correct, wantCorrect[column])
+		}
+		seen[column] = true
 	}
-	if !seenRead {
-		t.Error("kB_rd/s never appeared across 100 iterations")
-	}
-	if !seenWrite {
-		t.Error("kB_wr/s never appeared across 100 iterations")
+	for _, want := range []string{"kB_rd/s", "kB_wr/s"} {
+		if !seen[want] {
+			t.Errorf("column %q never appeared across 100 iterations; saw %v", want, seen)
+		}
 	}
 }
 
 func TestPSIIOQuestionsCoversBothMetrics(t *testing.T) {
 	c := CapturedCommand{Cmd: "cat /proc/pressure/io", Output: samplePSIIO}
 	seen := map[string]bool{}
+	wantCorrect := map[string]string{
+		"`some`": "The percentage of time during which at least one task was stalled on I/O",
+		"`full`": "The percentage of time during which all non-idle tasks were simultaneously stalled on I/O",
+	}
 	for i := 0; i < 100; i++ {
 		qs := psiIOQuestions(SystemInfo{}, c)
 		if len(qs) < 1 {
 			t.Fatalf("iteration %d: expected at least 1 question", i)
 		}
-		seen[qs[0].Correct] = true
+		metric := ""
+		for candidate := range wantCorrect {
+			if strings.Contains(qs[0].Stem, candidate) {
+				metric = candidate
+				break
+			}
+		}
+		if metric == "" {
+			t.Fatalf("iteration %d: stem does not ask about some/full: %q", i, qs[0].Stem)
+		}
+		if qs[0].Correct != wantCorrect[metric] {
+			t.Fatalf("iteration %d: metric %q had correct answer %q, want %q", i, metric, qs[0].Correct, wantCorrect[metric])
+		}
+		seen[metric] = true
 	}
-	for _, want := range []string{
-		"The percentage of time during which at least one task was stalled on I/O",
-		"The percentage of time during which all non-idle tasks were simultaneously stalled on I/O",
-	} {
+	for _, want := range []string{"`some`", "`full`"} {
 		if !seen[want] {
 			t.Errorf("metric %q never appeared across 100 iterations; saw %v", want, seen)
 		}

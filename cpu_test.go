@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -114,6 +115,45 @@ func TestExtractVmstatColumnIOWait(t *testing.T) {
 	}
 }
 
+func TestVmstatQuestionsCoversCPUColumns(t *testing.T) {
+	c := CapturedCommand{Cmd: "vmstat 1 3", Output: sampleVmstat}
+	wantCorrect := map[string]string{
+		"r":  "The number of runnable processes (in the run-queue, including those running)",
+		"b":  "The number of processes blocked in uninterruptible sleep, usually waiting on I/O",
+		"us": "Percent of CPU time spent running user-space code",
+		"sy": "Percent of CPU time spent running kernel code",
+		"id": "Percent of CPU time spent idle",
+		"wa": "Percent of CPU time spent idle while waiting on outstanding I/O",
+		"st": "Percent of CPU time stolen by the hypervisor for other virtual machines",
+	}
+	seen := map[string]bool{}
+	for i := 0; i < 500; i++ {
+		qs := vmstatQuestions(SystemInfo{}, c)
+		if len(qs) != 1 {
+			t.Fatalf("iteration %d: expected 1 question, got %d", i, len(qs))
+		}
+		column := ""
+		for candidate := range wantCorrect {
+			if strings.Contains(qs[0].Stem, fmt.Sprintf("`%s`", candidate)) {
+				column = candidate
+				break
+			}
+		}
+		if column == "" {
+			t.Fatalf("iteration %d: stem does not ask about a known vmstat CPU column: %q", i, qs[0].Stem)
+		}
+		if qs[0].Correct != wantCorrect[column] {
+			t.Fatalf("iteration %d: column %q had correct answer %q, want %q", i, column, qs[0].Correct, wantCorrect[column])
+		}
+		seen[column] = true
+	}
+	for column := range wantCorrect {
+		if !seen[column] {
+			t.Errorf("column %q never appeared across 500 iterations; saw %v", column, seen)
+		}
+	}
+}
+
 func TestExtractMpstatIdleSamples(t *testing.T) {
 	caps := []CapturedCommand{{Cmd: "mpstat -P ALL 1 1", Output: sampleMpstat}}
 	samples := extractMpstatIdleSamples(caps)
@@ -125,6 +165,55 @@ func TestExtractMpstatIdleSamples(t *testing.T) {
 	for _, s := range samples {
 		if !wantSet[s] {
 			t.Errorf("unexpected sample: %v", s)
+		}
+	}
+}
+
+func TestMpstatQuestionsCoversAllColumns(t *testing.T) {
+	c := CapturedCommand{Cmd: "mpstat -P ALL 1 1", Output: sampleMpstat}
+	wantCorrect := map[string]string{
+		"CPU":     "The logical CPU identifier for the row; `all` is the aggregate across CPUs",
+		"%usr":    "Percent of CPU time spent running user-space code",
+		"%nice":   "Percent of CPU time spent running niced user-space processes",
+		"%sys":    "Percent of CPU time spent running kernel code",
+		"%iowait": "Percent of time the CPU was idle while there was an outstanding disk I/O request",
+		"%irq":    "Percent of CPU time spent servicing hardware interrupts",
+		"%soft":   "Percent of CPU time spent servicing software interrupts",
+		"%steal":  "Percent of time stolen by the hypervisor for other virtual machines",
+		"%guest":  "Percent of CPU time spent running a guest virtual CPU",
+		"%gnice":  "Percent of CPU time spent running a niced guest virtual CPU",
+		"%idle":   "Percent of CPU time spent idle with no outstanding disk I/O wait",
+	}
+
+	available := availableMpstatQuestionPicks(c.Output)
+	if len(available) != len(wantCorrect) {
+		t.Fatalf("expected %d available mpstat columns, got %d (%v)", len(wantCorrect), len(available), available)
+	}
+
+	seen := map[string]bool{}
+	for i := 0; i < 1000; i++ {
+		qs := mpstatQuestions(SystemInfo{}, c)
+		if len(qs) != 1 {
+			t.Fatalf("iteration %d: expected 1 question, got %d", i, len(qs))
+		}
+		column := ""
+		for candidate := range wantCorrect {
+			if strings.Contains(qs[0].Stem, fmt.Sprintf("`%s`", candidate)) {
+				column = candidate
+				break
+			}
+		}
+		if column == "" {
+			t.Fatalf("iteration %d: stem does not ask about a known mpstat column: %q", i, qs[0].Stem)
+		}
+		if qs[0].Correct != wantCorrect[column] {
+			t.Fatalf("iteration %d: column %q had correct answer %q, want %q", i, column, qs[0].Correct, wantCorrect[column])
+		}
+		seen[column] = true
+	}
+	for column := range wantCorrect {
+		if !seen[column] {
+			t.Errorf("column %q never appeared across 1000 iterations; saw %v", column, seen)
 		}
 	}
 }
@@ -480,25 +569,39 @@ func TestMpstatIdleRangeRecallAtMax(t *testing.T) {
 }
 
 func TestUptimeQuestionsCoversAllPositions(t *testing.T) {
-	// Run many iterations and confirm that the random pick covers all three
-	// positions over time. With 3 outcomes and 100 trials, the probability
-	// of missing one is (2/3)^100 ≈ 2.5e-18 — effectively zero false negative
-	// for catching a "always picks the same" regression.
+	// Run many iterations and confirm that the random pick asks about all three
+	// positions over time. This checks the stem wording, not just the correct
+	// answer, so it catches regressions where the guide always asks about the
+	// first load average.
 	si := SystemInfo{NumCPU: 4}
 	c := CapturedCommand{Cmd: "uptime", Output: sampleUptime}
+	wantCorrect := map[string]string{
+		"first":  "The 1-minute load average",
+		"middle": "The 5-minute load average",
+		"last":   "The 15-minute load average",
+	}
 	seen := map[string]bool{}
 	for i := 0; i < 100; i++ {
 		qs := uptimeQuestions(si, c)
 		if len(qs) != 1 {
 			t.Fatalf("iteration %d: expected 1 question, got %d", i, len(qs))
 		}
-		seen[qs[0].Correct] = true
+		position := ""
+		for candidate := range wantCorrect {
+			if strings.Contains(qs[0].Stem, candidate) {
+				position = candidate
+				break
+			}
+		}
+		if position == "" {
+			t.Fatalf("iteration %d: stem does not ask about first/middle/last: %q", i, qs[0].Stem)
+		}
+		if qs[0].Correct != wantCorrect[position] {
+			t.Fatalf("iteration %d: position %q had correct answer %q, want %q", i, position, qs[0].Correct, wantCorrect[position])
+		}
+		seen[position] = true
 	}
-	for _, want := range []string{
-		"The 1-minute load average",
-		"The 5-minute load average",
-		"The 15-minute load average",
-	} {
+	for _, want := range []string{"first", "middle", "last"} {
 		if !seen[want] {
 			t.Errorf("position %q never appeared across 100 iterations; saw %v", want, seen)
 		}

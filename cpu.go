@@ -30,7 +30,7 @@ func cpuSteps(si SystemInfo) []GuideStep {
 			Suggested:   "uptime",
 			QuestionsFn: uptimeQuestions,
 			Teaching: fmt.Sprintf(
-				"Rule of thumb: a 1-minute load average above %d (= number of logical CPUs)\n"+
+				"Rule of thumb: a 1-minute load average above %d (= number of logical CPUs on this machine)\n"+
 					"indicates more runnable processes than CPUs — the run-queue is saturated.\n"+
 					"The 5- and 15-minute values show whether that's a transient spike or sustained.",
 				si.NumCPU),
@@ -128,26 +128,84 @@ func vmstatQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !vmstatHeaderRe.MatchString(c.Output) {
 		return nil
 	}
-	return []Question{
-		{
-			Stem:    "In the `vmstat` output, what does the `r` column under `procs` represent?",
-			Correct: "The number of runnable processes (in the run-queue, including those running)",
-			Distractors: []string{
-				"The number of processes blocked waiting on I/O",
-				"Free memory in kilobytes",
-				"The rate of system calls per second",
-			},
+	pick := pickRandom(vmstatCPUQuestionPicks)
+	return []Question{{
+		Stem:        fmt.Sprintf("In the `vmstat` output, what does the `%s` column represent?", pick.Column),
+		Correct:     pick.Correct,
+		Distractors: pick.Distractors,
+	}}
+}
+
+type columnQuestionPick struct {
+	Column      string
+	Correct     string
+	Distractors []string
+}
+
+var vmstatCPUQuestionPicks = []columnQuestionPick{
+	{
+		Column:  "r",
+		Correct: "The number of runnable processes (in the run-queue, including those running)",
+		Distractors: []string{
+			"The number of processes blocked waiting on I/O",
+			"Free memory in kilobytes",
+			"The rate of system calls per second",
 		},
-		{
-			Stem:    "In the `vmstat` output, what does the `wa` column under `cpu` represent?",
-			Correct: "Percent of CPU time spent idle while waiting on outstanding I/O",
-			Distractors: []string{
-				"Percent of CPU time spent in the kernel",
-				"Number of threads waiting on a wakeup",
-				"Average wait time per I/O operation in milliseconds",
-			},
+	},
+	{
+		Column:  "b",
+		Correct: "The number of processes blocked in uninterruptible sleep, usually waiting on I/O",
+		Distractors: []string{
+			"The number of runnable processes in the run-queue",
+			"The number of bytes read from block devices per second",
+			"The number of CPU cores currently busy",
 		},
-	}
+	},
+	{
+		Column:  "us",
+		Correct: "Percent of CPU time spent running user-space code",
+		Distractors: []string{
+			"Percent of CPU time spent running kernel code",
+			"Percent of CPU time spent idle",
+			"Percent of CPU time stolen by the hypervisor",
+		},
+	},
+	{
+		Column:  "sy",
+		Correct: "Percent of CPU time spent running kernel code",
+		Distractors: []string{
+			"Percent of CPU time spent running user-space code",
+			"Percent of CPU time spent idle while waiting on I/O",
+			"Percent of CPU time spent by niced processes",
+		},
+	},
+	{
+		Column:  "id",
+		Correct: "Percent of CPU time spent idle",
+		Distractors: []string{
+			"Percent of CPU time spent waiting on I/O",
+			"Percent of CPU time spent in the kernel",
+			"Percent of CPU time stolen by the hypervisor",
+		},
+	},
+	{
+		Column:  "wa",
+		Correct: "Percent of CPU time spent idle while waiting on outstanding I/O",
+		Distractors: []string{
+			"Percent of CPU time spent in the kernel",
+			"Number of threads waiting on a wakeup",
+			"Average wait time per I/O operation in milliseconds",
+		},
+	},
+	{
+		Column:  "st",
+		Correct: "Percent of CPU time stolen by the hypervisor for other virtual machines",
+		Distractors: []string{
+			"Percent of CPU time spent waiting on local disk I/O",
+			"Percent of CPU time spent servicing software interrupts",
+			"Percent of CPU time reserved for system daemons",
+		},
+	},
 }
 
 var mpstatHeaderRe = regexp.MustCompile(`%idle`)
@@ -156,15 +214,145 @@ func mpstatQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !mpstatHeaderRe.MatchString(c.Output) {
 		return nil
 	}
+	picks := availableMpstatQuestionPicks(c.Output)
+	if len(picks) == 0 {
+		return nil
+	}
+	pick := pickRandom(picks)
 	return []Question{{
-		Stem:    "In the `mpstat` output, what does the `%iowait` column represent?",
+		Stem:        fmt.Sprintf("In the `mpstat` output, what does the `%s` column represent?", pick.Column),
+		Correct:     pick.Correct,
+		Distractors: pick.Distractors,
+	}}
+}
+
+type mpstatQuestionPick struct {
+	Column      string
+	Correct     string
+	Distractors []string
+}
+
+var mpstatQuestionPicks = []mpstatQuestionPick{
+	{
+		Column:  "CPU",
+		Correct: "The logical CPU identifier for the row; `all` is the aggregate across CPUs",
+		Distractors: []string{
+			"The percentage of total CPU capacity used by the row",
+			"The process ID currently running on that CPU",
+			"The physical socket number only, excluding logical CPUs",
+		},
+	},
+	{
+		Column:  "%usr",
+		Correct: "Percent of CPU time spent running user-space code",
+		Distractors: []string{
+			"Percent of CPU time spent in the kernel",
+			"Percent of CPU time spent idle",
+			"Percent of CPU time spent waiting on outstanding disk I/O",
+		},
+	},
+	{
+		Column:  "%nice",
+		Correct: "Percent of CPU time spent running niced user-space processes",
+		Distractors: []string{
+			"Percent of CPU time spent running normal-priority user-space code",
+			"Percent of CPU time spent handling software interrupts",
+			"Percent of CPU time taken by the hypervisor",
+		},
+	},
+	{
+		Column:  "%sys",
+		Correct: "Percent of CPU time spent running kernel code",
+		Distractors: []string{
+			"Percent of CPU time spent running user-space code",
+			"Percent of CPU time spent idle",
+			"Percent of CPU time spent handling hardware interrupts",
+		},
+	},
+	{
+		Column:  "%iowait",
 		Correct: "Percent of time the CPU was idle while there was an outstanding disk I/O request",
 		Distractors: []string{
 			"Percent of CPU time spent processing I/O interrupts",
 			"Percent of time disks were saturated",
 			"Wait time in milliseconds before each I/O completes",
 		},
-	}}
+	},
+	{
+		Column:  "%irq",
+		Correct: "Percent of CPU time spent servicing hardware interrupts",
+		Distractors: []string{
+			"Percent of CPU time spent servicing software interrupts",
+			"Percent of CPU time spent in user-space code",
+			"Percent of CPU time spent idle while waiting for I/O",
+		},
+	},
+	{
+		Column:  "%soft",
+		Correct: "Percent of CPU time spent servicing software interrupts",
+		Distractors: []string{
+			"Percent of CPU time spent servicing hardware interrupts",
+			"Percent of CPU time spent running niced processes",
+			"Percent of CPU time stolen by the hypervisor",
+		},
+	},
+	{
+		Column:  "%steal",
+		Correct: "Percent of time stolen by the hypervisor for other virtual machines",
+		Distractors: []string{
+			"Percent of CPU time spent in software interrupts",
+			"Percent of CPU time spent waiting for local disk I/O",
+			"Percent of CPU time reserved for kernel threads",
+		},
+	},
+	{
+		Column:  "%guest",
+		Correct: "Percent of CPU time spent running a guest virtual CPU",
+		Distractors: []string{
+			"Percent of CPU time stolen by the hypervisor",
+			"Percent of CPU time spent running niced host processes",
+			"Percent of CPU time spent idle",
+		},
+	},
+	{
+		Column:  "%gnice",
+		Correct: "Percent of CPU time spent running a niced guest virtual CPU",
+		Distractors: []string{
+			"Percent of CPU time spent running normal niced host processes",
+			"Percent of CPU time stolen by the hypervisor",
+			"Percent of CPU time spent servicing software interrupts",
+		},
+	},
+	{
+		Column:  "%idle",
+		Correct: "Percent of CPU time spent idle with no outstanding disk I/O wait",
+		Distractors: []string{
+			"Percent of CPU time spent idle while waiting for disk I/O",
+			"Percent of CPU time available after subtracting user-space time only",
+			"Percent of disk capacity currently unused",
+		},
+	},
+}
+
+func availableMpstatQuestionPicks(output string) []mpstatQuestionPick {
+	var picks []mpstatQuestionPick
+	for _, pick := range mpstatQuestionPicks {
+		if outputHasColumn(output, pick.Column) {
+			picks = append(picks, pick)
+		}
+	}
+	return picks
+}
+
+func outputHasColumn(output, column string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		for _, field := range strings.Fields(line) {
+			if field == column {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func dmesgQuestions(si SystemInfo, c CapturedCommand) []Question {

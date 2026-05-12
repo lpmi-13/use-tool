@@ -35,14 +35,22 @@ func cmdGuide(args []string) {
 		if captured != nil {
 			for _, q := range step.QuestionsFn(si, *captured) {
 				total++
-				if askQuestion(q) {
+				result := askQuestion(q)
+				if result.Quit {
+					return
+				}
+				if result.Correct {
 					score++
+				}
+				if !pauseGuide() {
+					return
 				}
 			}
 		}
 
 		if step.Teaching != "" {
 			fmt.Println()
+			fmt.Println("--- Teaching note ---")
 			fmt.Println(step.Teaching)
 		}
 	}
@@ -55,6 +63,20 @@ func cmdGuide(args []string) {
 	} else {
 		fmt.Println("=== Walkthrough complete ===")
 	}
+}
+
+func pauseGuide() bool {
+	fmt.Print("\nPress Enter to continue...")
+	line, ok := readLine()
+	fmt.Println()
+	if !ok {
+		return false
+	}
+	if isExitCommand(line) {
+		fmt.Println("Exiting.")
+		return false
+	}
+	return true
 }
 
 func guideStepCommand(s *Session, step GuideStep) *CapturedCommand {
@@ -71,6 +93,7 @@ func guideStepCommand(s *Session, step GuideStep) *CapturedCommand {
 			return nil
 		}
 		if line == "exit" || line == "quit" {
+			fmt.Println("Exiting.")
 			os.Exit(0)
 		}
 		c := runCommand(line)

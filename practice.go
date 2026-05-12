@@ -83,7 +83,11 @@ func practiceEvaluate(s *Session) bool {
 	}
 	score := 0
 	for i := 0; i < n; i++ {
-		if askQuestion(qs[i]) {
+		result := askQuestion(qs[i])
+		if result.Quit {
+			return true
+		}
+		if result.Correct {
 			score++
 		}
 	}

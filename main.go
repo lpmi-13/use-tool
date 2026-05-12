@@ -31,7 +31,7 @@ func main() {
 	if len(os.Args) < 2 {
 		usage(2)
 	}
-	swallowSigint()
+	exitOnSigint()
 
 	switch os.Args[1] {
 	case "guide":
@@ -218,11 +218,13 @@ func readLine() (string, bool) {
 	return strings.TrimSpace(line), true
 }
 
-func swallowSigint() {
+func exitOnSigint() {
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, syscall.SIGINT)
 	go func() {
 		for range ch {
+			fmt.Fprintln(os.Stderr, "\nInterrupted. Exiting.")
+			os.Exit(130)
 		}
 	}()
 }

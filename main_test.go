@@ -40,3 +40,16 @@ func TestCommandStatusEmptyWhenRequirementsAvailable(t *testing.T) {
 		t.Fatalf("commandStatus() = %q, want empty status", got)
 	}
 }
+
+func TestIsExitCommand(t *testing.T) {
+	for _, input := range []string{"exit", "quit", " EXIT ", "Quit"} {
+		if !isExitCommand(input) {
+			t.Fatalf("isExitCommand(%q) = false, want true", input)
+		}
+	}
+	for _, input := range []string{"", "1", "exiting", "q"} {
+		if isExitCommand(input) {
+			t.Fatalf("isExitCommand(%q) = true, want false", input)
+		}
+	}
+}

@@ -162,6 +162,12 @@ func runCommand(cmdStr string) CapturedCommand {
 	return CapturedCommand{Cmd: cmdStr, Output: buf.String()}
 }
 
+func (s *Session) runAndCapture(cmdStr string) CapturedCommand {
+	c := runCommand(cmdStr)
+	s.appendCaptured(c)
+	return c
+}
+
 // cappedBuffer accepts unlimited writes (so the user still sees full output on
 // stdout via MultiWriter) but only retains the first `limit` bytes for capture.
 type cappedBuffer struct {
@@ -216,6 +222,17 @@ func readLine() (string, bool) {
 		return "", false
 	}
 	return strings.TrimSpace(line), true
+}
+
+func stripCopiedShellPrompt(line string) (string, bool) {
+	line = strings.TrimSpace(line)
+	if line == "$" {
+		return "", true
+	}
+	if strings.HasPrefix(line, "$ ") {
+		return strings.TrimSpace(strings.TrimPrefix(line, "$")), true
+	}
+	return line, false
 }
 
 func exitOnSigint() {

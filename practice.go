@@ -26,6 +26,7 @@ func cmdPractice(args []string) {
 	fmt.Println("Shell commands run on this live system.")
 	fmt.Println("Builtins: `report` (snapshot of what you've gathered), `commands` (cheatsheet),")
 	fmt.Println("          `evaluate` (comprehension check), `help`, `exit`.")
+	fmt.Println("During a check, answer with a number; use `$ <command>` to inspect more data first.")
 	fmt.Println()
 
 	practiceLoop(s)
@@ -41,6 +42,12 @@ func practiceLoop(s *Session) {
 		if line == "" {
 			continue
 		}
+		if cmd, ok := stripCopiedShellPrompt(line); ok {
+			line = cmd
+			if line == "" {
+				continue
+			}
+		}
 		switch line {
 		case "exit", "quit":
 			return
@@ -55,7 +62,7 @@ func practiceLoop(s *Session) {
 				return
 			}
 		default:
-			s.appendCaptured(runCommand(line))
+			s.runAndCapture(line)
 		}
 	}
 }
@@ -83,7 +90,7 @@ func practiceEvaluate(s *Session) bool {
 	}
 	score := 0
 	for i := 0; i < n; i++ {
-		result := askQuestion(qs[i])
+		result := askQuestionWithCommandRunner(qs[i], s.runAndCapture)
 		if result.Quit {
 			return true
 		}

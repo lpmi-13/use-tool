@@ -23,6 +23,7 @@ func cmdGuide(args []string) {
 	fmt.Println(inv.Description)
 	fmt.Printf("\nDetected system: %d logical CPU%s.\n", si.NumCPU, plural(si.NumCPU))
 	fmt.Println("At each step, run the suggested command. Type `skip` to move on, `exit` to quit.")
+	fmt.Println("During a check, answer with a number; use `$ <command>` to inspect more data first.")
 
 	steps := inv.StepsFn(si)
 	score, total := 0, 0
@@ -35,7 +36,7 @@ func cmdGuide(args []string) {
 		if captured != nil {
 			for _, q := range step.QuestionsFn(si, *captured) {
 				total++
-				result := askQuestion(q)
+				result := askQuestionWithCommandRunner(q, s.runAndCapture)
 				if result.Quit {
 					return
 				}
@@ -89,6 +90,12 @@ func guideStepCommand(s *Session, step GuideStep) *CapturedCommand {
 		if line == "" {
 			continue
 		}
+		if cmd, ok := stripCopiedShellPrompt(line); ok {
+			line = cmd
+			if line == "" {
+				continue
+			}
+		}
 		if line == "skip" {
 			return nil
 		}
@@ -96,8 +103,7 @@ func guideStepCommand(s *Session, step GuideStep) *CapturedCommand {
 			fmt.Println("Exiting.")
 			os.Exit(0)
 		}
-		c := runCommand(line)
-		s.appendCaptured(c)
+		c := s.runAndCapture(line)
 		if step.AcceptAny {
 			return &c
 		}

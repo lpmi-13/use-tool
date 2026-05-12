@@ -44,6 +44,8 @@ type QuestionResult struct {
 	Quit    bool
 }
 
+type questionCommandRunner func(string) CapturedCommand
+
 type SynthesisRule struct {
 	Requires []string
 	Generate func(SystemInfo, map[string]Value) (Question, bool)
@@ -81,6 +83,10 @@ func getInvestigation(name string) (*Investigation, error) {
 }
 
 func askQuestion(q Question) QuestionResult {
+	return askQuestionWithCommandRunner(q, nil)
+}
+
+func askQuestionWithCommandRunner(q Question, run questionCommandRunner) QuestionResult {
 	options := append([]string{q.Correct}, q.Distractors...)
 	rand.Shuffle(len(options), func(i, j int) { options[i], options[j] = options[j], options[i] })
 	fmt.Println()
@@ -98,6 +104,22 @@ func askQuestion(q Question) QuestionResult {
 		if isExitCommand(line) {
 			fmt.Println("Exiting.")
 			return QuestionResult{Quit: true}
+		}
+		if cmd, ok := stripCopiedShellPrompt(line); ok {
+			if cmd == "" {
+				fmt.Printf("Type a command after `$`, or pick a number 1-%d.\n", len(options))
+				continue
+			}
+			if run == nil {
+				fmt.Printf("Pick a number 1-%d.\n", len(options))
+				continue
+			}
+			c := run(cmd)
+			if c.Output != "" && !strings.HasSuffix(c.Output, "\n") {
+				fmt.Println()
+			}
+			fmt.Printf("(Ran `%s`; now pick a number 1-%d.)\n", cmd, len(options))
+			continue
 		}
 		n, err := strconv.Atoi(line)
 		if err != nil || n < 1 || n > len(options) {

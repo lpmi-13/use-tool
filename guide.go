@@ -127,6 +127,9 @@ func guideStepCommand(s *Session, step GuideStep) *CapturedCommand {
 		}
 		if strings.TrimSpace(c.Output) == "" && step.EmptyOutputMessage != "" {
 			fmt.Println(step.EmptyOutputMessage)
+			if !pauseGuide() {
+				os.Exit(0)
+			}
 		}
 		if step.AcceptAny {
 			return &c

@@ -195,6 +195,9 @@ func TestGuideStepCommandPrintsEmptyOutputMessage(t *testing.T) {
 	if !strings.Contains(out, "No matching errors found.") {
 		t.Fatalf("expected empty-output message in output:\n%s", out)
 	}
+	if !strings.Contains(out, "Press Enter to continue...") {
+		t.Fatalf("expected pause prompt after empty-output message:\n%s", out)
+	}
 }
 
 func TestErrorGuideStepsHaveEmptyOutputMessages(t *testing.T) {

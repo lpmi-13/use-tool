@@ -47,6 +47,35 @@ func TestCommandStatusEmptyWhenRequirementsAvailable(t *testing.T) {
 	}
 }
 
+func TestCommandStatusUsesDetectedJournalctlAvailability(t *testing.T) {
+	ref := CommandRef{
+		Cmd:      "journalctl -k -b --no-pager -n 30",
+		Requires: []string{"journalctl"},
+	}
+	if got := commandStatus(ref, SystemInfo{}); got != "unavailable: journalctl not found" {
+		t.Fatalf("commandStatus() = %q, want unavailable journalctl", got)
+	}
+	if got := commandStatus(ref, SystemInfo{HasJournalctl: true}); got != "" {
+		t.Fatalf("commandStatus() = %q, want empty status", got)
+	}
+}
+
+func TestCommandReferenceHidesJournalctlWhenUnavailable(t *testing.T) {
+	withoutJournal := captureStdout(func() {
+		printCommands(cpuInvestigation, SystemInfo{})
+	})
+	if strings.Contains(withoutJournal, "journalctl") {
+		t.Fatalf("did not expect journalctl command when unavailable:\n%s", withoutJournal)
+	}
+
+	withJournal := captureStdout(func() {
+		printCommands(cpuInvestigation, SystemInfo{HasJournalctl: true})
+	})
+	if !strings.Contains(withJournal, "journalctl -k -b") {
+		t.Fatalf("expected journalctl command when available:\n%s", withJournal)
+	}
+}
+
 func TestIsExitCommand(t *testing.T) {
 	for _, input := range []string{"exit", "quit", " EXIT ", "Quit"} {
 		if !isExitCommand(input) {
@@ -130,8 +159,44 @@ func TestRunAndCaptureTreatsDmesgPermissionErrorInPipelineAsFailed(t *testing.T)
 	if len(s.Captured) != 0 {
 		t.Fatalf("captured failed command: %+v", s.Captured)
 	}
-	if !strings.Contains(stderr, "retry with sudo or journalctl -k") {
+	if !strings.Contains(stderr, "retry with sudo") {
 		t.Fatalf("expected retry hint in stderr, got:\n%s", stderr)
+	}
+}
+
+func TestDmesgPermissionFailureMessageMentionsJournalctlOnlyWhenAvailable(t *testing.T) {
+	withJournal := dmesgPermissionFailureMessage(true)
+	if !strings.Contains(withJournal, "journalctl -k") {
+		t.Fatalf("expected journalctl hint when available, got %q", withJournal)
+	}
+
+	withoutJournal := dmesgPermissionFailureMessage(false)
+	if strings.Contains(withoutJournal, "journalctl") {
+		t.Fatalf("did not expect journalctl hint when unavailable, got %q", withoutJournal)
+	}
+	if !strings.Contains(withoutJournal, "sudo") {
+		t.Fatalf("expected sudo hint, got %q", withoutJournal)
+	}
+}
+
+func TestRunAndCaptureTreatsJournalctlFailureInPipelineAsFailed(t *testing.T) {
+	s := &Session{}
+	var c CapturedCommand
+	stderr := captureStderr(func() {
+		c = s.runAndCapture("journalctl() { printf 'No journal files were opened due to insufficient permissions.\\n' >&2; }; journalctl | true")
+	})
+
+	if !c.Failed {
+		t.Fatalf("expected journalctl access error to be marked failed, got %+v", c)
+	}
+	if c.ExitCode != -1 {
+		t.Fatalf("exit code = %d, want -1", c.ExitCode)
+	}
+	if len(s.Captured) != 0 {
+		t.Fatalf("captured failed command: %+v", s.Captured)
+	}
+	if !strings.Contains(stderr, "journalctl could not read the kernel log") {
+		t.Fatalf("expected journalctl retry hint in stderr, got:\n%s", stderr)
 	}
 }
 
@@ -218,6 +283,55 @@ func TestErrorGuideStepsHaveEmptyOutputMessages(t *testing.T) {
 		if step.EmptyOutputMessage == "" {
 			t.Fatalf("%s: expected empty-output message for errors step", tc.resource)
 		}
+	}
+}
+
+func TestErrorGuideStepsOfferJournalctlAlternativeOnlyWhenAvailable(t *testing.T) {
+	cases := []struct {
+		resource string
+		stepsFn  func(SystemInfo) []GuideStep
+	}{
+		{"cpu", cpuSteps},
+		{"memory", memorySteps},
+		{"disk", diskSteps},
+		{"network", networkSteps},
+	}
+	for _, tc := range cases {
+		withJournal, ok := findGuideStep(tc.stepsFn(SystemInfo{HasPSI: true, HasJournalctl: true}), "errors")
+		if !ok {
+			t.Fatalf("%s: expected errors step", tc.resource)
+		}
+		if len(withJournal.Alternatives) != 1 || !strings.Contains(withJournal.Alternatives[0], "journalctl -k -b") {
+			t.Fatalf("%s: expected one journalctl alternative, got %#v", tc.resource, withJournal.Alternatives)
+		}
+		if strings.Contains(withJournal.Intro, "journalctl") {
+			t.Fatalf("%s: intro should not unconditionally mention journalctl: %s", tc.resource, withJournal.Intro)
+		}
+
+		withoutJournal, ok := findGuideStep(tc.stepsFn(SystemInfo{HasPSI: true}), "errors")
+		if !ok {
+			t.Fatalf("%s: expected errors step", tc.resource)
+		}
+		if len(withoutJournal.Alternatives) != 0 {
+			t.Fatalf("%s: did not expect journalctl alternative when unavailable, got %#v", tc.resource, withoutJournal.Alternatives)
+		}
+	}
+}
+
+func TestGuideStepHeaderPrintsAlternativesCompactly(t *testing.T) {
+	out := captureStdout(func() {
+		printGuideStepHeader(1, 2, GuideStep{
+			Name:         "errors",
+			Intro:        "Intro text.",
+			Suggested:    "dmesg -T | tail",
+			Alternatives: []string{"journalctl -k -b --no-pager -n 30"},
+		})
+	})
+	if !strings.Contains(out, "Suggested: dmesg -T | tail") {
+		t.Fatalf("expected suggested command in output:\n%s", out)
+	}
+	if !strings.Contains(out, "Alternative: journalctl -k -b --no-pager -n 30") {
+		t.Fatalf("expected compact alternative line in output:\n%s", out)
 	}
 }
 

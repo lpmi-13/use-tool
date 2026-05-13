@@ -71,6 +71,7 @@ func memorySteps(si SystemInfo) []GuideStep {
 		Name:               "errors",
 		Intro:              "Step 5: kernel memory errors mean OOM kills.\nEven if the system is fine *now*, recent OOM events explain flapping services.\n" + dmesgPermissionNote,
 		Suggested:          "dmesg -T | grep -iE 'killed process|out of memory|oom-killer' | tail",
+		Alternatives:       journalctlAlternative(si, "journalctl -k -b --no-pager | grep -iE 'killed process|out of memory|oom-killer' | tail"),
 		QuestionsFn:        oomQuestions,
 		AcceptAny:          true,
 		EmptyOutputMessage: "No matching OOM errors found.",
@@ -828,8 +829,10 @@ var memoryCommands = []CommandRef{
 		Summary: "OOM kill events from the kernel log.\nLines include victim PID, RSS at kill time, and (if container) memcg path.\n" + dmesgPermissionNote,
 	},
 	{
-		Cmd:     "journalctl -k -p err --since '1 day ago' | grep -iE 'oom|out of memory'",
-		Section: "Errors",
-		Summary: "OOM events via journald.\nAlternative to dmesg on systemd systems.",
+		Cmd:                 "journalctl -k -b --no-pager | grep -iE 'killed process|out of memory|oom-killer'",
+		Section:             "Errors",
+		Summary:             "OOM events via journald.\nAlternative to dmesg on systemd systems.",
+		Requires:            []string{"journalctl"},
+		HideWhenUnavailable: true,
 	},
 }

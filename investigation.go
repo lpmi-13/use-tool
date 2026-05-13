@@ -24,6 +24,7 @@ type GuideStep struct {
 	Name               string
 	Intro              string
 	Suggested          string
+	Alternatives       []string
 	QuestionsFn        func(SystemInfo, CapturedCommand) []Question
 	AcceptAny          bool
 	EmptyOutputMessage string
@@ -54,13 +55,21 @@ type SynthesisRule struct {
 }
 
 type CommandRef struct {
-	Cmd      string
-	Section  string
-	Summary  string
-	Requires []string
+	Cmd                 string
+	Section             string
+	Summary             string
+	Requires            []string
+	HideWhenUnavailable bool
 }
 
-const dmesgPermissionNote = "Direct dmesg access reads the kernel buffer; on systems with kernel.dmesg_restrict=1, use sudo or the journalctl -k alternative."
+const dmesgPermissionNote = "Direct dmesg access reads the kernel buffer; on systems with kernel.dmesg_restrict=1, use sudo."
+
+func journalctlAlternative(si SystemInfo, cmd string) []string {
+	if !si.HasJournalctl {
+		return nil
+	}
+	return []string{cmd}
+}
 
 var investigations = map[string]*Investigation{
 	"cpu":     cpuInvestigation,
@@ -288,6 +297,9 @@ func printCommands(inv *Investigation, si SystemInfo) {
 		fmt.Printf("\n%s\n%s\n", sec, strings.Repeat("-", len(sec)))
 		for _, c := range cmds {
 			status := commandStatus(c, si)
+			if status != "" && c.HideWhenUnavailable {
+				continue
+			}
 			if status == "" {
 				fmt.Printf("\n  %s\n", c.Cmd)
 			} else {
@@ -323,6 +335,8 @@ func requirementAvailable(req string, si SystemInfo) bool {
 		return si.HasPidstat
 	case "sar":
 		return si.HasSar
+	case "journalctl":
+		return si.HasJournalctl
 	case "psi":
 		return si.HasPSI
 	default:
@@ -334,6 +348,8 @@ func requirementHint(req string) string {
 	switch req {
 	case "mpstat", "pidstat", "sar":
 		return req + " not found; install sysstat"
+	case "journalctl":
+		return "journalctl not found"
 	case "psi":
 		return "/proc/pressure/cpu not available"
 	default:

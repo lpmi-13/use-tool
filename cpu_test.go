@@ -271,6 +271,16 @@ func TestExtractDmesgCpuKeywordsAcceptsSudoAndPipelines(t *testing.T) {
 	}
 }
 
+func TestCPUExtractQuestionsAcceptsJournalctl(t *testing.T) {
+	qs := extractQuestions(cpuInvestigation, SystemInfo{}, CapturedCommand{
+		Cmd:    "journalctl -k -b -p warning --no-pager -n 30",
+		Output: sampleDmesgWithMCE,
+	})
+	if len(qs) == 0 {
+		t.Fatal("expected journalctl kernel log output to generate CPU dmesg questions")
+	}
+}
+
 func TestBaseCmd(t *testing.T) {
 	cases := []struct {
 		in, want string

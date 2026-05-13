@@ -23,15 +23,13 @@ func cmdGuide(args []string) {
 	fmt.Printf("\n=== %s — guided walkthrough ===\n", inv.Title)
 	fmt.Println(inv.Description)
 	fmt.Printf("\nDetected system: %d logical CPU%s.\n", si.NumCPU, plural(si.NumCPU))
-	fmt.Println("At each step, run the suggested command. Type `skip` to move on, `exit` to quit.")
+	fmt.Println("At each step, run the suggested command (or an alternative if shown). Type `skip` to move on, `exit` to quit.")
 	fmt.Println("During a check, answer with a number; use `$ <command>` to inspect more data first.")
 
 	steps := inv.StepsFn(si)
 	score, total := 0, 0
 	for i, step := range steps {
-		fmt.Printf("\n--- Step %d/%d: %s ---\n", i+1, len(steps), step.Name)
-		fmt.Println(step.Intro)
-		fmt.Printf("Suggested: %s\n", step.Suggested)
+		printGuideStepHeader(i+1, len(steps), step)
 
 		captured := guideStepCommand(s, step)
 		if captured != nil {
@@ -66,6 +64,15 @@ func cmdGuide(args []string) {
 		fmt.Printf("=== Walkthrough complete: %d / %d on the inline questions ===\n", score, total)
 	} else {
 		fmt.Println("=== Walkthrough complete ===")
+	}
+}
+
+func printGuideStepHeader(n, total int, step GuideStep) {
+	fmt.Printf("\n--- Step %d/%d: %s ---\n", n, total, step.Name)
+	fmt.Println(step.Intro)
+	fmt.Printf("Suggested: %s\n", step.Suggested)
+	for _, alt := range step.Alternatives {
+		fmt.Printf("Alternative: %s\n", alt)
 	}
 }
 

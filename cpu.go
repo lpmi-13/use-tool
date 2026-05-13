@@ -64,8 +64,9 @@ func cpuSteps(si SystemInfo) []GuideStep {
 
 	steps = append(steps, GuideStep{
 		Name:               "errors",
-		Intro:              "Step 4: kernel errors (the 'E' in USE) surface in dmesg —\nMCE events, thermal throttling, hardware faults.\n" + dmesgPermissionNote,
+		Intro:              "Step 4: kernel errors (the 'E' in USE) surface in dmesg —\nMCE events, thermal throttling, hardware faults.\nThis uses dmesg's severity filter instead of a keyword grep so unusual CPU and hardware warnings are not hidden.\n" + dmesgPermissionNote,
 		Suggested:          "dmesg --level=err,warn | tail -20",
+		Alternatives:       journalctlAlternative(si, "journalctl -k -b -p warning --no-pager -n 30"),
 		QuestionsFn:        dmesgQuestions,
 		AcceptAny:          true,
 		EmptyOutputMessage: "No CPU, thermal, or machine-check errors found.",
@@ -85,6 +86,7 @@ var cpuExtractors = []Extractor{
 	{BaseCmd: "vmstat", QuestionsFn: vmstatQuestions},
 	{BaseCmd: "mpstat", QuestionsFn: mpstatQuestions},
 	{BaseCmd: "dmesg", QuestionsFn: dmesgQuestions},
+	{BaseCmd: "journalctl", QuestionsFn: dmesgQuestions},
 }
 
 var loadAvgRe = regexp.MustCompile(`load average:\s*([0-9.]+),\s*([0-9.]+),\s*([0-9.]+)`)
@@ -890,12 +892,14 @@ var cpuCommands = []CommandRef{
 	{
 		Cmd:     "dmesg --level=err,warn | tail -30",
 		Section: "Errors",
-		Summary: "Recent kernel errors and warnings.\nLook for MCE, thermal throttling, hardware faults.\n" + dmesgPermissionNote,
+		Summary: "Recent kernel errors and warnings.\nLook for MCE, thermal throttling, hardware faults.\nUses severity filtering rather than keyword grep so unusual CPU/hardware warnings remain visible.\n" + dmesgPermissionNote,
 	},
 	{
-		Cmd:     "journalctl -k -p err -n 30",
-		Section: "Errors",
-		Summary: "Recent kernel-level errors via journald.\nAlternative to dmesg on systemd systems.",
+		Cmd:                 "journalctl -k -b -p warning --no-pager -n 30",
+		Section:             "Errors",
+		Summary:             "Recent kernel-level warnings and errors via journald.\nAlternative to dmesg on systemd systems.",
+		Requires:            []string{"journalctl"},
+		HideWhenUnavailable: true,
 	},
 	{
 		Cmd:     "grep . /sys/devices/system/cpu/*/thermal_throttle/* 2>/dev/null",

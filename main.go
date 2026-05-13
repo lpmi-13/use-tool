@@ -117,20 +117,22 @@ type Session struct {
 }
 
 type SystemInfo struct {
-	NumCPU     int
-	HasMpstat  bool
-	HasPidstat bool
-	HasSar     bool
-	HasPSI     bool
+	NumCPU        int
+	HasMpstat     bool
+	HasPidstat    bool
+	HasSar        bool
+	HasPSI        bool
+	HasJournalctl bool
 }
 
 func detectSystem() SystemInfo {
 	return SystemInfo{
-		NumCPU:     runtime.NumCPU(),
-		HasMpstat:  haveCmd("mpstat"),
-		HasPidstat: haveCmd("pidstat"),
-		HasSar:     haveCmd("sar"),
-		HasPSI:     fileExists("/proc/pressure/cpu"),
+		NumCPU:        runtime.NumCPU(),
+		HasMpstat:     haveCmd("mpstat"),
+		HasPidstat:    haveCmd("pidstat"),
+		HasSar:        haveCmd("sar"),
+		HasPSI:        fileExists("/proc/pressure/cpu"),
+		HasJournalctl: haveCmd("journalctl"),
 	}
 }
 
@@ -174,7 +176,17 @@ func runCommand(cmdStr string) CapturedCommand {
 		if buf.Len() > 0 && !bytes.HasSuffix(buf.Bytes(), []byte("\n")) {
 			fmt.Fprintln(os.Stderr)
 		}
-		fmt.Fprintln(os.Stderr, "[command failed: dmesg could not read the kernel buffer; retry with sudo or journalctl -k]")
+		fmt.Fprintf(os.Stderr, "[command failed: %s]\n", dmesgPermissionFailureMessage(haveCmd("journalctl")))
+	}
+	if isJournalctlFailure(cmdStr, buf.String()) {
+		if !failed {
+			failed = true
+			exitCode = -1
+		}
+		if buf.Len() > 0 && !bytes.HasSuffix(buf.Bytes(), []byte("\n")) {
+			fmt.Fprintln(os.Stderr)
+		}
+		fmt.Fprintln(os.Stderr, "[command failed: journalctl could not read the kernel log; try dmesg or sudo dmesg]")
 	}
 	return CapturedCommand{Cmd: cmdStr, Output: buf.String(), Failed: failed, ExitCode: exitCode}
 }
@@ -192,6 +204,32 @@ func isDmesgPermissionFailure(output string) bool {
 	low := strings.ToLower(output)
 	return strings.Contains(low, "dmesg: read kernel buffer failed") &&
 		strings.Contains(low, "operation not permitted")
+}
+
+func dmesgPermissionFailureMessage(hasJournalctl bool) string {
+	if hasJournalctl {
+		return "dmesg could not read the kernel buffer; retry with sudo or journalctl -k"
+	}
+	return "dmesg could not read the kernel buffer; retry with sudo"
+}
+
+func isJournalctlFailure(cmdStr, output string) bool {
+	if !strings.Contains(cmdStr, "journalctl") {
+		return false
+	}
+	low := strings.ToLower(output)
+	for _, marker := range []string{
+		"no journal files were opened due to insufficient permissions",
+		"failed to open journal",
+		"failed to open files",
+		"failed to connect to bus",
+		"failed to get journal",
+	} {
+		if strings.Contains(low, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // cappedBuffer accepts unlimited writes (so the user still sees full output on

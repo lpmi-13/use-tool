@@ -79,6 +79,7 @@ func networkSteps(si SystemInfo) []GuideStep {
 			Name:               "errors",
 			Intro:              "Step 6: kernel network errors — link state changes and NIC issues.\n" + dmesgPermissionNote,
 			Suggested:          "dmesg -T | grep -iE 'link is down|link up|carrier|nic|ethernet' | tail",
+			Alternatives:       journalctlAlternative(si, "journalctl -k -b --no-pager | grep -iE 'link is down|link up|carrier|nic|ethernet' | tail"),
 			QuestionsFn:        networkDmesgQuestions,
 			AcceptAny:          true,
 			EmptyOutputMessage: "No matching link or NIC errors found.",
@@ -914,5 +915,12 @@ var networkCommands = []CommandRef{
 		Cmd:     "dmesg -T | grep -iE 'link is|carrier|nic|ethernet'",
 		Section: "Errors",
 		Summary: "Kernel link-state changes and NIC driver errors.\nRepeated up/down sequences indicate a flapping cable or peer port.\n" + dmesgPermissionNote,
+	},
+	{
+		Cmd:                 "journalctl -k -b --no-pager | grep -iE 'link is|carrier|nic|ethernet'",
+		Section:             "Errors",
+		Summary:             "Kernel link-state changes and NIC driver errors via journald.\nAlternative to dmesg on systemd systems.",
+		Requires:            []string{"journalctl"},
+		HideWhenUnavailable: true,
 	},
 }

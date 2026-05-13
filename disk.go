@@ -76,6 +76,7 @@ func diskSteps(si SystemInfo) []GuideStep {
 		Name:               "errors",
 		Intro:              "Step 5: kernel I/O errors. Filesystem-level errors are the smoking\ngun for failing media.\n" + dmesgPermissionNote,
 		Suggested:          "dmesg -T | grep -iE 'i/o error|EXT4-fs error|XFS|Buffer I/O error|read-only' | tail",
+		Alternatives:       journalctlAlternative(si, "journalctl -k -b --no-pager | grep -iE 'i/o error|EXT4-fs error|XFS|Buffer I/O error|read-only' | tail"),
 		QuestionsFn:        diskDmesgQuestions,
 		AcceptAny:          true,
 		EmptyOutputMessage: "No matching I/O errors found.",
@@ -761,6 +762,13 @@ var diskCommands = []CommandRef{
 		Cmd:     "dmesg -T | grep -iE 'i/o error|EXT4-fs error|Buffer I/O error|read-only'",
 		Section: "Errors",
 		Summary: "Kernel I/O errors and read-only remounts.\nRecurring I/O errors → failing media; read-only remount → kernel\ngave up on writes.\n" + dmesgPermissionNote,
+	},
+	{
+		Cmd:                 "journalctl -k -b --no-pager | grep -iE 'i/o error|EXT4-fs error|XFS|Buffer I/O error|read-only'",
+		Section:             "Errors",
+		Summary:             "Kernel I/O errors and read-only remounts via journald.\nAlternative to dmesg on systemd systems.",
+		Requires:            []string{"journalctl"},
+		HideWhenUnavailable: true,
 	},
 	{
 		Cmd:     "smartctl -a /dev/sda",

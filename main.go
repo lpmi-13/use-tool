@@ -166,6 +166,16 @@ func runCommand(cmdStr string) CapturedCommand {
 			fmt.Fprintf(os.Stderr, "[command failed: %v]\n", err)
 		}
 	}
+	if isDmesgPermissionFailure(buf.String()) {
+		if !failed {
+			failed = true
+			exitCode = -1
+		}
+		if buf.Len() > 0 && !bytes.HasSuffix(buf.Bytes(), []byte("\n")) {
+			fmt.Fprintln(os.Stderr)
+		}
+		fmt.Fprintln(os.Stderr, "[command failed: dmesg could not read the kernel buffer; retry with sudo or journalctl -k]")
+	}
 	return CapturedCommand{Cmd: cmdStr, Output: buf.String(), Failed: failed, ExitCode: exitCode}
 }
 
@@ -176,6 +186,12 @@ func (s *Session) runAndCapture(cmdStr string) CapturedCommand {
 	}
 	s.appendCaptured(c)
 	return c
+}
+
+func isDmesgPermissionFailure(output string) bool {
+	low := strings.ToLower(output)
+	return strings.Contains(low, "dmesg: read kernel buffer failed") &&
+		strings.Contains(low, "operation not permitted")
 }
 
 // cappedBuffer accepts unlimited writes (so the user still sees full output on

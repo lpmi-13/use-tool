@@ -77,8 +77,8 @@ func networkSteps(si SystemInfo) []GuideStep {
 		},
 		{
 			Name:               "errors",
-			Intro:              "Step 6: kernel network errors — link state changes and NIC issues.",
-			Suggested:          "dmesg -T 2>/dev/null | grep -iE 'link is down|link up|carrier|nic|ethernet' | tail",
+			Intro:              "Step 6: kernel network errors — link state changes and NIC issues.\n" + dmesgPermissionNote,
+			Suggested:          "dmesg -T | grep -iE 'link is down|link up|carrier|nic|ethernet' | tail",
 			QuestionsFn:        networkDmesgQuestions,
 			AcceptAny:          true,
 			EmptyOutputMessage: "No matching link or NIC errors found.",
@@ -911,8 +911,8 @@ var networkCommands = []CommandRef{
 		Summary: "Cumulative per-interface counters (bytes, packets, errs, drop, ...).\nField order is stable; raw source for many other tools.",
 	},
 	{
-		Cmd:     "dmesg -T 2>/dev/null | grep -iE 'link is|carrier|nic|ethernet'",
+		Cmd:     "dmesg -T | grep -iE 'link is|carrier|nic|ethernet'",
 		Section: "Errors",
-		Summary: "Kernel link-state changes and NIC driver errors.\nRepeated up/down sequences indicate a flapping cable or peer port.",
+		Summary: "Kernel link-state changes and NIC driver errors.\nRepeated up/down sequences indicate a flapping cable or peer port.\n" + dmesgPermissionNote,
 	},
 }

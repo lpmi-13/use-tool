@@ -64,8 +64,8 @@ func cpuSteps(si SystemInfo) []GuideStep {
 
 	steps = append(steps, GuideStep{
 		Name:               "errors",
-		Intro:              "Step 4: kernel errors (the 'E' in USE) surface in dmesg —\nMCE events, thermal throttling, hardware faults.",
-		Suggested:          "dmesg --level=err,warn 2>/dev/null | tail -20",
+		Intro:              "Step 4: kernel errors (the 'E' in USE) surface in dmesg —\nMCE events, thermal throttling, hardware faults.\n" + dmesgPermissionNote,
+		Suggested:          "dmesg --level=err,warn | tail -20",
 		QuestionsFn:        dmesgQuestions,
 		AcceptAny:          true,
 		EmptyOutputMessage: "No CPU, thermal, or machine-check errors found.",
@@ -890,7 +890,7 @@ var cpuCommands = []CommandRef{
 	{
 		Cmd:     "dmesg --level=err,warn | tail -30",
 		Section: "Errors",
-		Summary: "Recent kernel errors and warnings.\nLook for MCE, thermal throttling, hardware faults.",
+		Summary: "Recent kernel errors and warnings.\nLook for MCE, thermal throttling, hardware faults.\n" + dmesgPermissionNote,
 	},
 	{
 		Cmd:     "journalctl -k -p err -n 30",

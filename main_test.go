@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"os"
 	"strings"
 	"testing"
 )
@@ -112,6 +114,27 @@ func TestRunAndCaptureSkipsFailedCommand(t *testing.T) {
 	}
 }
 
+func TestRunAndCaptureTreatsDmesgPermissionErrorInPipelineAsFailed(t *testing.T) {
+	s := &Session{}
+	var c CapturedCommand
+	stderr := captureStderr(func() {
+		c = s.runAndCapture("printf 'dmesg: read kernel buffer failed: Operation not permitted\\n' >&2 | true")
+	})
+
+	if !c.Failed {
+		t.Fatalf("expected dmesg permission error to be marked failed, got %+v", c)
+	}
+	if c.ExitCode != -1 {
+		t.Fatalf("exit code = %d, want -1", c.ExitCode)
+	}
+	if len(s.Captured) != 0 {
+		t.Fatalf("captured failed command: %+v", s.Captured)
+	}
+	if !strings.Contains(stderr, "retry with sudo or journalctl -k") {
+		t.Fatalf("expected retry hint in stderr, got:\n%s", stderr)
+	}
+}
+
 func TestGuideStepCommandRetriesFailedAcceptAnyCommand(t *testing.T) {
 	oldStdin := stdin
 	defer func() { stdin = oldStdin }()
@@ -157,7 +180,7 @@ func TestDiskDeviceStepHasLsblkQuestions(t *testing.T) {
 func TestGuideStepCommandPrintsEmptyOutputMessage(t *testing.T) {
 	oldStdin := stdin
 	defer func() { stdin = oldStdin }()
-	stdin = bufio.NewReader(strings.NewReader("printf ''\n"))
+	stdin = bufio.NewReader(strings.NewReader("printf ''\n\n"))
 
 	out := captureStdout(func() {
 		captured := guideStepCommand(&Session{}, GuideStep{
@@ -193,6 +216,31 @@ func TestErrorGuideStepsHaveEmptyOutputMessages(t *testing.T) {
 			t.Fatalf("%s: expected empty-output message for errors step", tc.resource)
 		}
 	}
+}
+
+func TestDmesgRecommendationsDoNotDiscardPermissionErrors(t *testing.T) {
+	for _, inv := range investigations {
+		step, ok := findGuideStep(inv.StepsFn(SystemInfo{HasPSI: true}), "errors")
+		if ok && strings.Contains(step.Suggested, "dmesg") && strings.Contains(step.Suggested, "2>/dev/null") {
+			t.Fatalf("%s guide suggests dmesg command that discards stderr: %s", inv.Name, step.Suggested)
+		}
+		if ok && strings.Contains(step.Suggested, "dmesg") && !mentionsDmesgPermission(step.Intro) {
+			t.Fatalf("%s guide dmesg step does not mention sudo/kernel-buffer access: %s", inv.Name, step.Intro)
+		}
+		for _, ref := range inv.Commands {
+			if strings.Contains(ref.Cmd, "dmesg") && strings.Contains(ref.Cmd, "2>/dev/null") {
+				t.Fatalf("%s command reference discards dmesg stderr: %s", inv.Name, ref.Cmd)
+			}
+			if strings.Contains(ref.Cmd, "dmesg") && !mentionsDmesgPermission(ref.Summary) {
+				t.Fatalf("%s command reference does not mention sudo/kernel-buffer access: %s", inv.Name, ref.Cmd)
+			}
+		}
+	}
+}
+
+func mentionsDmesgPermission(text string) bool {
+	low := strings.ToLower(text)
+	return strings.Contains(low, "kernel buffer") && strings.Contains(low, "sudo")
 }
 
 func findGuideStep(steps []GuideStep, name string) (GuideStep, bool) {

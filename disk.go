@@ -74,8 +74,8 @@ func diskSteps(si SystemInfo) []GuideStep {
 	})
 	steps = append(steps, GuideStep{
 		Name:               "errors",
-		Intro:              "Step 5: kernel I/O errors. Filesystem-level errors are the smoking\ngun for failing media.",
-		Suggested:          "dmesg -T 2>/dev/null | grep -iE 'i/o error|EXT4-fs error|XFS|Buffer I/O error|read-only' | tail",
+		Intro:              "Step 5: kernel I/O errors. Filesystem-level errors are the smoking\ngun for failing media.\n" + dmesgPermissionNote,
+		Suggested:          "dmesg -T | grep -iE 'i/o error|EXT4-fs error|XFS|Buffer I/O error|read-only' | tail",
 		QuestionsFn:        diskDmesgQuestions,
 		AcceptAny:          true,
 		EmptyOutputMessage: "No matching I/O errors found.",
@@ -758,9 +758,9 @@ var diskCommands = []CommandRef{
 		Summary: "Friendlier per-process I/O snapshot.\nBatch mode (-b -n1) avoids needing a TTY. (iotop package.)",
 	},
 	{
-		Cmd:     "dmesg -T 2>/dev/null | grep -iE 'i/o error|EXT4-fs error|Buffer I/O error|read-only'",
+		Cmd:     "dmesg -T | grep -iE 'i/o error|EXT4-fs error|Buffer I/O error|read-only'",
 		Section: "Errors",
-		Summary: "Kernel I/O errors and read-only remounts.\nRecurring I/O errors → failing media; read-only remount → kernel\ngave up on writes.",
+		Summary: "Kernel I/O errors and read-only remounts.\nRecurring I/O errors → failing media; read-only remount → kernel\ngave up on writes.\n" + dmesgPermissionNote,
 	},
 	{
 		Cmd:     "smartctl -a /dev/sda",

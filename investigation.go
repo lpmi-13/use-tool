@@ -60,6 +60,8 @@ type CommandRef struct {
 	Requires []string
 }
 
+const dmesgPermissionNote = "Direct dmesg access reads the kernel buffer; on systems with kernel.dmesg_restrict=1, use sudo or the journalctl -k alternative."
+
 var investigations = map[string]*Investigation{
 	"cpu":     cpuInvestigation,
 	"memory":  memoryInvestigation,

@@ -29,9 +29,38 @@ func TestCPUSynopsisIdentifiesUSESignals(t *testing.T) {
 	}
 }
 
+func TestCPUSynopsisIdentifiesLocalizedCPUUtilization(t *testing.T) {
+	snap := Snapshot{Values: map[string]Value{
+		"mpstat_idle_mean":  {Number: 61},
+		"mpstat_idle_range": {Samples: []float64{94, 96, 97, 0, 0, 0, 97, 95}},
+		"vmstat_r":          {Samples: []float64{4, 4, 3}},
+		"vmstat_wa":         {Samples: []float64{1, 0, 0}},
+		"vmstat_st":         {Samples: []float64{0, 0, 0}},
+	}}
+	issues := cpuSynopsis(SystemInfo{NumCPU: 8}, snap)
+
+	if !hasSynopsis(issues, "Utilization", "localized CPU utilization") {
+		t.Fatalf("expected localized CPU utilization issue, got %#v", issues)
+	}
+	if hasSynopsis(issues, "Saturation", "CPU run queue exceeded") {
+		t.Fatalf("did not expect run-queue saturation issue, got %#v", issues)
+	}
+}
+
+func TestCPUSynopsisDoesNotFlagMinorPerCPUVariation(t *testing.T) {
+	snap := Snapshot{Values: map[string]Value{
+		"mpstat_idle_mean":  {Number: 72},
+		"mpstat_idle_range": {Samples: []float64{64, 70, 80, 85}},
+	}}
+	if issues := cpuSynopsis(SystemInfo{NumCPU: 8}, snap); len(issues) != 0 {
+		t.Fatalf("expected no CPU issues for minor per-CPU variation, got %#v", issues)
+	}
+}
+
 func TestMemorySynopsisIdentifiesSaturationAndErrors(t *testing.T) {
 	snap := Snapshot{Values: map[string]Value{
 		"mem_used_pct":           {Number: 55},
+		"swap_used_pct":          {Number: 0},
 		"vmstat_si":              {Samples: []float64{0, 0}},
 		"vmstat_so":              {Samples: []float64{0, 8}},
 		"psi_mem_full_avg10":     {Number: 0.8},
@@ -55,9 +84,43 @@ func TestMemorySynopsisIdentifiesSaturationAndErrors(t *testing.T) {
 	}
 }
 
+func TestMemorySynopsisIdentifiesHighSwapAllocation(t *testing.T) {
+	snap := Snapshot{Values: map[string]Value{
+		"mem_used_pct":       {Number: 52},
+		"swap_used_pct":      {Number: 75},
+		"vmstat_si":          {Samples: []float64{0, 0}},
+		"vmstat_so":          {Samples: []float64{0, 0}},
+		"psi_mem_some_avg10": {Number: 0},
+		"psi_mem_full_avg10": {Number: 0},
+		"dmesg_oom_count":    {Text: "0/3 lines mention OOM"},
+	}}
+	issues := memorySynopsis(snap)
+
+	if !hasSynopsis(issues, "Utilization", "substantial swap allocation") {
+		t.Fatalf("expected swap utilization issue, got %#v", issues)
+	}
+	if hasSynopsis(issues, "Saturation", "") {
+		t.Fatalf("did not expect saturation from swap allocation alone, got %#v", issues)
+	}
+}
+
+func TestMemorySynopsisNoSwapConfiguredIsQuiet(t *testing.T) {
+	snap := Snapshot{Values: map[string]Value{
+		"mem_used_pct":    {Number: 52},
+		"swap_used_pct":   {Text: "no swap configured"},
+		"dmesg_oom_count": {Text: "0/3 lines mention OOM"},
+	}}
+	issues := memorySynopsis(snap)
+
+	if hasSynopsis(issues, "Utilization", "swap") {
+		t.Fatalf("did not expect swap utilization issue when no swap is configured, got %#v", issues)
+	}
+}
+
 func TestMemorySynopsisQuietWhenNoSignalsCrossThresholds(t *testing.T) {
 	snap := Snapshot{Values: map[string]Value{
 		"mem_used_pct":       {Number: 42},
+		"swap_used_pct":      {Number: 0},
 		"vmstat_si":          {Samples: []float64{0, 0}},
 		"vmstat_so":          {Samples: []float64{0, 0}},
 		"psi_mem_some_avg10": {Number: 0},

@@ -56,6 +56,17 @@ func cpuSynopsis(si SystemInfo, snap Snapshot) []SynopsisIssue {
 			Evidence: fmt.Sprintf("mean mpstat %%idle was %s", formatNumber(v.Number, "%")),
 		})
 	}
+	if v, ok := snap.Values["mpstat_idle_range"]; ok {
+		minIdle, maxIdle, hotSamples, ok := idleRangeSignal(v)
+		if ok {
+			issues = append(issues, SynopsisIssue{
+				Section: "Utilization",
+				Summary: "localized CPU utilization on one or more logical CPUs",
+				Evidence: fmt.Sprintf("per-CPU %%idle ranged from %s to %s; %d/%d samples were at or below 5%% idle",
+					formatNumber(minIdle, "%"), formatNumber(maxIdle, "%"), hotSamples, len(v.Samples)),
+			})
+		}
+	}
 	if v, ok := snap.Values["vmstat_r"]; ok && v.Max() > float64(si.NumCPU) {
 		issues = append(issues, SynopsisIssue{
 			Section:  "Saturation",
@@ -87,6 +98,24 @@ func cpuSynopsis(si SystemInfo, snap Snapshot) []SynopsisIssue {
 	return issues
 }
 
+func idleRangeSignal(v Value) (float64, float64, int, bool) {
+	if len(v.Samples) == 0 {
+		return 0, 0, 0, false
+	}
+	minIdle := v.Min()
+	maxIdle := v.Max()
+	hotSamples := 0
+	for _, sample := range v.Samples {
+		if sample <= 5 {
+			hotSamples++
+		}
+	}
+	if hotSamples == 0 || maxIdle-minIdle < 50 {
+		return minIdle, maxIdle, hotSamples, false
+	}
+	return minIdle, maxIdle, hotSamples, true
+}
+
 func memorySynopsis(snap Snapshot) []SynopsisIssue {
 	var issues []SynopsisIssue
 	if v, ok := snap.Values["mem_used_pct"]; ok && v.Number >= 90 {
@@ -94,6 +123,13 @@ func memorySynopsis(snap Snapshot) []SynopsisIssue {
 			Section:  "Utilization",
 			Summary:  "high memory utilization",
 			Evidence: fmt.Sprintf("memory used was %s using MemAvailable as reclaimable headroom", formatNumber(v.Number, "%")),
+		})
+	}
+	if v, ok := snap.Values["swap_used_pct"]; ok && v.Text == "" && v.Number >= 50 {
+		issues = append(issues, SynopsisIssue{
+			Section:  "Utilization",
+			Summary:  "substantial swap allocation",
+			Evidence: fmt.Sprintf("swap used was %s; use vmstat si/so and PSI to distinguish old swapped pages from active pressure", formatNumber(v.Number, "%")),
 		})
 	}
 	siMax, siOK := sampleMax(snap, "vmstat_si")

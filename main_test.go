@@ -254,3 +254,19 @@ func findGuideStep(steps []GuideStep, name string) (GuideStep, bool) {
 	}
 	return GuideStep{}, false
 }
+
+func captureStderr(fn func()) string {
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		panic(err)
+	}
+	os.Stderr = w
+	fn()
+	w.Close()
+	os.Stderr = old
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	r.Close()
+	return buf.String()
+}

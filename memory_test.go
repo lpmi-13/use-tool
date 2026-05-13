@@ -184,6 +184,204 @@ func TestExtractCacheBuffersGiB(t *testing.T) {
 	}
 }
 
+// sampleFreeM mirrors the values in sampleMeminfo so the test can assert
+// equivalence between the meminfo and `free -m` extraction paths.
+//   MemTotal=16384000 kB → 16000 MiB; MemAvailable=8192000 kB → 8000 MiB;
+//   Cached+Buffers=6512000 kB → 6359 MiB (rounded to nearest MiB);
+//   SwapTotal=2097152 kB → 2048 MiB; SwapFree=1048576 kB → 1024 MiB.
+const sampleFreeM = `              total        used        free      shared  buff/cache   available
+Mem:          16000        2641        7000         300        6359        8000
+Swap:          2048        1024        1024`
+
+// sampleFreeH is the same machine via `free -h`. Values are rounded to
+// one decimal place with IEC suffixes, so extracted numbers differ
+// slightly from the meminfo path; tests assert within a tolerance.
+const sampleFreeH = `              total        used        free      shared  buff/cache   available
+Mem:           15Gi        2.6Gi       6.8Gi       300Mi       6.2Gi       7.8Gi
+Swap:         2.0Gi        1.0Gi       1.0Gi`
+
+// sampleFreeDefault has no flag, so cells are in kibibytes (procps default).
+const sampleFreeDefault = `              total        used        free      shared  buff/cache   available
+Mem:       16384000     2703000     7168000      307200     6512000     8192000
+Swap:       2097152     1048576     1048576`
+
+func TestParseFreeOutputKB_DashM(t *testing.T) {
+	fs, ok := parseFreeOutputKB("free -m", sampleFreeM)
+	if !ok {
+		t.Fatal("expected free -m to parse")
+	}
+	if !fs.HasMem || !fs.HasSwap || !fs.HasAvailable {
+		t.Fatalf("missing flags: %+v", fs)
+	}
+	// 16000 MiB = 16384000 KiB
+	if fs.MemTotalKB != 16384000 {
+		t.Errorf("MemTotalKB: got %v, want 16384000", fs.MemTotalKB)
+	}
+	if fs.MemAvailableKB != 8192000 {
+		t.Errorf("MemAvailableKB: got %v, want 8192000", fs.MemAvailableKB)
+	}
+	if fs.SwapTotalKB != 2097152 {
+		t.Errorf("SwapTotalKB: got %v, want 2097152", fs.SwapTotalKB)
+	}
+	if fs.Rounded {
+		t.Error("free -m should not be marked rounded")
+	}
+}
+
+func TestParseFreeOutputKB_DashH(t *testing.T) {
+	fs, ok := parseFreeOutputKB("free -h", sampleFreeH)
+	if !ok {
+		t.Fatal("expected free -h to parse")
+	}
+	if !fs.Rounded {
+		t.Error("free -h should be marked rounded")
+	}
+	// 15 Gi = 15*1024*1024 = 15728640 KiB. Tolerant compare: within 5% of meminfo total.
+	const meminfoTotalKB = 16384000
+	if fs.MemTotalKB < meminfoTotalKB*0.95 || fs.MemTotalKB > meminfoTotalKB*1.05 {
+		t.Errorf("MemTotalKB %v should be within 5%% of %v", fs.MemTotalKB, meminfoTotalKB)
+	}
+	// 7.8 Gi available → within 5% of 8192000.
+	if fs.MemAvailableKB < 8192000*0.95 || fs.MemAvailableKB > 8192000*1.05 {
+		t.Errorf("MemAvailableKB %v should be within 5%% of 8192000", fs.MemAvailableKB)
+	}
+}
+
+func TestParseFreeOutputKB_DefaultIsKB(t *testing.T) {
+	fs, ok := parseFreeOutputKB("free", sampleFreeDefault)
+	if !ok {
+		t.Fatal("expected default free to parse")
+	}
+	if fs.MemTotalKB != 16384000 {
+		t.Errorf("MemTotalKB: got %v, want 16384000", fs.MemTotalKB)
+	}
+}
+
+func TestParseFreeOutputKB_RejectsNonFree(t *testing.T) {
+	if _, ok := parseFreeOutputKB("cat", "Hello world"); ok {
+		t.Error("expected non-free output to fail parsing")
+	}
+}
+
+func TestParseFreeCellKB(t *testing.T) {
+	cases := []struct {
+		cell    string
+		defKB   float64
+		want    float64
+		wantOK  bool
+	}{
+		{"1024", 1.0, 1024, true},        // default KiB
+		{"16000", 1024.0, 16384000, true}, // -m
+		{"15Gi", 1.0, 15 * 1024 * 1024, true},
+		{"1.5G", 1.0, 1.5 * 1024 * 1024, true},
+		{"512Mi", 1.0, 512 * 1024, true},
+		{"0B", 1.0, 0, true},
+		{"", 1.0, 0, false},
+		{"abc", 1.0, 0, false},
+		{"15Xi", 1.0, 0, false},
+	}
+	for _, tc := range cases {
+		got, ok := parseFreeCellKB(tc.cell, tc.defKB)
+		if ok != tc.wantOK {
+			t.Errorf("%q: ok=%v, want %v", tc.cell, ok, tc.wantOK)
+			continue
+		}
+		if ok && got != tc.want {
+			t.Errorf("%q: got %v, want %v", tc.cell, got, tc.want)
+		}
+	}
+}
+
+func TestExtractMemUsedPct_FromFreeM(t *testing.T) {
+	si := SystemInfo{}
+	caps := []CapturedCommand{{Cmd: "free -m", Output: sampleFreeM}}
+	v, ok := extractMemUsedPct(si, caps)
+	if !ok {
+		t.Fatal("expected mem used extraction from free -m to succeed")
+	}
+	// 16000-8000 / 16000 = 50%
+	if v.Number != 50 {
+		t.Errorf("expected 50%%, got %v", v.Number)
+	}
+}
+
+func TestExtractMemUsedPct_FromFreeH(t *testing.T) {
+	si := SystemInfo{}
+	caps := []CapturedCommand{{Cmd: "free -h", Output: sampleFreeH}}
+	v, ok := extractMemUsedPct(si, caps)
+	if !ok {
+		t.Fatal("expected mem used extraction from free -h to succeed")
+	}
+	// Tolerant: meminfo path returns 50%; -h rounding may shift by a few %.
+	if v.Number < 45 || v.Number > 55 {
+		t.Errorf("expected ~50%%, got %v", v.Number)
+	}
+	if !strings.Contains(v.Note, "free -h") {
+		t.Errorf("expected note to flag rounded free -h source, got %q", v.Note)
+	}
+}
+
+func TestExtractMemAvailableGiB_FromFreeM(t *testing.T) {
+	si := SystemInfo{}
+	caps := []CapturedCommand{{Cmd: "free -m", Output: sampleFreeM}}
+	v, ok := extractMemAvailableGiB(si, caps)
+	if !ok {
+		t.Fatal("expected mem available extraction from free -m to succeed")
+	}
+	// 8000 MiB = 7.8125 GiB
+	if v.Number < 7.7 || v.Number > 7.9 {
+		t.Errorf("expected ~7.8 GiB, got %v", v.Number)
+	}
+}
+
+func TestExtractCacheBuffersGiB_FromFreeM(t *testing.T) {
+	si := SystemInfo{}
+	caps := []CapturedCommand{{Cmd: "free -m", Output: sampleFreeM}}
+	v, ok := extractCacheBuffersGiB(si, caps)
+	if !ok {
+		t.Fatal("expected cache+buffers extraction from free -m to succeed")
+	}
+	// 6359 MiB ≈ 6.21 GiB
+	if v.Number < 6.0 || v.Number > 6.4 {
+		t.Errorf("expected ~6.2 GiB, got %v", v.Number)
+	}
+}
+
+func TestExtractSwapUsedPct_FromFreeM(t *testing.T) {
+	si := SystemInfo{}
+	caps := []CapturedCommand{{Cmd: "free -m", Output: sampleFreeM}}
+	v, ok := extractSwapUsedPct(si, caps)
+	if !ok {
+		t.Fatal("expected swap extraction from free -m to succeed")
+	}
+	// (2048-1024)/2048 = 50%
+	if v.Number != 50 {
+		t.Errorf("expected 50%%, got %v", v.Number)
+	}
+}
+
+func TestExtractMemUsedPct_MeminfoTakesPrecedence(t *testing.T) {
+	// When both meminfo and free are captured, meminfo wins (it's the
+	// canonical source). Use a free output that would yield a different
+	// number to confirm.
+	si := SystemInfo{}
+	caps := []CapturedCommand{
+		{Cmd: "free -m", Output: sampleFreeM}, // would say 50%
+		{Cmd: "cat /proc/meminfo", Output: sampleMeminfo},
+	}
+	v, ok := extractMemUsedPct(si, caps)
+	if !ok {
+		t.Fatal("expected extraction to succeed")
+	}
+	if v.Number != 50 {
+		t.Errorf("expected meminfo path (50%%), got %v", v.Number)
+	}
+	// And the note shouldn't mention rounded free -h.
+	if strings.Contains(v.Note, "free -h") {
+		t.Errorf("meminfo path should not flag rounded source, got %q", v.Note)
+	}
+}
+
 func TestPSIMemoryQuestionsFires(t *testing.T) {
 	si := SystemInfo{}
 	c := CapturedCommand{Cmd: "cat /proc/pressure/memory", Output: samplePSIMemory}

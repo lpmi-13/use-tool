@@ -37,8 +37,8 @@ func diskSteps(si SystemInfo) []GuideStep {
 		},
 		{
 			Name:        "throughput",
-			Intro:       "Step 2: per-device throughput, queue depth, and latency.\niostat -xz is the workhorse: -x for extended columns, -z to skip idle devices.",
-			Suggested:   "iostat -xz 1 3",
+			Intro:       "Step 2: per-device throughput, queue depth, and latency.\niostat -xz is the workhorse: -x for extended columns, -z to skip idle devices.\nWe pipe through `grep -vE '^loop'` so snap-loop mounts don't bury the real devices.",
+			Suggested:   "iostat -xz 1 3 | grep -vE '^loop'",
 			QuestionsFn: iostatQuestions,
 			Teaching: "Three signals matter most:\n" +
 				"  • r/s + w/s — workload (the offered IOPS).\n" +
@@ -70,7 +70,13 @@ func diskSteps(si SystemInfo) []GuideStep {
 		AcceptAny:   true,
 		Teaching: "kB_rd/s and kB_wr/s are per-process read/write rates from the kernel's\n" +
 			"task accounting. If one process accounts for most of the device load,\n" +
-			"that's where to look next.",
+			"that's where to look next.\n\n" +
+			"Caveat: pidstat reports the host PID namespace. I/O from a process\n" +
+			"running inside a Docker/containerd container shows up under that\n" +
+			"container's runtime (`runc`, `containerd-shim`) or doesn't show up\n" +
+			"at all. If the noisy rows don't look like your real workload, pivot\n" +
+			"to `docker stats` (BlockIO column) or `nsenter -t <pid> -m -p` into\n" +
+			"the container to re-run pidstat from inside.",
 	})
 	steps = append(steps, GuideStep{
 		Name:               "errors",
@@ -729,9 +735,9 @@ var diskCommands = []CommandRef{
 		Summary: "Tree of block devices and their partitions/LVMs.\nFastest orientation when you don't know the device names.",
 	},
 	{
-		Cmd:     "iostat -xz 1 N",
+		Cmd:     "iostat -xz 1 N | grep -vE '^loop'",
 		Section: "Utilization",
-		Summary: "Per-device extended stats over N intervals.\n-x adds %util/await/aqu-sz; -z hides idle devices.\nThe single most important disk command.",
+		Summary: "Per-device extended stats over N intervals.\n-x adds %util/await/aqu-sz; -z hides idle devices.\nThe grep filters snap loop-mounts so the real devices don't get\nlost in ~25 rows of `loop0..loopN` noise. Drop the pipe if you\nspecifically want to see those.\nThe single most important disk command.",
 	},
 	{
 		Cmd:     "df -h",
@@ -739,7 +745,7 @@ var diskCommands = []CommandRef{
 		Summary: "Filesystem capacity (not bandwidth).\nUseful when 'disk full' is the suspected problem.",
 	},
 	{
-		Cmd:     "iostat -xz 1 N",
+		Cmd:     "iostat -xz 1 N | grep -vE '^loop'",
 		Section: "Saturation",
 		Summary: "Same command — read aqu-sz (queueing) and await (latency).\nSustained aqu-sz > 1 or await well above your device baseline\n= saturation, regardless of what %util shows.",
 	},
@@ -751,7 +757,7 @@ var diskCommands = []CommandRef{
 	{
 		Cmd:     "pidstat -d 1 N",
 		Section: "Saturation",
-		Summary: "Per-process I/O rates over N intervals.\nFinds the process responsible for device load. (sysstat package.)",
+		Summary: "Per-process I/O rates over N intervals.\nFinds the process responsible for device load. (sysstat package.)\nNote: shows host PID namespace. I/O from processes inside Docker/\ncontainerd containers (separate PID namespace) appears under the\ncontainer's runtime or not at all; pivot to `docker stats` for\nservice-level attribution, or `nsenter` into the container's PID ns.",
 	},
 	{
 		Cmd:     "iotop -bn1",

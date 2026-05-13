@@ -42,7 +42,14 @@ func networkSteps(si SystemInfo) []GuideStep {
 			Teaching: "rxkB/s and txkB/s give the per-second receive/transmit rate.\n" +
 				"To convert to a percentage of link capacity, you need ethtool to learn\n" +
 				"the link speed. On VMs and containers, virtual interfaces often report\n" +
-				"'Speed: Unknown!' — graceful degradation matters here.",
+				"'Speed: Unknown!' — graceful degradation matters here.\n\n" +
+				"About those `veth*` rows: each is one end of a virtual ethernet pair\n" +
+				"that connects a container's network namespace to the host bridge\n" +
+				"(`docker0` or similar). The opaque hex suffix is the host-side end —\n" +
+				"the matching container-side end lives inside the container. To tie a\n" +
+				"`veth` back to a service name, `docker stats --format '{{.Name}} {{.NetIO}}'`\n" +
+				"shows per-container net I/O directly; or `ip -n <container-pid> link`\n" +
+				"shows the container-side name.",
 		},
 		{
 			Name:        "drops",

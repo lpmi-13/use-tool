@@ -114,6 +114,12 @@ type Session struct {
 	Investigation *Investigation
 	System        SystemInfo
 	Captured      []CapturedCommand
+	// kernelLogBlocks counts how many times this session has seen a
+	// permission-blocked dmesg or journalctl call. After the second strike
+	// we emit a one-shot note that the host is hiding kernel logs across
+	// the board, so the learner stops chasing the other tool.
+	kernelLogBlocks      int
+	kernelLogBlockNoted  bool
 }
 
 type SystemInfo struct {
@@ -194,6 +200,16 @@ func runCommand(cmdStr string) CapturedCommand {
 func (s *Session) runAndCapture(cmdStr string) CapturedCommand {
 	c := runCommand(cmdStr)
 	if c.Failed {
+		if isDmesgPermissionFailure(c.Output) || isJournalctlFailure(c.Cmd, c.Output) {
+			s.kernelLogBlocks++
+			if s.kernelLogBlocks >= 2 && !s.kernelLogBlockNoted {
+				s.kernelLogBlockNoted = true
+				fmt.Fprintln(os.Stderr, "[note: both dmesg and journalctl -k are blocked for this user on this host")
+				fmt.Fprintln(os.Stderr, "       (typically kernel.dmesg_restrict=1). The 'Errors' leg of USE is")
+				fmt.Fprintln(os.Stderr, "       unverifiable without privileges here — `skip` and move on, or rerun")
+				fmt.Fprintln(os.Stderr, "       with sudo if you need the kernel log.]")
+			}
+		}
 		return c
 	}
 	s.appendCaptured(c)

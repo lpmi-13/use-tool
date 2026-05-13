@@ -3,8 +3,19 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
+
+// isLikelyChoiceAnswer detects when a learner has typed a single small
+// integer at the `[guide] $` shell prompt — almost always because they
+// mistook it for the `Choice:` prompt. We catch this before passing the
+// string to `sh -c`, which would otherwise error with `sh: 1: not found`.
+func isLikelyChoiceAnswer(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	n, err := strconv.Atoi(trimmed)
+	return err == nil && n >= 1 && n <= 9
+}
 
 func cmdGuide(args []string) {
 	if len(args) < 1 {
@@ -34,13 +45,15 @@ func cmdGuide(args []string) {
 		captured := guideStepCommand(s, step)
 		if captured != nil {
 			if q, ok := chooseGuideQuestion(guideQuestions(si, step, *captured)); ok {
-				total++
 				result := askQuestionWithCommandRunner(q, s.runAndCapture)
 				if result.Quit {
 					return
 				}
-				if result.Correct {
-					score++
+				if !result.Skipped {
+					total++
+					if result.Correct {
+						score++
+					}
 				}
 				if !pauseGuide() {
 					return
@@ -126,6 +139,10 @@ func guideStepCommand(s *Session, step GuideStep) *CapturedCommand {
 		if line == "exit" || line == "quit" {
 			fmt.Println("Exiting.")
 			os.Exit(0)
+		}
+		if isLikelyChoiceAnswer(line) {
+			fmt.Printf("(That looks like a multiple-choice answer (`%s`), but we're at a shell prompt — not a `Choice:` prompt yet.\n  Run a command (try `%s`), or type `skip`.)\n", line, step.Suggested)
+			continue
 		}
 		c := s.runAndCapture(line)
 		if c.Failed {

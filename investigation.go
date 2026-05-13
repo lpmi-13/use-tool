@@ -45,6 +45,7 @@ type Question struct {
 type QuestionResult struct {
 	Correct bool
 	Quit    bool
+	Skipped bool
 }
 
 type questionCommandRunner func(string) CapturedCommand
@@ -119,6 +120,10 @@ func askQuestionWithCommandRunner(q Question, run questionCommandRunner) Questio
 		if isExitCommand(line) {
 			fmt.Println("Exiting.")
 			return QuestionResult{Quit: true}
+		}
+		if strings.TrimSpace(line) == "skip" {
+			fmt.Println("(Skipped.)")
+			return QuestionResult{Skipped: true}
 		}
 		if cmd, ok := stripCopiedShellPrompt(line); ok {
 			if cmd == "" {

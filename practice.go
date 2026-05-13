@@ -87,16 +87,20 @@ func practiceEvaluate(s *Session) bool {
 	if len(qs) < n {
 		n = len(qs)
 	}
-	score := 0
+	score, asked := 0, 0
 	for i := 0; i < n; i++ {
 		result := askQuestionWithCommandRunner(qs[i], s.runAndCapture)
 		if result.Quit {
 			return true
 		}
+		if result.Skipped {
+			continue
+		}
+		asked++
 		if result.Correct {
 			score++
 		}
 	}
-	fmt.Printf("\n=== Result: %d / %d ===\n", score, n)
+	fmt.Printf("\n=== Result: %d / %d ===\n", score, asked)
 	return true
 }

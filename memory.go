@@ -539,6 +539,182 @@ func parseMeminfoKB(output, key string) (float64, bool) {
 	return 0, false
 }
 
+// freeStats holds memory and swap values parsed from `free` output,
+// normalised to kibibytes. Cells from `free -h` carry the suffixes the
+// kernel printed (`Gi`, `M`, ...) and lose precision in the conversion;
+// Rounded is set in that case so callers can annotate the report.
+type freeStats struct {
+	MemTotalKB     float64
+	MemFreeKB      float64
+	MemAvailableKB float64
+	BuffCacheKB    float64
+	SwapTotalKB    float64
+	SwapFreeKB     float64
+	HasMem         bool
+	HasSwap        bool
+	HasAvailable   bool
+	Rounded        bool
+}
+
+// parseFreeOutputKB extracts memory and swap stats from `free` output. It
+// supports the unit flags -h (human suffixes), -m, -g, -k (default), and -b.
+// The captured command line `cmd` is used to determine the unit for
+// unsuffixed cells (a plain "15923" means MiB under `free -m` but KiB
+// under default `free`). Suffixed cells (e.g. "1.5Gi", "512M") are parsed
+// from the suffix directly. Returns ok=false if the output doesn't look
+// like `free` output.
+func parseFreeOutputKB(cmd, output string) (freeStats, bool) {
+	var s freeStats
+
+	defaultUnitKB := 1.0
+	for _, tok := range strings.Fields(cmd) {
+		switch tok {
+		case "-b":
+			defaultUnitKB = 1.0 / 1024.0
+		case "-k":
+			defaultUnitKB = 1.0
+		case "-m":
+			defaultUnitKB = 1024.0
+		case "-g":
+			defaultUnitKB = 1024.0 * 1024.0
+		case "-h":
+			s.Rounded = true
+		}
+	}
+
+	lines := strings.Split(output, "\n")
+	headerIdx := -1
+	var headers []string
+	for i, ln := range lines {
+		fields := strings.Fields(ln)
+		if hasField(fields, "total") && hasField(fields, "used") && hasField(fields, "free") {
+			headerIdx = i
+			headers = fields
+			break
+		}
+	}
+	if headerIdx == -1 {
+		return s, false
+	}
+	colOf := map[string]int{}
+	for i, h := range headers {
+		colOf[strings.ToLower(h)] = i
+	}
+
+	getCell := func(fields []string, name string) (float64, bool) {
+		i, ok := colOf[name]
+		if !ok || i+1 >= len(fields) {
+			return 0, false
+		}
+		return parseFreeCellKB(fields[i+1], defaultUnitKB)
+	}
+
+	for _, ln := range lines[headerIdx+1:] {
+		fields := strings.Fields(ln)
+		if len(fields) < 2 {
+			continue
+		}
+		label := strings.ToLower(strings.TrimSuffix(fields[0], ":"))
+		switch label {
+		case "mem":
+			if v, ok := getCell(fields, "total"); ok {
+				s.MemTotalKB = v
+				s.HasMem = true
+			}
+			if v, ok := getCell(fields, "free"); ok {
+				s.MemFreeKB = v
+			}
+			if v, ok := getCell(fields, "available"); ok {
+				s.MemAvailableKB = v
+				s.HasAvailable = true
+			}
+			if v, ok := getCell(fields, "buff/cache"); ok {
+				s.BuffCacheKB = v
+			}
+		case "swap":
+			if v, ok := getCell(fields, "total"); ok {
+				s.SwapTotalKB = v
+				s.HasSwap = true
+			}
+			if v, ok := getCell(fields, "free"); ok {
+				s.SwapFreeKB = v
+			}
+		}
+	}
+
+	if !s.HasMem {
+		return s, false
+	}
+	return s, true
+}
+
+// parseFreeCellKB parses a single `free` cell ("15Gi", "3584", "0", "1.5G")
+// and returns its value in kibibytes. Suffixes are case-insensitive and
+// always base-2 (procps `free` uses IEC even when displaying the bare letter).
+// Unsuffixed cells are scaled by defaultUnitKB, which the caller derives
+// from the captured command flags.
+func parseFreeCellKB(cell string, defaultUnitKB float64) (float64, bool) {
+	if cell == "" {
+		return 0, false
+	}
+	i := 0
+	for i < len(cell) && (cell[i] == '.' || (cell[i] >= '0' && cell[i] <= '9')) {
+		i++
+	}
+	if i == 0 {
+		return 0, false
+	}
+	n, err := strconv.ParseFloat(cell[:i], 64)
+	if err != nil {
+		return 0, false
+	}
+	suffix := strings.ToLower(strings.TrimSpace(cell[i:]))
+	if suffix == "" {
+		return n * defaultUnitKB, true
+	}
+	var factorKB float64
+	switch suffix {
+	case "b":
+		factorKB = 1.0 / 1024.0
+	case "k", "ki":
+		factorKB = 1.0
+	case "m", "mi":
+		factorKB = 1024.0
+	case "g", "gi":
+		factorKB = 1024.0 * 1024.0
+	case "t", "ti":
+		factorKB = 1024.0 * 1024.0 * 1024.0
+	default:
+		return 0, false
+	}
+	return n * factorKB, true
+}
+
+func hasField(fields []string, target string) bool {
+	for _, f := range fields {
+		if strings.ToLower(f) == target {
+			return true
+		}
+	}
+	return false
+}
+
+// findFreeOutput returns the most recent freeStats parsed from a `free`
+// capture, in reverse chronological order. Returns ok=false if no `free`
+// capture parses successfully.
+func findFreeOutput(caps []CapturedCommand) (freeStats, bool) {
+	for i := len(caps) - 1; i >= 0; i-- {
+		c := caps[i]
+		if baseCmd(c.Cmd) != "free" {
+			continue
+		}
+		if fs, ok := parseFreeOutputKB(c.Cmd, c.Output); ok {
+			return fs, true
+		}
+	}
+	return freeStats{}, false
+}
+
 // findMeminfoOutput locates the most recent CapturedCommand whose output
 // looks like /proc/meminfo (so other `cat` invocations don't poison parsing).
 func findMeminfoOutput(caps []CapturedCommand) (string, bool) {
@@ -551,68 +727,87 @@ func findMeminfoOutput(caps []CapturedCommand) (string, bool) {
 }
 
 func extractMemUsedPct(si SystemInfo, caps []CapturedCommand) (Value, bool) {
-	out, ok := findMeminfoOutput(caps)
-	if !ok {
-		return Value{}, false
+	if out, ok := findMeminfoOutput(caps); ok {
+		total, tok := parseMeminfoKB(out, "MemTotal")
+		avail, aok := parseMeminfoKB(out, "MemAvailable")
+		if tok && aok && total > 0 {
+			return memUsedPctValue(total, avail, false), true
+		}
 	}
-	total, tok := parseMeminfoKB(out, "MemTotal")
-	avail, aok := parseMeminfoKB(out, "MemAvailable")
-	if !tok || !aok || total <= 0 {
-		return Value{}, false
+	if fs, ok := findFreeOutput(caps); ok && fs.HasAvailable && fs.MemTotalKB > 0 {
+		return memUsedPctValue(fs.MemTotalKB, fs.MemAvailableKB, fs.Rounded), true
 	}
-	used := (total - avail) / total * 100
-	return Value{
-		Number: used,
-		Unit:   "%",
-		Note:   fmt.Sprintf("%.1f / %.1f GiB used (excluding reclaimable cache)", (total-avail)/1024/1024, total/1024/1024),
-	}, true
+	return Value{}, false
+}
+
+func memUsedPctValue(totalKB, availKB float64, rounded bool) Value {
+	used := (totalKB - availKB) / totalKB * 100
+	note := fmt.Sprintf("%.1f / %.1f GiB used (excluding reclaimable cache)", (totalKB-availKB)/1024/1024, totalKB/1024/1024)
+	if rounded {
+		note += " — from rounded `free -h`"
+	}
+	return Value{Number: used, Unit: "%", Note: note}
 }
 
 func extractMemAvailableGiB(si SystemInfo, caps []CapturedCommand) (Value, bool) {
-	out, ok := findMeminfoOutput(caps)
-	if !ok {
-		return Value{}, false
+	if out, ok := findMeminfoOutput(caps); ok {
+		if avail, aok := parseMeminfoKB(out, "MemAvailable"); aok {
+			return Value{Number: avail / 1024 / 1024, Unit: " GiB"}, true
+		}
 	}
-	avail, aok := parseMeminfoKB(out, "MemAvailable")
-	if !aok {
-		return Value{}, false
+	if fs, ok := findFreeOutput(caps); ok && fs.HasAvailable {
+		v := Value{Number: fs.MemAvailableKB / 1024 / 1024, Unit: " GiB"}
+		if fs.Rounded {
+			v.Note = "from rounded `free -h`"
+		}
+		return v, true
 	}
-	return Value{Number: avail / 1024 / 1024, Unit: " GiB"}, true
+	return Value{}, false
 }
 
 func extractCacheBuffersGiB(si SystemInfo, caps []CapturedCommand) (Value, bool) {
-	out, ok := findMeminfoOutput(caps)
-	if !ok {
-		return Value{}, false
+	if out, ok := findMeminfoOutput(caps); ok {
+		cached, cok := parseMeminfoKB(out, "Cached")
+		buffers, bok := parseMeminfoKB(out, "Buffers")
+		if cok || bok {
+			total := cached + buffers
+			return Value{Number: total / 1024 / 1024, Unit: " GiB", Note: "reclaimable"}, true
+		}
 	}
-	cached, cok := parseMeminfoKB(out, "Cached")
-	buffers, bok := parseMeminfoKB(out, "Buffers")
-	if !cok && !bok {
-		return Value{}, false
+	if fs, ok := findFreeOutput(caps); ok && fs.BuffCacheKB > 0 {
+		note := "reclaimable"
+		if fs.Rounded {
+			note += " — from rounded `free -h`"
+		}
+		return Value{Number: fs.BuffCacheKB / 1024 / 1024, Unit: " GiB", Note: note}, true
 	}
-	total := cached + buffers
-	return Value{Number: total / 1024 / 1024, Unit: " GiB", Note: "reclaimable"}, true
+	return Value{}, false
 }
 
 func extractSwapUsedPct(si SystemInfo, caps []CapturedCommand) (Value, bool) {
-	out, ok := findMeminfoOutput(caps)
-	if !ok {
-		return Value{}, false
+	if out, ok := findMeminfoOutput(caps); ok {
+		total, tok := parseMeminfoKB(out, "SwapTotal")
+		free, fok := parseMeminfoKB(out, "SwapFree")
+		if tok && fok {
+			return swapUsedPctValue(total, free, false), true
+		}
 	}
-	total, tok := parseMeminfoKB(out, "SwapTotal")
-	free, fok := parseMeminfoKB(out, "SwapFree")
-	if !tok || !fok {
-		return Value{}, false
+	if fs, ok := findFreeOutput(caps); ok && fs.HasSwap {
+		return swapUsedPctValue(fs.SwapTotalKB, fs.SwapFreeKB, fs.Rounded), true
 	}
-	if total == 0 {
-		return Value{Text: "no swap configured"}, true
+	return Value{}, false
+}
+
+func swapUsedPctValue(totalKB, freeKB float64, rounded bool) Value {
+	if totalKB == 0 {
+		return Value{Text: "no swap configured"}
 	}
-	used := (total - free) / total * 100
-	return Value{
-		Number: used,
-		Unit:   "%",
-		Note:   fmt.Sprintf("%.1f / %.1f GiB", (total-free)/1024/1024, total/1024/1024),
-	}, true
+	used := (totalKB - freeKB) / totalKB * 100
+	note := fmt.Sprintf("%.1f / %.1f GiB", (totalKB-freeKB)/1024/1024, totalKB/1024/1024)
+	if rounded {
+		note += " — from rounded `free -h`"
+	}
+	return Value{Number: used, Unit: "%", Note: note}
 }
 
 var psiMemLineRe = regexp.MustCompile(`^(some|full)\s+avg10=([0-9.]+)`)
@@ -786,7 +981,7 @@ var memoryCommands = []CommandRef{
 	{
 		Cmd:     "free -h",
 		Section: "Utilization",
-		Summary: "Total/used/free/available memory and swap, human-readable.\nFastest first look. Read `available`, not `free`.",
+		Summary: "Total/used/free/available memory and swap, human-readable.\nFastest first look. Read `available`, not `free`.\n`free -m` (MiB) is equivalent and easier to compare exactly;\nthe report ingests either form.",
 	},
 	{
 		Cmd:     "cat /proc/meminfo",

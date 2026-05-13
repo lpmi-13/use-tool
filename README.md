@@ -1,5 +1,7 @@
 # Use Tool (Utilization, Saturation, Errors)
 
+> some good background on this topic is [this article](https://netflixtechblog.com/linux-performance-analysis-in-60-000-milliseconds-accc10403c55), as well as [this very comprehensive intro](https://www.brendangregg.com/linuxperf.html)
+
 A learning harness for practicing Brendan Gregg's USE method on a live Linux
 system. The tool captures the commands you run, parses their output into a
 structured snapshot, and asks targeted questions about what you observed —

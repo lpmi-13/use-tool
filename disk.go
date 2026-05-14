@@ -26,20 +26,22 @@ var diskInvestigation = &Investigation{
 func diskSteps(si SystemInfo) []GuideStep {
 	steps := []GuideStep{
 		{
-			Name:        "devices",
-			Intro:       "Step 1: orient yourself to what block devices the system has.",
-			Suggested:   "lsblk",
-			QuestionsFn: lsblkQuestions,
-			AcceptAny:   true,
+			Name:          "devices",
+			Intro:         "Step 1: orient yourself to what block devices the system has.",
+			Suggested:     "lsblk",
+			QuestionsFn:   lsblkColumnQuestions,
+			QuestionCount: 3,
+			AcceptAny:     true,
 			Teaching: "Note which devices are physical disks (TYPE=disk) vs partitions (part)\n" +
 				"vs LVM volumes (lvm). Per-device metrics from iostat will use the disk\n" +
 				"names you see here.",
 		},
 		{
-			Name:        "throughput",
-			Intro:       "Step 2: per-device throughput, queue depth, and latency.\niostat -xz is the workhorse: -x for extended columns, -z to skip idle devices.\nWe pipe through `grep -vE '^loop'` so snap-loop mounts don't bury the real devices.",
-			Suggested:   "iostat -xz 1 3 | grep -vE '^loop'",
-			QuestionsFn: iostatQuestions,
+			Name:          "throughput",
+			Intro:         "Step 2: per-device throughput, queue depth, and latency.\niostat -xz is the workhorse: -x for extended columns, -z to skip idle devices.\nWe pipe through `grep -vE '^loop'` so snap-loop mounts don't bury the real devices.",
+			Suggested:     "iostat -xz 1 3 | grep -vE '^loop'",
+			QuestionsFn:   iostatColumnQuestions,
+			QuestionCount: 3,
 			Teaching: "Three signals matter most:\n" +
 				"  • r/s + w/s — workload (the offered IOPS).\n" +
 				"  • aqu-sz — average queue depth. Sustained > 1 means requests are\n" +
@@ -53,21 +55,23 @@ func diskSteps(si SystemInfo) []GuideStep {
 	}
 	if si.HasPSI {
 		steps = append(steps, GuideStep{
-			Name:        "pressure",
-			Intro:       "Step 3: PSI reports time-share of tasks stalled on I/O.",
-			Suggested:   "cat /proc/pressure/io",
-			QuestionsFn: psiIOQuestions,
+			Name:          "pressure",
+			Intro:         "Step 3: PSI reports time-share of tasks stalled on I/O.",
+			Suggested:     "cat /proc/pressure/io",
+			QuestionsFn:   psiIOColumnQuestions,
+			QuestionCount: 3,
 			Teaching: "`some` is time at least one task was stalled on I/O; `full` is time\n" +
 				"all non-idle tasks were stalled. Non-zero `full avg10` is the strongest\n" +
 				"saturation signal — the system was actually wedged, not just busy.",
 		})
 	}
 	steps = append(steps, GuideStep{
-		Name:        "attribution",
-		Intro:       "Step 4: which processes are doing the I/O?",
-		Suggested:   "pidstat -d 1 3",
-		QuestionsFn: pidstatDQuestions,
-		AcceptAny:   true,
+		Name:          "attribution",
+		Intro:         "Step 4: which processes are doing the I/O?",
+		Suggested:     "pidstat -d 1 3",
+		QuestionsFn:   pidstatDColumnQuestions,
+		QuestionCount: 3,
+		AcceptAny:     true,
 		Teaching: "kB_rd/s and kB_wr/s are per-process read/write rates from the kernel's\n" +
 			"task accounting. If one process accounts for most of the device load,\n" +
 			"that's where to look next.\n\n" +
@@ -118,16 +122,25 @@ func iostatQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !iostatHeaderRe.MatchString(c.Output) {
 		return nil
 	}
-	picks := availableIostatQuestionPicks(c.Output)
-	if len(picks) == 0 {
+	return randomColumnQuestions(
+		availableIostatQuestionPicks(c.Output),
+		1,
+		func(column string) string {
+			return fmt.Sprintf("In `iostat -x` output, what does the `%s` column represent?", column)
+		},
+	)
+}
+
+func iostatColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if !iostatHeaderRe.MatchString(c.Output) {
 		return nil
 	}
-	pick := pickRandom(picks)
-	return []Question{{
-		Stem:        fmt.Sprintf("In `iostat -x` output, what does the `%s` column represent?", pick.Column),
-		Correct:     pick.Correct,
-		Distractors: pick.Distractors,
-	}}
+	return columnQuestionsFromPicks(
+		availableIostatQuestionPicks(c.Output),
+		func(column string) string {
+			return fmt.Sprintf("In `iostat -x` output, what does the `%s` column represent?", column)
+		},
+	)
 }
 
 var iostatQuestionPicks = []columnQuestionPick{
@@ -206,13 +219,7 @@ var iostatQuestionPicks = []columnQuestionPick{
 }
 
 func availableIostatQuestionPicks(output string) []columnQuestionPick {
-	var picks []columnQuestionPick
-	for _, pick := range iostatQuestionPicks {
-		if outputHasColumn(output, pick.Column) {
-			picks = append(picks, pick)
-		}
-	}
-	return picks
+	return availableColumnQuestionPicks(output, iostatQuestionPicks)
 }
 
 func lsblkQuestions(si SystemInfo, c CapturedCommand) []Question {
@@ -228,6 +235,84 @@ func lsblkQuestions(si SystemInfo, c CapturedCommand) []Question {
 			"`disk` is local; `part` is networked",
 		},
 	}}
+}
+
+func lsblkColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if !strings.Contains(c.Output, "NAME") || !strings.Contains(c.Output, "TYPE") {
+		return nil
+	}
+	return columnQuestionsFromPicks(
+		availableColumnQuestionPicks(c.Output, lsblkQuestionPicks),
+		func(column string) string {
+			return fmt.Sprintf("In `lsblk` output, what does the `%s` column represent?", column)
+		},
+	)
+}
+
+var lsblkQuestionPicks = []columnQuestionPick{
+	{
+		Column:  "NAME",
+		Correct: "The kernel block-device name, with tree indentation showing parent/child relationships",
+		Distractors: []string{
+			"The filesystem label mounted on the device",
+			"The hardware model string for the disk",
+			"The mount namespace that owns the device",
+		},
+	},
+	{
+		Column:  "MAJ:MIN",
+		Correct: "The kernel major and minor device numbers",
+		Distractors: []string{
+			"The major and minor filesystem version",
+			"The PCI bus and slot numbers",
+			"The partition start and end sectors",
+		},
+	},
+	{
+		Column:  "RM",
+		Correct: "Whether the device is removable",
+		Distractors: []string{
+			"Whether the device is mounted read-only",
+			"Whether the device is remote",
+			"Whether the device has recently been removed",
+		},
+	},
+	{
+		Column:  "SIZE",
+		Correct: "The apparent size of the block device or partition",
+		Distractors: []string{
+			"The filesystem space currently used",
+			"The amount of dirty writeback data",
+			"The hardware queue depth",
+		},
+	},
+	{
+		Column:  "RO",
+		Correct: "Whether the block device is read-only",
+		Distractors: []string{
+			"Whether the device is removable",
+			"Whether reads are currently outstanding",
+			"Whether the filesystem is mounted",
+		},
+	},
+	{
+		Column:  "TYPE",
+		Correct: "The block-device type, such as disk, partition, loop device, or LVM volume",
+		Distractors: []string{
+			"The filesystem type, such as ext4 or xfs",
+			"The bus type, such as PCIe or SATA",
+			"The current I/O scheduler",
+		},
+	},
+	{
+		Column:  "MOUNTPOINTS",
+		Correct: "Where filesystems from that block device are mounted",
+		Distractors: []string{
+			"The partition table entries on the device",
+			"The device's physical attachment points",
+			"The applications currently writing to the device",
+		},
+	},
 }
 
 func pidstatDQuestions(si SystemInfo, c CapturedCommand) []Question {
@@ -265,6 +350,84 @@ func pidstatDQuestions(si SystemInfo, c CapturedCommand) []Question {
 	}}
 }
 
+func pidstatDColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if !strings.Contains(c.Output, "kB_rd/s") && !strings.Contains(c.Output, "kB_wr/s") {
+		return nil
+	}
+	return columnQuestionsFromPicks(
+		availableColumnQuestionPicks(c.Output, pidstatDQuestionPicks),
+		func(column string) string {
+			return fmt.Sprintf("In `pidstat -d` output, what does the `%s` column represent?", column)
+		},
+	)
+}
+
+var pidstatDQuestionPicks = []columnQuestionPick{
+	{
+		Column:  "UID",
+		Correct: "The user ID that owns the process",
+		Distractors: []string{
+			"The unique disk ID being accessed",
+			"The kernel thread ID",
+			"The container ID for the process",
+		},
+	},
+	{
+		Column:  "PID",
+		Correct: "The process ID being reported",
+		Distractors: []string{
+			"The parent process ID",
+			"The physical disk ID",
+			"The process's priority",
+		},
+	},
+	{
+		Column:  "kB_rd/s",
+		Correct: "Kilobytes per second the process caused to be read from storage",
+		Distractors: []string{
+			"Kilobytes the process has read since it started",
+			"Kilobytes per second read from memory cache only",
+			"Pending read queue size in kilobytes",
+		},
+	},
+	{
+		Column:  "kB_wr/s",
+		Correct: "Kilobytes per second the process caused to be written to storage",
+		Distractors: []string{
+			"Kilobytes the process has written since it started",
+			"Kilobytes per second written to memory cache only",
+			"Pending write queue size in kilobytes",
+		},
+	},
+	{
+		Column:  "kB_ccwr/s",
+		Correct: "Kilobytes per second of writes cancelled by the task",
+		Distractors: []string{
+			"Kilobytes per second compressed before writing",
+			"Kilobytes per second copied from cache",
+			"Kilobytes per second written by child processes",
+		},
+	},
+	{
+		Column:  "iodelay",
+		Correct: "Block I/O delay accumulated by the task, reported in clock ticks",
+		Distractors: []string{
+			"Average device latency in milliseconds",
+			"Current number of queued I/O requests",
+			"Delay before the process starts after fork",
+		},
+	},
+	{
+		Column:  "Command",
+		Correct: "The command name for the process",
+		Distractors: []string{
+			"The full command line including arguments",
+			"The cgroup path for the process",
+			"The block device name being accessed",
+		},
+	},
+}
+
 var psiIOHeaderRe = regexp.MustCompile(`(?m)^some avg10=`)
 
 func psiIOQuestions(si SystemInfo, c CapturedCommand) []Question {
@@ -292,6 +455,16 @@ func psiIOQuestions(si SystemInfo, c CapturedCommand) []Question {
 			},
 		},
 	}
+}
+
+func psiIOColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if !strings.Contains(c.Cmd, "/proc/pressure/io") {
+		return nil
+	}
+	if !psiIOHeaderRe.MatchString(c.Output) {
+		return nil
+	}
+	return psiColumnQuestions("/proc/pressure/io", "I/O", c.Output)
 }
 
 func diskDmesgQuestions(si SystemInfo, c CapturedCommand) []Question {

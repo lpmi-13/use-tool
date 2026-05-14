@@ -25,20 +25,22 @@ var networkInvestigation = &Investigation{
 func networkSteps(si SystemInfo) []GuideStep {
 	return []GuideStep{
 		{
-			Name:        "interfaces",
-			Intro:       "Step 1: orient yourself to the interfaces and their cumulative counters.",
-			Suggested:   "ip -s link",
-			QuestionsFn: ipLinkQuestions,
-			AcceptAny:   true,
+			Name:          "interfaces",
+			Intro:         "Step 1: orient yourself to the interfaces and their cumulative counters.",
+			Suggested:     "ip -s link",
+			QuestionsFn:   ipLinkColumnQuestions,
+			QuestionCount: 3,
+			AcceptAny:     true,
 			Teaching: "Each interface lists RX and TX byte/packet/error/dropped counters.\n" +
 				"These are cumulative since boot — useful for 'has anything ever been\n" +
 				"wrong here' but not for 'is it happening now'. Use sar -n EDEV for rates.",
 		},
 		{
-			Name:        "throughput",
-			Intro:       "Step 2: measure per-interface throughput as a rate (utilization).\nsar samples once per second; compare against ethtool-reported link speed.",
-			Suggested:   "sar -n DEV 1 3",
-			QuestionsFn: sarDevQuestions,
+			Name:          "throughput",
+			Intro:         "Step 2: measure per-interface throughput as a rate (utilization).\nsar samples once per second; compare against ethtool-reported link speed.",
+			Suggested:     "sar -n DEV 1 3",
+			QuestionsFn:   sarDevColumnQuestions,
+			QuestionCount: 3,
 			Teaching: "rxkB/s and txkB/s give the per-second receive/transmit rate.\n" +
 				"To convert to a percentage of link capacity, you need ethtool to learn\n" +
 				"the link speed. On VMs and containers, virtual interfaces often report\n" +
@@ -52,31 +54,34 @@ func networkSteps(si SystemInfo) []GuideStep {
 				"shows the container-side name.",
 		},
 		{
-			Name:        "drops",
-			Intro:       "Step 3: look for saturation at the interface level — drops and overruns.",
-			Suggested:   "sar -n EDEV 1 3",
-			QuestionsFn: sarEdevQuestions,
+			Name:          "drops",
+			Intro:         "Step 3: look for saturation at the interface level — drops and overruns.",
+			Suggested:     "sar -n EDEV 1 3",
+			QuestionsFn:   sarEdevColumnQuestions,
+			QuestionCount: 3,
 			Teaching: "rxdrop/s > 0 means the kernel discarded incoming packets, usually\n" +
 				"because the NIC ring buffer or kernel queue was full. txdrop/s on the\n" +
 				"send side means the qdisc dropped packets. Either is real saturation\n" +
 				"that the bandwidth headline will not show you.",
 		},
 		{
-			Name:        "tcp",
-			Intro:       "Step 4: protocol-level signals — TCP retransmits and listen overflows.",
-			Suggested:   "cat /proc/net/snmp /proc/net/netstat",
-			QuestionsFn: catNetQuestions,
+			Name:          "tcp",
+			Intro:         "Step 4: protocol-level signals — TCP retransmits and listen overflows.",
+			Suggested:     "cat /proc/net/snmp /proc/net/netstat",
+			QuestionsFn:   catNetColumnQuestions,
+			QuestionCount: 3,
 			Teaching: "RetransSegs / OutSegs gives the retransmit ratio. Healthy is < 0.5%.\n" +
 				"ListenOverflows in TcpExt: counts SYNs the kernel dropped because the\n" +
 				"application's listen queue was full — that's an application-side\n" +
 				"bottleneck, not network loss.",
 		},
 		{
-			Name:        "sockets",
-			Intro:       "Step 5: socket summary — what's currently established and what's listening.",
-			Suggested:   "ss -s",
-			QuestionsFn: ssSummaryQuestions,
-			AcceptAny:   true,
+			Name:          "sockets",
+			Intro:         "Step 5: socket summary — what's currently established and what's listening.",
+			Suggested:     "ss -s",
+			QuestionsFn:   ssSummaryColumnQuestions,
+			QuestionCount: 3,
+			AcceptAny:     true,
 			Teaching: "The TCP estab count tells you connection load right now. For listen\n" +
 				"queue depth, `ss -lnt` shows Recv-Q (current) vs Send-Q (max backlog)\n" +
 				"per listening socket — Recv-Q approaching Send-Q is the live signal\n" +
@@ -131,6 +136,20 @@ func catNetQuestions(si SystemInfo, c CapturedCommand) []Question {
 	return qs
 }
 
+func catNetColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
+	var qs []Question
+	if strings.Contains(c.Cmd, "/proc/net/snmp") {
+		qs = append(qs, snmpColumnQuestions(si, c)...)
+	}
+	if strings.Contains(c.Cmd, "/proc/net/netstat") {
+		qs = append(qs, netstatExtColumnQuestions(si, c)...)
+	}
+	if strings.Contains(c.Cmd, "/proc/net/dev") {
+		qs = append(qs, procNetDevColumnQuestions(si, c)...)
+	}
+	return qs
+}
+
 func ipLinkQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !strings.Contains(c.Output, "RX:") || !strings.Contains(c.Output, "TX:") {
 		return nil
@@ -152,6 +171,104 @@ func ipLinkQuestions(si SystemInfo, c CapturedCommand) []Question {
 				"They overflow every 24 hours, so values older than that are unreliable",
 				"They are per-CPU and must be summed manually before comparing",
 				"They reset on every link state change, so they only reflect the current uptime of the link",
+			},
+		},
+	}
+}
+
+func ipLinkColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if !strings.Contains(c.Output, "RX:") || !strings.Contains(c.Output, "TX:") {
+		return nil
+	}
+	return []Question{
+		{
+			Stem:    "In `ip -s link` RX counters, what does `bytes` represent?",
+			Correct: "Cumulative bytes received by the interface since the counter was reset",
+			Distractors: []string{
+				"Current receive throughput in bytes per second",
+				"Bytes waiting in the receive queue right now",
+				"Bytes dropped by the receive path",
+			},
+		},
+		{
+			Stem:    "In `ip -s link` RX counters, what does `packets` represent?",
+			Correct: "Cumulative packets received by the interface since the counter was reset",
+			Distractors: []string{
+				"Current receive packets per second",
+				"Packets currently queued for userspace",
+				"Packets retransmitted by TCP",
+			},
+		},
+		{
+			Stem:    "In `ip -s link` RX counters, what does `errors` represent?",
+			Correct: "Cumulative receive-side packet errors reported by the interface",
+			Distractors: []string{
+				"Application-level socket errors",
+				"Packets intentionally dropped by firewall rules only",
+				"Current receive error percentage",
+			},
+		},
+		{
+			Stem:    "In `ip -s link` RX counters, what does `dropped` represent?",
+			Correct: "Cumulative received packets discarded before delivery up the stack",
+			Distractors: []string{
+				"Packets dropped by remote peers",
+				"Packets retransmitted after loss",
+				"Current queue depth for receive packets",
+			},
+		},
+		{
+			Stem:    "In `ip -s link` RX counters, what does `overrun` represent?",
+			Correct: "Cumulative receive FIFO overruns where packets arrived faster than the NIC or driver could drain them",
+			Distractors: []string{
+				"Packets larger than the interface MTU",
+				"Packets dropped by the transmit queue",
+				"TCP connections that exceeded their receive window",
+			},
+		},
+		{
+			Stem:    "In `ip -s link` RX counters, what does `mcast` represent?",
+			Correct: "Cumulative multicast packets received by the interface",
+			Distractors: []string{
+				"Packets sent to the interface's MAC address only",
+				"Packets dropped because of checksum errors",
+				"Current multicast group membership count",
+			},
+		},
+		{
+			Stem:    "In `ip -s link` TX counters, what does `bytes` represent?",
+			Correct: "Cumulative bytes transmitted by the interface since the counter was reset",
+			Distractors: []string{
+				"Current transmit throughput in bytes per second",
+				"Bytes currently waiting in the transmit queue",
+				"Bytes received from remote peers",
+			},
+		},
+		{
+			Stem:    "In `ip -s link` TX counters, what does `packets` represent?",
+			Correct: "Cumulative packets transmitted by the interface since the counter was reset",
+			Distractors: []string{
+				"Current transmit packets per second",
+				"Packets currently queued in TCP send buffers",
+				"Packets received and forwarded by the kernel",
+			},
+		},
+		{
+			Stem:    "In `ip -s link` TX counters, what does `dropped` represent?",
+			Correct: "Cumulative outgoing packets discarded before transmission",
+			Distractors: []string{
+				"Incoming packets dropped by the peer",
+				"TCP segments retransmitted after timeout",
+				"Packets sent to a multicast address",
+			},
+		},
+		{
+			Stem:    "In `ip -s link` TX counters, what does `carrier` represent?",
+			Correct: "Cumulative transmit carrier errors reported by the interface",
+			Distractors: []string{
+				"The current negotiated carrier speed",
+				"The number of carrier-grade NAT translations",
+				"Packets carried successfully by TCP",
 			},
 		},
 	}
@@ -202,6 +319,102 @@ func sarDevQuestions(si SystemInfo, c CapturedCommand) []Question {
 	}
 }
 
+func sarDevColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if !sarDevHeaderRe.MatchString(c.Output) {
+		return nil
+	}
+	return columnQuestionsFromPicks(
+		availableColumnQuestionPicks(c.Output, sarDevQuestionPicks),
+		func(column string) string {
+			return fmt.Sprintf("In `sar -n DEV` output, what does `%s` represent?", column)
+		},
+	)
+}
+
+var sarDevQuestionPicks = []columnQuestionPick{
+	{
+		Column:  "IFACE",
+		Correct: "The network interface name for the row",
+		Distractors: []string{
+			"The peer host name for the traffic",
+			"The socket protocol family",
+			"The interface's configured IP address",
+		},
+	},
+	{
+		Column:  "rxpck/s",
+		Correct: "Packets received per second during the sample interval",
+		Distractors: []string{
+			"Kilobytes received per second",
+			"Packets received since boot",
+			"Packets dropped per second",
+		},
+	},
+	{
+		Column:  "txpck/s",
+		Correct: "Packets transmitted per second during the sample interval",
+		Distractors: []string{
+			"Kilobytes transmitted per second",
+			"Packets transmitted since boot",
+			"Transmit errors per second",
+		},
+	},
+	{
+		Column:  "rxkB/s",
+		Correct: "Receive throughput in kilobytes per second during the sample interval",
+		Distractors: []string{
+			"Receive packets per second",
+			"Kilobytes received since boot",
+			"Receive queue depth in kilobytes",
+		},
+	},
+	{
+		Column:  "txkB/s",
+		Correct: "Transmit throughput in kilobytes per second during the sample interval",
+		Distractors: []string{
+			"Transmit packets per second",
+			"Kilobytes transmitted since boot",
+			"Transmit queue depth in kilobytes",
+		},
+	},
+	{
+		Column:  "rxcmp/s",
+		Correct: "Compressed packets received per second",
+		Distractors: []string{
+			"Packets received with checksum errors per second",
+			"Packets compressed by TCP per second",
+			"Receive completions from the NIC per second",
+		},
+	},
+	{
+		Column:  "txcmp/s",
+		Correct: "Compressed packets transmitted per second",
+		Distractors: []string{
+			"Packets transmitted with checksum errors per second",
+			"Transmit completions from the NIC per second",
+			"Packets compressed by TLS per second",
+		},
+	},
+	{
+		Column:  "rxmcst/s",
+		Correct: "Multicast packets received per second",
+		Distractors: []string{
+			"Multicast packets transmitted per second",
+			"Packets received from the most active peer",
+			"Receive errors caused by multicast traffic",
+		},
+	},
+	{
+		Column:  "%ifutil",
+		Correct: "Estimated interface utilization as a percentage of link capacity",
+		Distractors: []string{
+			"Percent of packets that were dropped",
+			"Percent of CPU time spent handling this interface",
+			"Percent of socket buffers currently allocated",
+		},
+	},
+}
+
 var sarEdevHeaderRe = regexp.MustCompile(`(?m)^[\d:]+\s+IFACE.*rxdrop/s`)
 
 func sarEdevQuestions(si SystemInfo, c CapturedCommand) []Question {
@@ -232,6 +445,111 @@ func sarEdevQuestions(si SystemInfo, c CapturedCommand) []Question {
 	}}
 }
 
+func sarEdevColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if !sarEdevHeaderRe.MatchString(c.Output) {
+		return nil
+	}
+	return columnQuestionsFromPicks(
+		availableColumnQuestionPicks(c.Output, sarEdevQuestionPicks),
+		func(column string) string {
+			return fmt.Sprintf("In `sar -n EDEV` output, what does `%s` represent?", column)
+		},
+	)
+}
+
+var sarEdevQuestionPicks = []columnQuestionPick{
+	{
+		Column:  "IFACE",
+		Correct: "The network interface name for the row",
+		Distractors: []string{
+			"The remote endpoint for the errors",
+			"The IP protocol being reported",
+			"The device driver's module name",
+		},
+	},
+	{
+		Column:  "rxerr/s",
+		Correct: "Receive errors per second during the sample interval",
+		Distractors: []string{
+			"Receive packets per second",
+			"Receive drops since boot",
+			"TCP retransmits per second",
+		},
+	},
+	{
+		Column:  "txerr/s",
+		Correct: "Transmit errors per second during the sample interval",
+		Distractors: []string{
+			"Transmit packets per second",
+			"Transmit drops since boot",
+			"TCP reset packets per second",
+		},
+	},
+	{
+		Column:  "coll/s",
+		Correct: "Collisions per second, mainly relevant to shared or half-duplex media",
+		Distractors: []string{
+			"Socket accept collisions per second",
+			"Packets dropped by qdisc per second",
+			"TCP checksum collisions per second",
+		},
+	},
+	{
+		Column:  "rxdrop/s",
+		Correct: "Received packets dropped per second before delivery up the stack",
+		Distractors: []string{
+			"Packets retransmitted by TCP per second",
+			"Receive packets with checksum errors per second",
+			"Incoming connections refused per second",
+		},
+	},
+	{
+		Column:  "txdrop/s",
+		Correct: "Outgoing packets dropped per second before transmission",
+		Distractors: []string{
+			"Transmit packets with checksum errors per second",
+			"TCP segments retransmitted per second",
+			"Connections dropped by the application per second",
+		},
+	},
+	{
+		Column:  "txcarr/s",
+		Correct: "Transmit carrier errors per second",
+		Distractors: []string{
+			"Transmit packets carried successfully per second",
+			"Carrier speed changes per second",
+			"TCP connection carry-over events per second",
+		},
+	},
+	{
+		Column:  "rxfram/s",
+		Correct: "Receive frame alignment errors per second",
+		Distractors: []string{
+			"Receive packets per second after framing overhead",
+			"Firewall frame drops per second",
+			"Frames forwarded by the kernel per second",
+		},
+	},
+	{
+		Column:  "rxfifo/s",
+		Correct: "Receive FIFO overrun errors per second",
+		Distractors: []string{
+			"Receive queue length sampled once per second",
+			"Packets received from FIFO sockets per second",
+			"Receive packets forwarded per second",
+		},
+	},
+	{
+		Column:  "txfifo/s",
+		Correct: "Transmit FIFO errors per second",
+		Distractors: []string{
+			"Transmit queue length sampled once per second",
+			"Packets transmitted through FIFO sockets per second",
+			"Transmit packets forwarded per second",
+		},
+	},
+}
+
 func ssSummaryQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !strings.Contains(c.Output, "TCP:") || !strings.Contains(c.Output, "estab") {
 		return nil
@@ -245,6 +563,112 @@ func ssSummaryQuestions(si SystemInfo, c CapturedCommand) []Question {
 			"The number of TCP listen sockets currently bound to ports",
 		},
 	}}
+}
+
+func ssSummaryColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if !strings.Contains(c.Output, "TCP:") || !strings.Contains(c.Output, "estab") {
+		return nil
+	}
+	return columnQuestionsFromPicks(
+		availableSSSummaryQuestionPicks(c.Output),
+		func(column string) string {
+			return fmt.Sprintf("In `ss -s` output, what does `%s` represent?", column)
+		},
+	)
+}
+
+var ssSummaryQuestionPicks = []columnQuestionPick{
+	{
+		Column:  "estab",
+		Correct: "TCP connections currently in the ESTABLISHED state",
+		Distractors: []string{
+			"TCP connections opened since boot",
+			"TCP listen sockets waiting for accept",
+			"TCP connections currently retransmitting",
+		},
+	},
+	{
+		Column:  "closed",
+		Correct: "TCP sockets currently counted as closed in the summary",
+		Distractors: []string{
+			"Connections closed since boot",
+			"Listen sockets with closed queues",
+			"Connections closed by firewall policy",
+		},
+	},
+	{
+		Column:  "orphaned",
+		Correct: "TCP sockets no longer attached to a user file descriptor",
+		Distractors: []string{
+			"Connections without a configured route",
+			"Listen sockets without a process bound",
+			"Packets dropped because their process exited",
+		},
+	},
+	{
+		Column:  "timewait",
+		Correct: "TCP connections currently in TIME_WAIT",
+		Distractors: []string{
+			"Connections waiting for the application to call accept",
+			"Connections waiting for DNS resolution",
+			"Total time spent waiting on TCP sends",
+		},
+	},
+	{
+		Column:  "Transport",
+		Correct: "The protocol or socket family name for each row in the summary table",
+		Distractors: []string{
+			"The network interface carrying the sockets",
+			"The peer transport address",
+			"The process command owning the sockets",
+		},
+	},
+	{
+		Column:  "Total",
+		Correct: "The total socket count for that transport row",
+		Distractors: []string{
+			"The total bytes sent by that transport",
+			"The total sockets opened since boot",
+			"The total backlog capacity for listen sockets",
+		},
+	},
+	{
+		Column:  "IP",
+		Correct: "The IPv4 socket count for that transport row",
+		Distractors: []string{
+			"The local IP address for the row",
+			"The IP packet error count",
+			"The number of interfaces with an IP address",
+		},
+	},
+	{
+		Column:  "IPv6",
+		Correct: "The IPv6 socket count for that transport row",
+		Distractors: []string{
+			"The number of IPv6 routes on the host",
+			"The remote IPv6 endpoint for the row",
+			"The IPv6 packet retransmit count",
+		},
+	},
+}
+
+func availableSSSummaryQuestionPicks(output string) []columnQuestionPick {
+	var picks []columnQuestionPick
+	for _, pick := range ssSummaryQuestionPicks {
+		if outputHasTokenName(output, pick.Column) {
+			picks = append(picks, pick)
+		}
+	}
+	return picks
+}
+
+func outputHasTokenName(output, name string) bool {
+	for _, field := range strings.Fields(output) {
+		if strings.Trim(field, "(),:") == name {
+			return true
+		}
+	}
+	return false
 }
 
 var snmpTcpHeaderRe = regexp.MustCompile(`(?m)^Tcp:\s+RtoAlgorithm`)
@@ -275,6 +699,111 @@ func snmpQuestions(si SystemInfo, c CapturedCommand) []Question {
 	}
 }
 
+func snmpColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if !snmpTcpHeaderRe.MatchString(c.Output) {
+		return nil
+	}
+	return columnQuestionsFromPicks(
+		availableColumnQuestionPicks(c.Output, snmpQuestionPicks),
+		func(column string) string {
+			return fmt.Sprintf("In `/proc/net/snmp` TCP output, what does `%s` represent?", column)
+		},
+	)
+}
+
+var snmpQuestionPicks = []columnQuestionPick{
+	{
+		Column:  "ActiveOpens",
+		Correct: "TCP connections actively opened by this host",
+		Distractors: []string{
+			"TCP connections passively accepted by local listeners",
+			"Current established TCP connections",
+			"TCP retransmits initiated by this host",
+		},
+	},
+	{
+		Column:  "PassiveOpens",
+		Correct: "TCP connections passively opened by local listening sockets",
+		Distractors: []string{
+			"TCP connections actively opened by clients on this host",
+			"TCP sockets waiting in TIME_WAIT",
+			"TCP connections reset by peers",
+		},
+	},
+	{
+		Column:  "AttemptFails",
+		Correct: "Failed TCP connection attempts",
+		Distractors: []string{
+			"Failed packet checksum validations",
+			"Failed DNS lookups",
+			"Failed interface carrier checks",
+		},
+	},
+	{
+		Column:  "EstabResets",
+		Correct: "Established TCP connections that were reset",
+		Distractors: []string{
+			"Current established TCP connections",
+			"TCP listeners that reset their backlog",
+			"TCP retransmission timer resets",
+		},
+	},
+	{
+		Column:  "CurrEstab",
+		Correct: "TCP connections currently in ESTABLISHED or CLOSE-WAIT",
+		Distractors: []string{
+			"TCP connections established since boot",
+			"TCP listen sockets currently bound",
+			"TCP connections waiting in SYN-SENT",
+		},
+	},
+	{
+		Column:  "InSegs",
+		Correct: "TCP segments received",
+		Distractors: []string{
+			"TCP segments sent",
+			"TCP segments retransmitted",
+			"Incoming IP packets dropped by the NIC",
+		},
+	},
+	{
+		Column:  "OutSegs",
+		Correct: "TCP segments sent, excluding retransmitted segments on Linux",
+		Distractors: []string{
+			"TCP segments received",
+			"TCP segments queued but not sent",
+			"Outgoing packets dropped by qdisc",
+		},
+	},
+	{
+		Column:  "RetransSegs",
+		Correct: "TCP segments retransmitted",
+		Distractors: []string{
+			"TCP connections reset by the peer",
+			"TCP segments sent for the first time",
+			"TCP packets received out of order",
+		},
+	},
+	{
+		Column:  "InErrs",
+		Correct: "TCP segments received with errors",
+		Distractors: []string{
+			"Incoming interface errors across all protocols",
+			"TCP connection attempts that failed",
+			"Packets dropped by firewall rules",
+		},
+	},
+	{
+		Column:  "OutRsts",
+		Correct: "TCP reset segments sent",
+		Distractors: []string{
+			"TCP segments retransmitted after timeout",
+			"Outgoing route lookup failures",
+			"TCP sockets currently reset but not closed",
+		},
+	},
+}
+
 var netstatExtTcpExtRe = regexp.MustCompile(`(?m)^TcpExt:\s+\w`)
 
 func netstatExtQuestions(si SystemInfo, c CapturedCommand) []Question {
@@ -292,6 +821,102 @@ func netstatExtQuestions(si SystemInfo, c CapturedCommand) []Question {
 	}}
 }
 
+func netstatExtColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if !netstatExtTcpExtRe.MatchString(c.Output) {
+		return nil
+	}
+	return columnQuestionsFromPicks(
+		availableColumnQuestionPicks(c.Output, netstatExtQuestionPicks),
+		func(column string) string {
+			return fmt.Sprintf("In `/proc/net/netstat` TcpExt output, what does `%s` represent?", column)
+		},
+	)
+}
+
+var netstatExtQuestionPicks = []columnQuestionPick{
+	{
+		Column:  "SyncookiesSent",
+		Correct: "SYN cookies sent when the SYN backlog was under pressure",
+		Distractors: []string{
+			"Application cookies sent over HTTP",
+			"TCP resets sent by local sockets",
+			"TLS session tickets sent",
+		},
+	},
+	{
+		Column:  "SyncookiesRecv",
+		Correct: "Valid SYN cookies received back from clients",
+		Distractors: []string{
+			"TCP SYN packets received by listeners",
+			"Invalid SYN cookies rejected",
+			"Application cookies received over HTTP",
+		},
+	},
+	{
+		Column:  "SyncookiesFailed",
+		Correct: "Invalid SYN cookie responses received",
+		Distractors: []string{
+			"Failed TCP retransmissions",
+			"Failed DNS cookie validations",
+			"Failed application login cookies",
+		},
+	},
+	{
+		Column:  "EmbryonicRsts",
+		Correct: "Resets received for connections that were not fully established yet",
+		Distractors: []string{
+			"Established connections reset by local applications",
+			"TCP listeners restarted by systemd",
+			"Packets dropped because receive queues overflowed",
+		},
+	},
+	{
+		Column:  "PruneCalled",
+		Correct: "Times the kernel tried to prune TCP receive queues under memory pressure",
+		Distractors: []string{
+			"Times old routes were pruned from the routing table",
+			"Times sockets were pruned from TIME_WAIT only",
+			"Times the NIC pruned packets from hardware rings",
+		},
+	},
+	{
+		Column:  "RcvPruned",
+		Correct: "Packets pruned from receive queues because of memory pressure",
+		Distractors: []string{
+			"Receive packets dropped by interface errors",
+			"Receive queues resized by autotuning",
+			"Packets removed after successful delivery",
+		},
+	},
+	{
+		Column:  "OfoPruned",
+		Correct: "Out-of-order packets pruned from TCP queues",
+		Distractors: []string{
+			"Packets pruned from ordered send queues",
+			"Firewall rules pruned from nftables",
+			"Packets dropped due to bad checksums",
+		},
+	},
+	{
+		Column:  "ListenOverflows",
+		Correct: "Times a listening socket's accept queue overflowed",
+		Distractors: []string{
+			"Times the NIC receive FIFO overflowed",
+			"TCP receive-window overflows on established connections",
+			"Listen sockets opened since boot",
+		},
+	},
+	{
+		Column:  "ListenDrops",
+		Correct: "Connection attempts dropped because a listening socket could not accept them",
+		Distractors: []string{
+			"Established connections dropped by the peer",
+			"Packets dropped by the physical interface",
+			"Listen sockets closed by applications",
+		},
+	},
+}
+
 func procNetDevQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !strings.Contains(c.Output, "Inter-") || !strings.Contains(c.Output, "Receive") {
 		return nil
@@ -305,6 +930,59 @@ func procNetDevQuestions(si SystemInfo, c CapturedCommand) []Question {
 			"Read /proc/net/dev_rate, which exposes the same data already differentiated",
 		},
 	}}
+}
+
+func procNetDevColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if !strings.Contains(c.Output, "Inter-") || !strings.Contains(c.Output, "Receive") {
+		return nil
+	}
+	return []Question{
+		{
+			Stem:    "In `/proc/net/dev`, what does receive `bytes` represent?",
+			Correct: "Cumulative bytes received by the interface",
+			Distractors: []string{
+				"Current receive throughput in bytes per second",
+				"Bytes currently queued in socket buffers",
+				"Bytes dropped by the interface",
+			},
+		},
+		{
+			Stem:    "In `/proc/net/dev`, what does receive `errs` represent?",
+			Correct: "Cumulative receive errors for the interface",
+			Distractors: []string{
+				"TCP errors reported by applications",
+				"Receive packets dropped by firewall rules only",
+				"Current receive error rate per second",
+			},
+		},
+		{
+			Stem:    "In `/proc/net/dev`, what does receive `drop` represent?",
+			Correct: "Cumulative received packets dropped before delivery",
+			Distractors: []string{
+				"TCP retransmitted packets",
+				"Packets dropped by the remote peer",
+				"Current receive queue length",
+			},
+		},
+		{
+			Stem:    "In `/proc/net/dev`, what does transmit `bytes` represent?",
+			Correct: "Cumulative bytes transmitted by the interface",
+			Distractors: []string{
+				"Current transmit throughput in bytes per second",
+				"Bytes waiting in the qdisc",
+				"Bytes received and forwarded",
+			},
+		},
+		{
+			Stem:    "In `/proc/net/dev`, what does transmit `drop` represent?",
+			Correct: "Cumulative outgoing packets dropped before transmission",
+			Distractors: []string{
+				"Incoming packets dropped by the peer",
+				"TCP connections dropped by applications",
+				"Packets transmitted successfully",
+			},
+		},
+	}
 }
 
 func netstatQuestions(si SystemInfo, c CapturedCommand) []Question {

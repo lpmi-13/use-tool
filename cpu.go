@@ -39,20 +39,22 @@ func cpuSteps(si SystemInfo) []GuideStep {
 
 	if si.HasMpstat {
 		steps = append(steps, GuideStep{
-			Name:        "per-cpu",
-			Intro:       "Step 2: mpstat breaks down utilization per logical CPU.\nThis distinguishes \"all cores busy\" from \"one core pegged.\"",
-			Suggested:   "mpstat -P ALL 1 3",
-			QuestionsFn: mpstatQuestions,
+			Name:          "per-cpu",
+			Intro:         "Step 2: mpstat breaks down utilization per logical CPU.\nThis distinguishes \"all cores busy\" from \"one core pegged.\"",
+			Suggested:     "mpstat -P ALL 1 3",
+			QuestionsFn:   mpstatColumnQuestions,
+			QuestionCount: 3,
 			Teaching: "Look at %idle per CPU. Uniformly low means saturation; one CPU near 0%\n" +
 				"with others near 100% means a single-thread bottleneck.",
 		})
 	}
 
 	steps = append(steps, GuideStep{
-		Name:        "runqueue",
-		Intro:       "Step 3: vmstat shows the run-queue length (`r`) and CPU breakdown\n(us/sy/id/wa) over short intervals.",
-		Suggested:   "vmstat 1 3",
-		QuestionsFn: vmstatQuestions,
+		Name:          "runqueue",
+		Intro:         "Step 3: vmstat shows the run-queue length (`r`) and CPU breakdown\n(us/sy/id/wa) over short intervals.",
+		Suggested:     "vmstat 1 3",
+		QuestionsFn:   vmstatColumnQuestions,
+		QuestionCount: 3,
 		Teaching: fmt.Sprintf(
 			"If `r` consistently exceeds %d (= NumCPU on this system), the run-queue is\n"+
 				"saturated. High `wa` means CPUs are idle waiting on I/O — the bottleneck is\n"+
@@ -131,12 +133,25 @@ func vmstatQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !vmstatHeaderRe.MatchString(c.Output) {
 		return nil
 	}
-	pick := pickRandom(vmstatCPUQuestionPicks)
-	return []Question{{
-		Stem:        fmt.Sprintf("In the `vmstat` output, what does the `%s` column represent?", pick.Column),
-		Correct:     pick.Correct,
-		Distractors: pick.Distractors,
-	}}
+	return randomColumnQuestions(
+		availableColumnQuestionPicks(c.Output, vmstatCPUQuestionPicks),
+		1,
+		func(column string) string {
+			return fmt.Sprintf("In the `vmstat` output, what does the `%s` column represent?", column)
+		},
+	)
+}
+
+func vmstatColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if !vmstatHeaderRe.MatchString(c.Output) {
+		return nil
+	}
+	return columnQuestionsFromPicks(
+		availableColumnQuestionPicks(c.Output, vmstatQuestionPicks),
+		func(column string) string {
+			return fmt.Sprintf("In the `vmstat` output, what does the `%s` column represent?", column)
+		},
+	)
 }
 
 type columnQuestionPick struct {
@@ -145,7 +160,58 @@ type columnQuestionPick struct {
 	Distractors []string
 }
 
-var vmstatCPUQuestionPicks = []columnQuestionPick{
+func columnQuestionsFromPicks(picks []columnQuestionPick, stemFor func(string) string) []Question {
+	if len(picks) == 0 {
+		return nil
+	}
+	qs := make([]Question, 0, len(picks))
+	for _, pick := range picks {
+		qs = append(qs, Question{
+			Stem:        stemFor(pick.Column),
+			Correct:     pick.Correct,
+			Distractors: pick.Distractors,
+		})
+	}
+	return qs
+}
+
+func randomColumnQuestions(picks []columnQuestionPick, count int, stemFor func(string) string) []Question {
+	if len(picks) == 0 {
+		return nil
+	}
+	if count <= 0 || count > len(picks) {
+		count = len(picks)
+	}
+	shuffled := append([]columnQuestionPick(nil), picks...)
+	appRand.Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
+	return columnQuestionsFromPicks(shuffled[:count], stemFor)
+}
+
+func availableColumnQuestionPicks(output string, picks []columnQuestionPick) []columnQuestionPick {
+	var out []columnQuestionPick
+	for _, pick := range picks {
+		if outputHasColumn(output, pick.Column) {
+			out = append(out, pick)
+		}
+	}
+	return out
+}
+
+func filterColumnQuestionPicks(picks []columnQuestionPick, columns ...string) []columnQuestionPick {
+	wanted := make(map[string]bool, len(columns))
+	for _, column := range columns {
+		wanted[column] = true
+	}
+	var out []columnQuestionPick
+	for _, pick := range picks {
+		if wanted[pick.Column] {
+			out = append(out, pick)
+		}
+	}
+	return out
+}
+
+var vmstatQuestionPicks = []columnQuestionPick{
 	{
 		Column:  "r",
 		Correct: "The number of runnable processes (in the run-queue, including those running)",
@@ -162,6 +228,96 @@ var vmstatCPUQuestionPicks = []columnQuestionPick{
 			"The number of runnable processes in the run-queue",
 			"The number of bytes read from block devices per second",
 			"The number of CPU cores currently busy",
+		},
+	},
+	{
+		Column:  "swpd",
+		Correct: "Amount of virtual memory currently swapped out, in kilobytes",
+		Distractors: []string{
+			"Amount of physical memory currently free",
+			"Pages swapped in from disk per second",
+			"Percent of CPU time spent waiting on swap I/O",
+		},
+	},
+	{
+		Column:  "free",
+		Correct: "Amount of idle memory, in kilobytes",
+		Distractors: []string{
+			"Estimated memory available without swapping",
+			"Amount of memory used for filesystem cache",
+			"Amount of swap space currently unused",
+		},
+	},
+	{
+		Column:  "buff",
+		Correct: "Amount of memory used as buffers, in kilobytes",
+		Distractors: []string{
+			"Amount of memory used as page cache",
+			"Number of block-device writes per second",
+			"Percent of CPU time spent buffering I/O",
+		},
+	},
+	{
+		Column:  "cache",
+		Correct: "Amount of memory used as page cache, in kilobytes",
+		Distractors: []string{
+			"Amount of memory used as buffers",
+			"Amount of virtual memory swapped out",
+			"Number of cache misses per second",
+		},
+	},
+	{
+		Column:  "si",
+		Correct: "Pages swapped in from swap to memory per second",
+		Distractors: []string{
+			"Pages swapped out from memory to swap per second",
+			"Software interrupts per second",
+			"Memory used by the slab allocator",
+		},
+	},
+	{
+		Column:  "so",
+		Correct: "Pages swapped out from memory to swap per second",
+		Distractors: []string{
+			"Pages swapped in from swap to memory per second",
+			"System calls per second",
+			"Swap space currently available",
+		},
+	},
+	{
+		Column:  "bi",
+		Correct: "Blocks received from block devices per second",
+		Distractors: []string{
+			"Blocks sent to block devices per second",
+			"Processes blocked on I/O",
+			"Bytes read from network interfaces per second",
+		},
+	},
+	{
+		Column:  "bo",
+		Correct: "Blocks sent to block devices per second",
+		Distractors: []string{
+			"Blocks received from block devices per second",
+			"Bytes written to network interfaces per second",
+			"Processes blocked on output",
+		},
+	},
+	{
+		Column:  "in",
+		Correct: "Interrupts per second, including the clock interrupt",
+		Distractors: []string{
+			"Input blocks read per second",
+			"Context switches per second",
+			"Inbound network packets per second",
+		},
+	},
+	{
+		Column:  "cs",
+		Correct: "Context switches per second",
+		Distractors: []string{
+			"CPU system time percentage",
+			"Cache size in kilobytes",
+			"Completed system calls per second",
 		},
 	},
 	{
@@ -211,31 +367,36 @@ var vmstatCPUQuestionPicks = []columnQuestionPick{
 	},
 }
 
+var vmstatCPUQuestionPicks = filterColumnQuestionPicks(vmstatQuestionPicks, "r", "b", "us", "sy", "id", "wa", "st")
+
 var mpstatHeaderRe = regexp.MustCompile(`%idle`)
 
 func mpstatQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !mpstatHeaderRe.MatchString(c.Output) {
 		return nil
 	}
-	picks := availableMpstatQuestionPicks(c.Output)
-	if len(picks) == 0 {
+	return randomColumnQuestions(
+		availableMpstatQuestionPicks(c.Output),
+		1,
+		func(column string) string {
+			return fmt.Sprintf("In the `mpstat` output, what does the `%s` column represent?", column)
+		},
+	)
+}
+
+func mpstatColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if !mpstatHeaderRe.MatchString(c.Output) {
 		return nil
 	}
-	pick := pickRandom(picks)
-	return []Question{{
-		Stem:        fmt.Sprintf("In the `mpstat` output, what does the `%s` column represent?", pick.Column),
-		Correct:     pick.Correct,
-		Distractors: pick.Distractors,
-	}}
+	return columnQuestionsFromPicks(
+		availableMpstatQuestionPicks(c.Output),
+		func(column string) string {
+			return fmt.Sprintf("In the `mpstat` output, what does the `%s` column represent?", column)
+		},
+	)
 }
 
-type mpstatQuestionPick struct {
-	Column      string
-	Correct     string
-	Distractors []string
-}
-
-var mpstatQuestionPicks = []mpstatQuestionPick{
+var mpstatQuestionPicks = []columnQuestionPick{
 	{
 		Column:  "CPU",
 		Correct: "The logical CPU identifier for the row; `all` is the aggregate across CPUs",
@@ -337,14 +498,8 @@ var mpstatQuestionPicks = []mpstatQuestionPick{
 	},
 }
 
-func availableMpstatQuestionPicks(output string) []mpstatQuestionPick {
-	var picks []mpstatQuestionPick
-	for _, pick := range mpstatQuestionPicks {
-		if outputHasColumn(output, pick.Column) {
-			picks = append(picks, pick)
-		}
-	}
-	return picks
+func availableMpstatQuestionPicks(output string) []columnQuestionPick {
+	return availableColumnQuestionPicks(output, mpstatQuestionPicks)
 }
 
 func outputHasColumn(output, column string) bool {
@@ -360,9 +515,10 @@ func outputHasColumn(output, column string) bool {
 
 func dmesgQuestions(si SystemInfo, c CapturedCommand) []Question {
 	low := strings.ToLower(c.Output)
+	tool := kernelLogQuestionTool(c.Cmd)
 	if strings.Contains(low, "machine check") || strings.Contains(low, "mce:") {
 		return []Question{{
-			Stem:    "Your `dmesg` output mentions a machine-check (MCE) event. What does this typically indicate?",
+			Stem:    fmt.Sprintf("Your `%s` output mentions a machine-check (MCE) event. What does this typically indicate?", tool),
 			Correct: "A hardware-level CPU or memory error reported by the processor",
 			Distractors: []string{
 				"A scheduling decision made by the kernel",
@@ -373,7 +529,7 @@ func dmesgQuestions(si SystemInfo, c CapturedCommand) []Question {
 	}
 	if strings.Contains(low, "thermal") || strings.Contains(low, "throttl") {
 		return []Question{{
-			Stem:    "Your `dmesg` output mentions thermal throttling. What is the immediate effect on the CPU?",
+			Stem:    fmt.Sprintf("Your `%s` output mentions thermal throttling. What is the immediate effect on the CPU?", tool),
 			Correct: "The CPU clocks down to reduce heat, lowering effective performance",
 			Distractors: []string{
 				"The CPU is taken offline until it cools down",
@@ -383,6 +539,13 @@ func dmesgQuestions(si SystemInfo, c CapturedCommand) []Question {
 		}}
 	}
 	return nil
+}
+
+func kernelLogQuestionTool(cmd string) string {
+	if baseCmd(cmd) == "journalctl" {
+		return "journalctl"
+	}
+	return "dmesg"
 }
 
 // ----- Observations (cross-command, feed snapshot + recall + synthesis) -----

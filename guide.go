@@ -44,15 +44,18 @@ func cmdGuide(args []string) {
 
 		captured := guideStepCommand(s, step)
 		if captured != nil {
-			if q, ok := chooseGuideQuestion(guideQuestions(si, step, *captured)); ok {
-				result := askQuestionWithCommandRunner(q, s.runAndCapture)
-				if result.Quit {
-					return
-				}
-				if !result.Skipped {
-					total++
-					if result.Correct {
-						score++
+			questions := chooseGuideQuestions(guideQuestions(si, step, *captured), step.QuestionCount)
+			if len(questions) > 0 {
+				for _, q := range questions {
+					result := askQuestionWithCommandRunner(q, s.runAndCapture)
+					if result.Quit {
+						return
+					}
+					if !result.Skipped {
+						total++
+						if result.Correct {
+							score++
+						}
 					}
 				}
 				if !pauseGuide() {
@@ -97,10 +100,26 @@ func guideQuestions(si SystemInfo, step GuideStep, captured CapturedCommand) []Q
 }
 
 func chooseGuideQuestion(questions []Question) (Question, bool) {
-	if len(questions) == 0 {
+	chosen := chooseGuideQuestions(questions, 1)
+	if len(chosen) == 0 {
 		return Question{}, false
 	}
-	return pickRandom(questions), true
+	return chosen[0], true
+}
+
+func chooseGuideQuestions(questions []Question, count int) []Question {
+	if len(questions) == 0 {
+		return nil
+	}
+	if count <= 0 {
+		count = 1
+	}
+	if count > len(questions) {
+		count = len(questions)
+	}
+	chosen := append([]Question(nil), questions...)
+	appRand.Shuffle(len(chosen), func(i, j int) { chosen[i], chosen[j] = chosen[j], chosen[i] })
+	return chosen[:count]
 }
 
 func pauseGuide() bool {

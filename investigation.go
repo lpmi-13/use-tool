@@ -21,11 +21,14 @@ type Investigation struct {
 }
 
 type GuideStep struct {
-	Name               string
-	Intro              string
-	Suggested          string
-	Alternatives       []string
-	QuestionsFn        func(SystemInfo, CapturedCommand) []Question
+	Name         string
+	Intro        string
+	Suggested    string
+	Alternatives []string
+	QuestionsFn  func(SystemInfo, CapturedCommand) []Question
+	// QuestionCount defaults to 1. Use higher values for steps whose
+	// QuestionsFn returns a pool of interchangeable guide checks.
+	QuestionCount      int
 	AcceptAny          bool
 	EmptyOutputMessage string
 	Teaching           string

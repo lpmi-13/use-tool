@@ -3,7 +3,9 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"math/rand"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -225,6 +227,199 @@ func TestGuideQuestionsNilSafe(t *testing.T) {
 	}
 }
 
+func TestChooseGuideQuestionsUsesRequestedRandomSubset(t *testing.T) {
+	oldRand := appRand
+	defer func() { appRand = oldRand }()
+	appRand = rand.New(rand.NewSource(1))
+
+	questions := []Question{
+		{Stem: "q1"},
+		{Stem: "q2"},
+		{Stem: "q3"},
+		{Stem: "q4"},
+		{Stem: "q5"},
+	}
+
+	subsets := map[string]bool{}
+	for i := 0; i < 20; i++ {
+		chosen := chooseGuideQuestions(questions, 3)
+		if len(chosen) != 3 {
+			t.Fatalf("iteration %d: expected 3 questions, got %d", i, len(chosen))
+		}
+		seen := map[string]bool{}
+		var stems []string
+		for _, q := range chosen {
+			if seen[q.Stem] {
+				t.Fatalf("iteration %d: duplicate question %q in %#v", i, q.Stem, chosen)
+			}
+			seen[q.Stem] = true
+			stems = append(stems, q.Stem)
+		}
+		sort.Strings(stems)
+		subsets[strings.Join(stems, ",")] = true
+	}
+	if len(subsets) < 2 {
+		t.Fatalf("guide question selection did not vary; saw subsets %v", subsets)
+	}
+	if len(questions) != 5 || questions[0].Stem != "q1" {
+		t.Fatalf("chooseGuideQuestions mutated original questions: %#v", questions)
+	}
+}
+
+func TestWideColumnGuideStepsAskThreeHeaderQuestions(t *testing.T) {
+	cases := []struct {
+		name     string
+		step     GuideStep
+		captured CapturedCommand
+	}{
+		{
+			name: "cpu mpstat",
+			step: mustFindGuideStep(t, cpuSteps(SystemInfo{HasMpstat: true}), "per-cpu"),
+			captured: CapturedCommand{
+				Cmd:    "mpstat -P ALL 1 1",
+				Output: sampleMpstat,
+			},
+		},
+		{
+			name: "cpu vmstat",
+			step: mustFindGuideStep(t, cpuSteps(SystemInfo{}), "runqueue"),
+			captured: CapturedCommand{
+				Cmd:    "vmstat 1 3",
+				Output: sampleVmstat,
+			},
+		},
+		{
+			name: "memory meminfo",
+			step: mustFindGuideStep(t, memorySteps(SystemInfo{}), "baseline"),
+			captured: CapturedCommand{
+				Cmd:    "cat /proc/meminfo",
+				Output: sampleMeminfo,
+			},
+		},
+		{
+			name: "memory PSI",
+			step: mustFindGuideStep(t, memorySteps(SystemInfo{HasPSI: true}), "pressure"),
+			captured: CapturedCommand{
+				Cmd:    "cat /proc/pressure/memory",
+				Output: samplePSIMemory,
+			},
+		},
+		{
+			name: "memory vmstat",
+			step: mustFindGuideStep(t, memorySteps(SystemInfo{}), "swap-activity"),
+			captured: CapturedCommand{
+				Cmd:    "vmstat 1 3",
+				Output: sampleVmstat,
+			},
+		},
+		{
+			name: "memory ps",
+			step: mustFindGuideStep(t, memorySteps(SystemInfo{}), "top-consumers"),
+			captured: CapturedCommand{
+				Cmd: "ps -eo pid,rss,comm --sort=-rss | head -10",
+				Output: `    PID   RSS COMMAND
+   1234 204800 postgres
+   5678 102400 worker
+`,
+			},
+		},
+		{
+			name: "disk lsblk",
+			step: mustFindGuideStep(t, diskSteps(SystemInfo{}), "devices"),
+			captured: CapturedCommand{
+				Cmd:    "lsblk",
+				Output: sampleLsblk,
+			},
+		},
+		{
+			name: "disk iostat",
+			step: mustFindGuideStep(t, diskSteps(SystemInfo{}), "throughput"),
+			captured: CapturedCommand{
+				Cmd:    "iostat -xz 1 1",
+				Output: sampleIostatModern,
+			},
+		},
+		{
+			name: "disk PSI",
+			step: mustFindGuideStep(t, diskSteps(SystemInfo{HasPSI: true}), "pressure"),
+			captured: CapturedCommand{
+				Cmd:    "cat /proc/pressure/io",
+				Output: samplePSIIO,
+			},
+		},
+		{
+			name: "disk pidstat",
+			step: mustFindGuideStep(t, diskSteps(SystemInfo{}), "attribution"),
+			captured: CapturedCommand{
+				Cmd: "pidstat -d 1 1",
+				Output: `Linux 6.1.0  10/05/2024
+14:00:00       UID       PID   kB_rd/s   kB_wr/s kB_ccwr/s iodelay  Command
+14:00:01      1000      1234     12.50    400.00      0.00       2  postgres
+`,
+			},
+		},
+		{
+			name: "network ip link",
+			step: mustFindGuideStep(t, networkSteps(SystemInfo{}), "interfaces"),
+			captured: CapturedCommand{
+				Cmd:    "ip -s link",
+				Output: sampleIpLink,
+			},
+		},
+		{
+			name: "network sar DEV",
+			step: mustFindGuideStep(t, networkSteps(SystemInfo{}), "throughput"),
+			captured: CapturedCommand{
+				Cmd:    "sar -n DEV 1 2",
+				Output: sampleSarDev,
+			},
+		},
+		{
+			name: "network sar EDEV",
+			step: mustFindGuideStep(t, networkSteps(SystemInfo{}), "drops"),
+			captured: CapturedCommand{
+				Cmd:    "sar -n EDEV 1 2",
+				Output: sampleSarEdev,
+			},
+		},
+		{
+			name: "network TCP",
+			step: mustFindGuideStep(t, networkSteps(SystemInfo{}), "tcp"),
+			captured: CapturedCommand{
+				Cmd:    "cat /proc/net/snmp /proc/net/netstat",
+				Output: sampleSnmpTcp + "\n" + sampleNetstatExt,
+			},
+		},
+		{
+			name: "network sockets",
+			step: mustFindGuideStep(t, networkSteps(SystemInfo{}), "sockets"),
+			captured: CapturedCommand{
+				Cmd:    "ss -s",
+				Output: sampleSsSummary,
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		if tc.step.QuestionCount != 3 {
+			t.Fatalf("%s: QuestionCount = %d, want 3", tc.name, tc.step.QuestionCount)
+		}
+		questions := guideQuestions(SystemInfo{}, tc.step, tc.captured)
+		if len(questions) < 3 {
+			t.Fatalf("%s: expected at least 3 available header questions, got %d", tc.name, len(questions))
+		}
+		chosen := chooseGuideQuestions(questions, tc.step.QuestionCount)
+		if len(chosen) != 3 {
+			t.Fatalf("%s: selected %d questions, want 3", tc.name, len(chosen))
+		}
+		for _, q := range chosen {
+			if !strings.Contains(q.Stem, "represent") {
+				t.Fatalf("%s: selected non-header question %q", tc.name, q.Stem)
+			}
+		}
+	}
+}
+
 func TestDiskDeviceStepHasLsblkQuestions(t *testing.T) {
 	steps := diskSteps(SystemInfo{})
 	if len(steps) == 0 {
@@ -367,6 +562,15 @@ func findGuideStep(steps []GuideStep, name string) (GuideStep, bool) {
 		}
 	}
 	return GuideStep{}, false
+}
+
+func mustFindGuideStep(t *testing.T, steps []GuideStep, name string) GuideStep {
+	t.Helper()
+	step, ok := findGuideStep(steps, name)
+	if !ok {
+		t.Fatalf("expected guide step %q", name)
+	}
+	return step
 }
 
 func captureStderr(fn func()) string {

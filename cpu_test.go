@@ -279,6 +279,12 @@ func TestCPUExtractQuestionsAcceptsJournalctl(t *testing.T) {
 	if len(qs) == 0 {
 		t.Fatal("expected journalctl kernel log output to generate CPU dmesg questions")
 	}
+	if !strings.Contains(qs[0].Stem, "`journalctl` output") {
+		t.Fatalf("expected question to mention journalctl output, got %q", qs[0].Stem)
+	}
+	if strings.Contains(qs[0].Stem, "`dmesg` output") {
+		t.Fatalf("question should not mention dmesg when journalctl was captured: %q", qs[0].Stem)
+	}
 }
 
 func TestBaseCmd(t *testing.T) {
@@ -316,6 +322,29 @@ func TestDmesgQuestionsFiresOnMCE(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("no MCE-related question generated; got: %+v", qs)
+	}
+}
+
+func TestDmesgQuestionsNamesCapturedTool(t *testing.T) {
+	cases := []struct {
+		name string
+		cmd  string
+		want string
+	}{
+		{name: "dmesg", cmd: "dmesg --level=err,warn | tail -20", want: "`dmesg` output"},
+		{name: "sudo dmesg", cmd: "sudo dmesg --level=err,warn", want: "`dmesg` output"},
+		{name: "journalctl", cmd: "journalctl -k -b -p warning --no-pager -n 30", want: "`journalctl` output"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			qs := dmesgQuestions(SystemInfo{}, CapturedCommand{Cmd: tc.cmd, Output: sampleDmesgWithMCE})
+			if len(qs) == 0 {
+				t.Fatal("expected question")
+			}
+			if !strings.Contains(qs[0].Stem, tc.want) {
+				t.Fatalf("stem = %q, want it to contain %q", qs[0].Stem, tc.want)
+			}
+		})
 	}
 }
 

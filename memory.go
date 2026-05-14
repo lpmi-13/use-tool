@@ -25,20 +25,22 @@ var memoryInvestigation = &Investigation{
 func memorySteps(si SystemInfo) []GuideStep {
 	steps := []GuideStep{
 		{
-			Name:        "baseline",
-			Intro:       "Step 1: get a baseline of total, used, available memory and swap.\n/proc/meminfo is the canonical source the kernel exposes.",
-			Suggested:   "cat /proc/meminfo",
-			QuestionsFn: meminfoQuestions,
+			Name:          "baseline",
+			Intro:         "Step 1: get a baseline of total, used, available memory and swap.\n/proc/meminfo is the canonical source the kernel exposes.",
+			Suggested:     "cat /proc/meminfo",
+			QuestionsFn:   meminfoColumnQuestions,
+			QuestionCount: 3,
 			Teaching: "Read `MemAvailable`, not `MemFree`. `MemFree` excludes reclaimable\n" +
 				"page cache; `MemAvailable` is the kernel's own estimate of how much\n" +
 				"memory is allocatable without going to swap. The two can differ by\n" +
 				"many gigabytes on a busy server.",
 		},
 		{
-			Name:        "swap-activity",
-			Intro:       "Step 2: vmstat shows pages swapped in (`si`) and out (`so`).\nNon-zero values mean the system is paging — working set exceeds RAM.",
-			Suggested:   "vmstat 1 5",
-			QuestionsFn: vmstatMemoryQuestions,
+			Name:          "swap-activity",
+			Intro:         "Step 2: vmstat shows pages swapped in (`si`) and out (`so`).\nNon-zero values mean the system is paging — working set exceeds RAM.",
+			Suggested:     "vmstat 1 5",
+			QuestionsFn:   vmstatColumnQuestions,
+			QuestionCount: 3,
 			Teaching: "Sustained `si`/`so` > 0 means working set exceeds physical memory.\n" +
 				"On its own this is suggestive; pair with PSI or latency observations\n" +
 				"to confirm tasks are actually being slowed down.",
@@ -46,10 +48,11 @@ func memorySteps(si SystemInfo) []GuideStep {
 	}
 	if si.HasPSI {
 		steps = append(steps, GuideStep{
-			Name:        "pressure",
-			Intro:       "Step 3: PSI reports the time-share of tasks stalled on memory.\nLinux 4.20+ with PSI enabled in the kernel.",
-			Suggested:   "cat /proc/pressure/memory",
-			QuestionsFn: psiMemoryQuestions,
+			Name:          "pressure",
+			Intro:         "Step 3: PSI reports the time-share of tasks stalled on memory.\nLinux 4.20+ with PSI enabled in the kernel.",
+			Suggested:     "cat /proc/pressure/memory",
+			QuestionsFn:   psiMemoryColumnQuestions,
+			QuestionCount: 3,
 			Teaching: "`some` is time at least one task was stalled on memory; `full` is\n" +
 				"time *all* non-idle tasks were stalled. `full` > 0 is the strongest\n" +
 				"saturation signal — it means the system was actually wedged, not just\n" +
@@ -57,11 +60,12 @@ func memorySteps(si SystemInfo) []GuideStep {
 		})
 	}
 	steps = append(steps, GuideStep{
-		Name:        "top-consumers",
-		Intro:       "Step 4: who's actually using memory?",
-		Suggested:   "ps -eo pid,rss,comm --sort=-rss | head -10",
-		QuestionsFn: psRssQuestions,
-		AcceptAny:   true,
+		Name:          "top-consumers",
+		Intro:         "Step 4: who's actually using memory?",
+		Suggested:     "ps -eo pid,rss,comm --sort=-rss | head -10",
+		QuestionsFn:   psRssColumnQuestions,
+		QuestionCount: 3,
+		AcceptAny:     true,
 		Teaching: "RSS is resident memory in pages. Note: shared pages (libc, mmaped\n" +
 			"binaries) are double-counted across processes, so summing RSS can\n" +
 			"exceed real memory used. For accurate per-process accounting, look\n" +
@@ -181,6 +185,131 @@ func meminfoQuestions(si SystemInfo, c CapturedCommand) []Question {
 			correct, pool)...)
 	}
 	return qs
+}
+
+func meminfoColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if !meminfoMarkerRe.MatchString(c.Output) {
+		return nil
+	}
+	return columnQuestionsFromPicks(
+		availableMeminfoQuestionPicks(c.Output),
+		func(column string) string {
+			return fmt.Sprintf("In `/proc/meminfo`, what does `%s` represent?", column)
+		},
+	)
+}
+
+var meminfoQuestionPicks = []columnQuestionPick{
+	{
+		Column:  "MemTotal",
+		Correct: "Total usable RAM visible to the kernel, in kilobytes",
+		Distractors: []string{
+			"Total RAM currently free for new allocations",
+			"Total memory used by user-space processes only",
+			"Total swap plus physical RAM",
+		},
+	},
+	{
+		Column:  "MemFree",
+		Correct: "Completely unused RAM, excluding reclaimable page cache and buffers",
+		Distractors: []string{
+			"Memory available for new allocations without swapping",
+			"Memory used by filesystem cache",
+			"Swap space currently unused",
+		},
+	},
+	{
+		Column:  "MemAvailable",
+		Correct: "The kernel's estimate of memory available for new allocations without swapping",
+		Distractors: []string{
+			"Completely unused RAM only",
+			"Free swap space plus free RAM",
+			"Memory currently mapped by running processes",
+		},
+	},
+	{
+		Column:  "Buffers",
+		Correct: "Memory used for block-device buffers and filesystem metadata",
+		Distractors: []string{
+			"Memory used for executable code pages",
+			"Memory used by TCP socket buffers only",
+			"Pages swapped out to disk",
+		},
+	},
+	{
+		Column:  "Cached",
+		Correct: "File-backed page cache that is mostly reclaimable under memory pressure",
+		Distractors: []string{
+			"Private anonymous memory owned by processes",
+			"Swap space used as a cache for disk blocks",
+			"Kernel memory that can never be reclaimed",
+		},
+	},
+	{
+		Column:  "SwapCached",
+		Correct: "Pages that were swapped out, are back in RAM, and still have a copy in swap",
+		Distractors: []string{
+			"Free swap space reserved for page cache",
+			"Filesystem cache that has been compressed",
+			"Total swap activity per second",
+		},
+	},
+	{
+		Column:  "Active",
+		Correct: "Memory used recently enough that it is less likely to be reclaimed first",
+		Distractors: []string{
+			"CPU time spent in active user processes",
+			"Memory that cannot be paged out",
+			"Swap pages actively being read from disk",
+		},
+	},
+	{
+		Column:  "Inactive",
+		Correct: "Memory not used recently, making it a more likely reclaim candidate",
+		Distractors: []string{
+			"Memory assigned to stopped processes only",
+			"Free memory that has never been allocated",
+			"Swap space disabled by the kernel",
+		},
+	},
+	{
+		Column:  "SwapTotal",
+		Correct: "Total configured swap space, in kilobytes",
+		Distractors: []string{
+			"Total physical RAM that can be swapped",
+			"Amount of swap currently in use",
+			"Total pages swapped per second",
+		},
+	},
+	{
+		Column:  "SwapFree",
+		Correct: "Configured swap space that is currently unused, in kilobytes",
+		Distractors: []string{
+			"Physical memory available before swap is needed",
+			"Swap space currently occupied by anonymous pages",
+			"Swap-in operations per second",
+		},
+	},
+}
+
+func availableMeminfoQuestionPicks(output string) []columnQuestionPick {
+	var picks []columnQuestionPick
+	for _, pick := range meminfoQuestionPicks {
+		if outputHasMeminfoField(output, pick.Column) {
+			picks = append(picks, pick)
+		}
+	}
+	return picks
+}
+
+func outputHasMeminfoField(output, field string) bool {
+	prefix := field + ":"
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func formatKiBGiB(kib float64) string {
@@ -383,6 +512,97 @@ func psiMemoryQuestions(si SystemInfo, c CapturedCommand) []Question {
 
 var psiMemoryHeaderRe = regexp.MustCompile(`(?m)^some avg10=`)
 
+func psiMemoryColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if !psiMemoryHeaderRe.MatchString(c.Output) {
+		return nil
+	}
+	return psiColumnQuestions("/proc/pressure/memory", "memory", c.Output)
+}
+
+func psiColumnQuestions(path, resource, output string) []Question {
+	return columnQuestionsFromPicks(
+		availablePSIQuestionPicks(output, resource),
+		func(column string) string {
+			return fmt.Sprintf("In `%s` output, what does `%s` represent?", path, column)
+		},
+	)
+}
+
+func availablePSIQuestionPicks(output, resource string) []columnQuestionPick {
+	picks := []columnQuestionPick{
+		{
+			Column:  "some",
+			Correct: fmt.Sprintf("The pressure line for time when at least one task was stalled on %s", resource),
+			Distractors: []string{
+				fmt.Sprintf("The pressure line for time when all non-idle tasks were stalled on %s", resource),
+				fmt.Sprintf("The percentage of %s capacity currently in use", resource),
+				"The cumulative number of stalled tasks since boot",
+			},
+		},
+		{
+			Column:  "full",
+			Correct: fmt.Sprintf("The pressure line for time when all non-idle tasks were simultaneously stalled on %s", resource),
+			Distractors: []string{
+				fmt.Sprintf("The pressure line for time when at least one task was stalled on %s", resource),
+				fmt.Sprintf("The percentage of %s capacity currently free", resource),
+				"The number of stalled tasks in the current second",
+			},
+		},
+		{
+			Column:  "avg10",
+			Correct: "The recent 10-second average stall time, reported as a percentage of wall-clock time",
+			Distractors: []string{
+				"The cumulative stall count from the last 10 tasks",
+				"The 10-minute moving average of resource utilization",
+				"The total stall time in milliseconds since boot",
+			},
+		},
+		{
+			Column:  "avg60",
+			Correct: "The recent 60-second average stall time, reported as a percentage of wall-clock time",
+			Distractors: []string{
+				"The 60-minute moving average of resource utilization",
+				"The cumulative number of stalls in the last 60 seconds",
+				"The largest single stall duration in milliseconds",
+			},
+		},
+		{
+			Column:  "avg300",
+			Correct: "The recent 300-second average stall time, reported as a percentage of wall-clock time",
+			Distractors: []string{
+				"The 300-millisecond latency percentile for stalled tasks",
+				"The total number of stalled tasks sampled",
+				"The percentage of resource capacity currently idle",
+			},
+		},
+		{
+			Column:  "total",
+			Correct: "Cumulative stall time in microseconds for that PSI line",
+			Distractors: []string{
+				"Total bytes read or written by stalled tasks",
+				"Total resource capacity available to the host",
+				"The current number of stalled tasks",
+			},
+		},
+	}
+	var available []columnQuestionPick
+	for _, pick := range picks {
+		if outputHasPSIName(output, pick.Column) {
+			available = append(available, pick)
+		}
+	}
+	return available
+}
+
+func outputHasPSIName(output, name string) bool {
+	for _, field := range strings.Fields(output) {
+		if field == name || strings.HasPrefix(field, name+"=") {
+			return true
+		}
+	}
+	return false
+}
+
 func psRssQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !strings.Contains(c.Output, "RSS") && !strings.Contains(strings.ToLower(c.Output), "rss") {
 		return nil
@@ -411,6 +631,48 @@ func psRssQuestions(si SystemInfo, c CapturedCommand) []Question {
 		})
 	}
 	return qs
+}
+
+func psRssColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if !strings.Contains(c.Output, "RSS") && !strings.Contains(strings.ToLower(c.Output), "rss") {
+		return nil
+	}
+	return columnQuestionsFromPicks(
+		availableColumnQuestionPicks(c.Output, psRSSQuestionPicks),
+		func(column string) string {
+			return fmt.Sprintf("In `ps -eo pid,rss,comm` output, what does the `%s` column represent?", column)
+		},
+	)
+}
+
+var psRSSQuestionPicks = []columnQuestionPick{
+	{
+		Column:  "PID",
+		Correct: "The process ID assigned by the kernel",
+		Distractors: []string{
+			"The parent process ID",
+			"The process's CPU core number",
+			"The process group memory total",
+		},
+	},
+	{
+		Column:  "RSS",
+		Correct: "Resident set size: memory currently resident in RAM for the process, reported in kilobytes by this ps format",
+		Distractors: []string{
+			"Private memory only, excluding shared libraries",
+			"Total virtual address space reserved by the process",
+			"Swap space currently used by the process",
+		},
+	},
+	{
+		Column:  "COMMAND",
+		Correct: "The command name from the `comm` field, not the full argument list",
+		Distractors: []string{
+			"The full command line including all arguments",
+			"The controlling terminal for the process",
+			"The cgroup name the process belongs to",
+		},
+	},
 }
 
 func topRSSProcess(output string) (string, float64, bool) {

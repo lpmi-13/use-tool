@@ -646,3 +646,331 @@ func TestUptimeQuestionsCoversAllPositions(t *testing.T) {
 		}
 	}
 }
+
+const sampleW = ` 11:24:12 up 47 days,  3:42,  3 users,  load average: 0.42, 0.31, 0.28
+USER     TTY      FROM             LOGIN@   IDLE   JCPU   PCPU WHAT
+adam     pts/0    -                09:00    0.00s  1:34   0.05s ssh user@host
+root     pts/1    192.168.1.5      08:55   12:01   0:02   0.00s -bash`
+
+const sampleProcLoadavg = `0.42 0.31 0.28 1/234 5678`
+
+const sampleProcPressureCpu = `some avg10=0.12 avg60=0.05 avg300=0.01 total=12345678`
+
+const sampleSarU = `Linux 6.1.0 (host)  10/05/2024  _x86_64_  (4 CPU)
+
+12:00:00        CPU     %user     %nice   %system   %iowait    %steal     %idle
+12:00:01        all      5.00      0.00      2.00      1.00      0.00     92.00
+12:00:02        all      4.00      0.00      1.00      0.00      0.00     95.00
+12:00:03        all      6.00      0.00      3.00      0.00      0.00     91.00
+Average:        all      5.00      0.00      2.00      0.33      0.00     92.67`
+
+func TestWQuestionsCoversJCPUAndPCPU(t *testing.T) {
+	si := SystemInfo{NumCPU: 4}
+	c := CapturedCommand{Cmd: "w", Output: sampleW}
+	qs := wQuestions(si, c)
+	if len(qs) < 3 {
+		t.Fatalf("expected at least 3 questions (JCPU, PCPU, loadavg), got %d", len(qs))
+	}
+	wantStemFragments := []string{"JCPU", "PCPU"}
+	for _, frag := range wantStemFragments {
+		found := false
+		for _, q := range qs {
+			if strings.Contains(q.Stem, frag) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected a question whose stem contains %q; pool was %v", frag, stems(qs))
+		}
+	}
+	// Also confirm the loadavg-position question made it in (shared with uptime).
+	loadavgQ := false
+	for _, q := range qs {
+		if strings.Contains(q.Stem, "load average:") {
+			loadavgQ = true
+			break
+		}
+	}
+	if !loadavgQ {
+		t.Errorf("expected loadavg-position question to be one of the candidates; pool was %v", stems(qs))
+	}
+}
+
+func TestWQuestionsRejectsUptimeOnly(t *testing.T) {
+	// `uptime` output also has a `load average:` line but no session table —
+	// wQuestions should decline so combineVariantQuestions falls through.
+	si := SystemInfo{NumCPU: 4}
+	c := CapturedCommand{Cmd: "uptime", Output: sampleUptime}
+	if qs := wQuestions(si, c); qs != nil {
+		t.Errorf("expected nil for uptime-only output, got %d questions", len(qs))
+	}
+}
+
+func TestWQuestionsRejectsUnrelatedOutput(t *testing.T) {
+	si := SystemInfo{NumCPU: 4}
+	c := CapturedCommand{Cmd: "echo", Output: "hello world"}
+	if qs := wQuestions(si, c); qs != nil {
+		t.Errorf("expected nil for unrelated output, got %d questions", len(qs))
+	}
+}
+
+func TestProcLoadavgQuestionsExtractsFields(t *testing.T) {
+	c := CapturedCommand{Cmd: "cat /proc/loadavg", Output: sampleProcLoadavg}
+	qs := procLoadavgQuestions(SystemInfo{NumCPU: 4}, c)
+	if len(qs) != 2 {
+		t.Fatalf("expected 2 questions (running/total and last PID), got %d", len(qs))
+	}
+	// First question should embed the running/total field as `1/234`.
+	if !strings.Contains(qs[0].Stem, "1/234") {
+		t.Errorf("first question stem missing `1/234`: %q", qs[0].Stem)
+	}
+	// Second question should embed the last PID.
+	if !strings.Contains(qs[1].Stem, "5678") {
+		t.Errorf("second question stem missing `5678`: %q", qs[1].Stem)
+	}
+	// Critically: neither question should be the load-average-position question
+	// that uptimeQuestions already covers.
+	for _, q := range qs {
+		if strings.Contains(q.Stem, "first") && strings.Contains(q.Stem, "load average") {
+			t.Errorf("procLoadavgQuestions should not ask the loadavg-position question; got %q", q.Stem)
+		}
+	}
+}
+
+func TestProcLoadavgQuestionsRejectsUnrelatedOutput(t *testing.T) {
+	cases := []string{
+		"",
+		sampleUptime, // has `load average:` text but not the bare /proc format
+		"hello world",
+		"0.42 0.31 0.28", // missing the running/total and last PID
+	}
+	for _, out := range cases {
+		c := CapturedCommand{Cmd: "cat /proc/loadavg", Output: out}
+		if qs := procLoadavgQuestions(SystemInfo{}, c); qs != nil {
+			t.Errorf("expected nil for %q, got %d questions", out, len(qs))
+		}
+	}
+}
+
+func TestProcPressureCpuQuestionsReturnsAllThree(t *testing.T) {
+	si := SystemInfo{NumCPU: 4}
+	c := CapturedCommand{Cmd: "cat /proc/pressure/cpu", Output: sampleProcPressureCpu}
+	qs := procPressureCpuQuestions(si, c)
+	if len(qs) != 3 {
+		t.Fatalf("expected 3 questions (avg10, full vs some, total), got %d", len(qs))
+	}
+	// Confirm each distinct concept is covered exactly once.
+	wantFragments := []string{"avg10", "full", "total="}
+	for _, frag := range wantFragments {
+		found := 0
+		for _, q := range qs {
+			if strings.Contains(q.Stem, frag) {
+				found++
+			}
+		}
+		if found != 1 {
+			t.Errorf("expected exactly 1 question containing %q; got %d. Pool: %v", frag, found, stems(qs))
+		}
+	}
+}
+
+func TestProcPressureCpuQuestionsRejectsUnrelatedOutput(t *testing.T) {
+	c := CapturedCommand{Cmd: "cat /proc/pressure/io", Output: sampleProcLoadavg}
+	if qs := procPressureCpuQuestions(SystemInfo{}, c); qs != nil {
+		t.Errorf("expected nil for non-PSI output, got %d questions", len(qs))
+	}
+}
+
+func TestSarUColumnQuestionsCoversAllColumns(t *testing.T) {
+	si := SystemInfo{NumCPU: 4}
+	c := CapturedCommand{Cmd: "sar -u 1 3", Output: sampleSarU}
+	qs := sarUColumnQuestions(si, c)
+	wantColumns := []string{"%user", "%nice", "%system", "%iowait", "%steal", "%idle"}
+	if len(qs) != len(wantColumns) {
+		t.Fatalf("expected %d questions, got %d", len(wantColumns), len(qs))
+	}
+	for _, col := range wantColumns {
+		found := false
+		for _, q := range qs {
+			if strings.Contains(q.Stem, col) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected a question for column %q; got %v", col, stems(qs))
+		}
+	}
+}
+
+func TestSarUQuestionsRejectsUnrelatedOutput(t *testing.T) {
+	c := CapturedCommand{Cmd: "sar -B 1 3", Output: "page-faults output without %user header"}
+	if qs := sarUQuestions(SystemInfo{}, c); qs != nil {
+		t.Errorf("expected nil for non-sar-u output, got %d questions", len(qs))
+	}
+}
+
+func TestCatCpuProcQuestionsDispatches(t *testing.T) {
+	cases := []struct {
+		name        string
+		output      string
+		wantFragment string
+	}{
+		{"loadavg", sampleProcLoadavg, "1/234"},
+		{"pressure_cpu", sampleProcPressureCpu, "avg10"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := CapturedCommand{Cmd: "cat /proc/something", Output: tc.output}
+			qs := catCpuProcQuestions(SystemInfo{}, c)
+			if len(qs) == 0 {
+				t.Fatalf("expected dispatch to return questions for %q", tc.name)
+			}
+			found := false
+			for _, q := range qs {
+				if strings.Contains(q.Stem, tc.wantFragment) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("expected a question mentioning %q; got %v", tc.wantFragment, stems(qs))
+			}
+		})
+	}
+}
+
+func TestCatCpuProcQuestionsReturnsNilForUnknownCat(t *testing.T) {
+	c := CapturedCommand{Cmd: "cat /etc/hostname", Output: "hostname"}
+	if qs := catCpuProcQuestions(SystemInfo{}, c); qs != nil {
+		t.Errorf("expected nil for unrelated cat output, got %d questions", len(qs))
+	}
+}
+
+func TestPickStepVariantFiltersByAvailable(t *testing.T) {
+	// PSI-only — the only available variant must be picked every time.
+	siPSIOnly := SystemInfo{HasPSI: true}
+	variants := []stepVariant{
+		{Cmd: "vmstat 1 3", QuestionsFn: vmstatColumnQuestions},
+		{Cmd: "cat /proc/pressure/cpu", QuestionsFn: procPressureCpuQuestions, Available: func(si SystemInfo) bool { return si.HasPSI }},
+		{Cmd: "sar -u 1 3", QuestionsFn: sarUColumnQuestions, Available: func(si SystemInfo) bool { return si.HasSar }},
+	}
+	for i := 0; i < 20; i++ {
+		pick := pickStepVariant(siPSIOnly, variants)
+		if pick.Cmd == "sar -u 1 3" {
+			t.Fatalf("iteration %d: pickStepVariant returned unavailable variant %q", i, pick.Cmd)
+		}
+	}
+
+	// Sar-only — same, with the other gated variant ruled out.
+	siSarOnly := SystemInfo{HasSar: true}
+	for i := 0; i < 20; i++ {
+		pick := pickStepVariant(siSarOnly, variants)
+		if pick.Cmd == "cat /proc/pressure/cpu" {
+			t.Fatalf("iteration %d: pickStepVariant returned unavailable variant %q", i, pick.Cmd)
+		}
+	}
+}
+
+func TestPickStepVariantReturnsAllAvailableOverTime(t *testing.T) {
+	// With all three variants available, pickStepVariant should produce each
+	// over enough iterations.
+	si := SystemInfo{HasPSI: true, HasSar: true}
+	variants := []stepVariant{
+		{Cmd: "vmstat 1 3", QuestionsFn: vmstatColumnQuestions},
+		{Cmd: "cat /proc/pressure/cpu", QuestionsFn: procPressureCpuQuestions, Available: func(si SystemInfo) bool { return si.HasPSI }},
+		{Cmd: "sar -u 1 3", QuestionsFn: sarUColumnQuestions, Available: func(si SystemInfo) bool { return si.HasSar }},
+	}
+	seen := map[string]bool{}
+	for i := 0; i < 200; i++ {
+		seen[pickStepVariant(si, variants).Cmd] = true
+	}
+	for _, want := range []string{"vmstat 1 3", "cat /proc/pressure/cpu", "sar -u 1 3"} {
+		if !seen[want] {
+			t.Errorf("variant %q never appeared across 200 iterations; saw %v", want, seen)
+		}
+	}
+}
+
+func TestCombineVariantQuestionsDispatchesByOutputFormat(t *testing.T) {
+	// With wQuestions ordered before uptimeQuestions (the canonical case),
+	// `w` output should produce a w-specific question, not a generic loadavg one.
+	si := SystemInfo{NumCPU: 4}
+	loadavgVariants := cpuLoadavgVariants()
+	combined := combineVariantQuestions(loadavgVariants)
+
+	// `w` output → wQuestions should win.
+	qs := combined(si, CapturedCommand{Cmd: "w", Output: sampleW})
+	if len(qs) == 0 {
+		t.Fatal("expected questions for w output")
+	}
+	gotW := false
+	for _, q := range qs {
+		if strings.Contains(q.Stem, "JCPU") || strings.Contains(q.Stem, "PCPU") {
+			gotW = true
+			break
+		}
+	}
+	if !gotW {
+		t.Errorf("expected w-specific question for w output; got %v", stems(qs))
+	}
+
+	// `uptime` output → falls through to uptimeQuestions.
+	qs = combined(si, CapturedCommand{Cmd: "uptime", Output: sampleUptime})
+	if len(qs) != 1 {
+		t.Fatalf("expected 1 question for uptime output, got %d", len(qs))
+	}
+	if !strings.Contains(qs[0].Stem, "load average:") {
+		t.Errorf("expected loadavg position question for uptime; got %q", qs[0].Stem)
+	}
+
+	// `/proc/loadavg` output → procLoadavgQuestions.
+	qs = combined(si, CapturedCommand{Cmd: "cat /proc/loadavg", Output: sampleProcLoadavg})
+	if len(qs) == 0 {
+		t.Fatal("expected questions for /proc/loadavg output")
+	}
+	if !strings.Contains(qs[0].Stem, "1/234") {
+		t.Errorf("expected /proc/loadavg-specific question; got %q", qs[0].Stem)
+	}
+}
+
+func TestCPUExtractorsRouteVariantCommands(t *testing.T) {
+	si := SystemInfo{NumCPU: 4}
+	cases := []struct {
+		cmd     string
+		output  string
+		wantSub string
+	}{
+		{"w", sampleW, "JCPU"},
+		{"cat /proc/loadavg", sampleProcLoadavg, "1/234"},
+		{"cat /proc/pressure/cpu", sampleProcPressureCpu, "avg10"},
+		{"sar -u 1 3", sampleSarU, "sar -u"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.cmd, func(t *testing.T) {
+			qs := extractQuestions(cpuInvestigation, si, CapturedCommand{Cmd: tc.cmd, Output: tc.output})
+			if len(qs) == 0 {
+				t.Fatalf("expected questions for %q via cpuExtractors", tc.cmd)
+			}
+			found := false
+			for _, q := range qs {
+				if strings.Contains(q.Stem, tc.wantSub) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("expected a question containing %q for %q; got %v", tc.wantSub, tc.cmd, stems(qs))
+			}
+		})
+	}
+}
+
+func stems(qs []Question) []string {
+	out := make([]string, len(qs))
+	for i, q := range qs {
+		out[i] = q.Stem
+	}
+	return out
+}

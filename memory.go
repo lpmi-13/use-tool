@@ -23,27 +23,36 @@ var memoryInvestigation = &Investigation{
 // ----- Guide steps -----
 
 func memorySteps(si SystemInfo) []GuideStep {
+	baselineVariants := memoryBaselineVariants()
+	baselinePick := pickStepVariant(si, baselineVariants)
+
+	swapVariants := memorySwapVariants(si)
+	swapPick := pickStepVariant(si, swapVariants)
+
+	topVariants := memoryTopConsumerVariants()
+	topPick := pickStepVariant(si, topVariants)
+
 	steps := []GuideStep{
 		{
-			Name:          "baseline",
-			Intro:         "Step 1: get a baseline of total, used, available memory and swap.\n/proc/meminfo is the canonical source the kernel exposes.",
-			Suggested:     "cat /proc/meminfo",
-			QuestionsFn:   meminfoColumnQuestions,
+			Name: "baseline",
+			Intro: "Step 1: get a baseline of total, used, available memory and swap.\n" +
+				"The kernel exposes this via /proc/meminfo; `free` summarises the same data.",
+			Suggested:     baselinePick.Cmd,
+			QuestionsFn:   combineVariantQuestions(baselineVariants),
 			QuestionCount: 3,
-			Teaching: "Read `MemAvailable`, not `MemFree`. `MemFree` excludes reclaimable\n" +
-				"page cache; `MemAvailable` is the kernel's own estimate of how much\n" +
-				"memory is allocatable without going to swap. The two can differ by\n" +
-				"many gigabytes on a busy server.",
+			Teaching: "Read `MemAvailable` (or `available`), not `MemFree`/`free`. `MemFree`\n" +
+				"excludes reclaimable page cache; `MemAvailable` is the kernel's own\n" +
+				"estimate of how much memory is allocatable without going to swap. The\n" +
+				"two can differ by many gigabytes on a busy server.",
 		},
 		{
-			Name:          "swap-activity",
-			Intro:         "Step 2: vmstat shows pages swapped in (`si`) and out (`so`).\nNon-zero values mean the system is paging — working set exceeds RAM.",
-			Suggested:     "vmstat 1 5",
-			QuestionsFn:   vmstatColumnQuestions,
+			Name: "swap-activity",
+			Intro: "Step 2: look at paging rates. Non-zero swap-in / swap-out activity\n" +
+				"means the working set exceeds RAM.",
+			Suggested:     swapPick.Cmd,
+			QuestionsFn:   combineVariantQuestions(swapVariants),
 			QuestionCount: 3,
-			Teaching: "Sustained `si`/`so` > 0 means working set exceeds physical memory.\n" +
-				"On its own this is suggestive; pair with PSI or latency observations\n" +
-				"to confirm tasks are actually being slowed down.",
+			Teaching:      swapPick.Teaching,
 		},
 	}
 	if si.HasPSI {
@@ -62,14 +71,11 @@ func memorySteps(si SystemInfo) []GuideStep {
 	steps = append(steps, GuideStep{
 		Name:          "top-consumers",
 		Intro:         "Step 4: who's actually using memory?",
-		Suggested:     "ps -eo pid,rss,comm --sort=-rss | head -10",
-		QuestionsFn:   psRssColumnQuestions,
+		Suggested:     topPick.Cmd,
+		QuestionsFn:   combineVariantQuestions(topVariants),
 		QuestionCount: 3,
 		AcceptAny:     true,
-		Teaching: "RSS is resident memory in pages. Note: shared pages (libc, mmaped\n" +
-			"binaries) are double-counted across processes, so summing RSS can\n" +
-			"exceed real memory used. For accurate per-process accounting, look\n" +
-			"at PSS via `smem` or /proc/<pid>/smaps_rollup.",
+		Teaching:      topPick.Teaching,
 	})
 	steps = append(steps, GuideStep{
 		Name:               "errors",
@@ -86,6 +92,70 @@ func memorySteps(si SystemInfo) []GuideStep {
 	return steps
 }
 
+// memoryBaselineVariants is the pool for the memory-baseline step.
+// `cat /proc/meminfo` is the canonical source; `free -h` summarises the same
+// data in a more compact table with a different vocabulary (`available` /
+// `buff/cache`). The variants don't share output format, so order doesn't
+// matter for dispatch.
+func memoryBaselineVariants() []stepVariant {
+	return []stepVariant{
+		{Cmd: "cat /proc/meminfo", QuestionsFn: meminfoColumnQuestions},
+		{Cmd: "free -h", QuestionsFn: freeColumnQuestions},
+	}
+}
+
+// memorySwapVariants is the pool for the swap-activity step. vmstat is the
+// default; `sar -W` reports just the swap rates (pswpin/s, pswpout/s) and
+// requires sysstat. Each variant has its own teaching note because the
+// columns and emphasis differ.
+func memorySwapVariants(si SystemInfo) []stepVariant {
+	return []stepVariant{
+		{
+			Cmd:         "vmstat 1 5",
+			QuestionsFn: vmstatColumnQuestions,
+			Teaching: "Sustained `si`/`so` > 0 in vmstat means working set exceeds physical\n" +
+				"memory. On its own this is suggestive; pair with PSI or latency\n" +
+				"observations to confirm tasks are actually being slowed down.",
+		},
+		{
+			Cmd:         "sar -W 1 5",
+			QuestionsFn: sarWColumnQuestions,
+			Teaching: "`sar -W` reports pages swapped in/out per second (`pswpin/s` and\n" +
+				"`pswpout/s`) — the same signal as vmstat's `si`/`so` but isolated\n" +
+				"from the rest of vmstat's CPU and I/O columns. sysstat also archives\n" +
+				"these samples, so `sar -W -f /var/log/sa/...` reads back yesterday's\n" +
+				"data without a live capture.",
+			Available: func(si SystemInfo) bool { return si.HasSar },
+		},
+	}
+}
+
+// memoryTopConsumerVariants is the pool for the top-consumers step. `ps`
+// (always available) sorts by RSS; `top -bn1 -o %MEM` adds a snapshot view
+// with %MEM, VIRT, RES, and SHR — pedagogically richer because it lets the
+// learner ask about VIRT-vs-RES and SHR (shared) memory.
+func memoryTopConsumerVariants() []stepVariant {
+	return []stepVariant{
+		{
+			Cmd:         "ps -eo pid,rss,comm --sort=-rss | head -10",
+			QuestionsFn: psRssColumnQuestions,
+			Teaching: "RSS is resident memory in pages. Note: shared pages (libc, mmaped\n" +
+				"binaries) are double-counted across processes, so summing RSS can\n" +
+				"exceed real memory used. For accurate per-process accounting, look\n" +
+				"at PSS via `smem` or /proc/<pid>/smaps_rollup.",
+		},
+		{
+			Cmd:         "top -bn1 -o %MEM | head -20",
+			QuestionsFn: topMemColumnQuestions,
+			Teaching: "`top -o %MEM` ranks by percentage of physical memory. The crucial\n" +
+				"three columns: VIRT (entire virtual address space, often huge and\n" +
+				"misleading), RES (resident in RAM — top's name for RSS), and SHR\n" +
+				"(memory shared with other processes). RES − SHR is a rough proxy\n" +
+				"for the process's private footprint.",
+		},
+	}
+}
+
 // ----- Comprehension extractors (per-command) -----
 
 var memoryExtractors = []Extractor{
@@ -93,6 +163,8 @@ var memoryExtractors = []Extractor{
 	{BaseCmd: "free", QuestionsFn: freeQuestions},
 	{BaseCmd: "vmstat", QuestionsFn: vmstatMemoryQuestions},
 	{BaseCmd: "ps", QuestionsFn: psRssQuestions},
+	{BaseCmd: "sar", QuestionsFn: sarWQuestions},
+	{BaseCmd: "top", QuestionsFn: topMemQuestions},
 	{BaseCmd: "dmesg", QuestionsFn: oomQuestions},
 	{BaseCmd: "journalctl", QuestionsFn: oomQuestions},
 }
@@ -316,8 +388,85 @@ func formatKiBGiB(kib float64) string {
 	return fmt.Sprintf("%.1f GiB", kib/1024/1024)
 }
 
+// freeColumnQuestions returns all available column-questions for `free`
+// output. Used by the guide step (QuestionCount=3 lets it ask several
+// columns per session). For free-form practice mode where one question is
+// plenty, `freeQuestions` returns the single MemAvailable comparison.
+func freeColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if !freeOutputDetected(c.Output) {
+		return nil
+	}
+	return columnQuestionsFromPicks(
+		availableColumnQuestionPicks(c.Output, freeQuestionPicks),
+		func(column string) string {
+			return fmt.Sprintf("In `free` output, what does the `%s` column report for the `Mem:` row?", column)
+		},
+	)
+}
+
+func freeOutputDetected(output string) bool {
+	return strings.Contains(output, "Mem:") && strings.Contains(output, "available")
+}
+
+var freeQuestionPicks = []columnQuestionPick{
+	{
+		Column:  "total",
+		Correct: "Total usable physical memory the kernel can see",
+		Distractors: []string{
+			"Total memory across RAM plus swap",
+			"Total memory currently allocated by user processes",
+			"Total RAM minus kernel reserved memory",
+		},
+	},
+	{
+		Column:  "used",
+		Correct: "Total minus free, buff/cache, and (when present) shared",
+		Distractors: []string{
+			"Memory currently mapped into any process's virtual address space",
+			"Memory the kernel has decided cannot be reclaimed",
+			"Memory equal to MemTotal minus MemFree, ignoring caches",
+		},
+	},
+	{
+		Column:  "free",
+		Correct: "Completely unused memory — not counting reclaimable buffers or page cache",
+		Distractors: []string{
+			"Memory the kernel estimates is available for new allocations without swapping",
+			"Memory that has never been touched by any process",
+			"Free swap space plus free RAM",
+		},
+	},
+	{
+		Column:  "shared",
+		Correct: "Memory used by tmpfs filesystems and shared anonymous mappings",
+		Distractors: []string{
+			"Memory shared between user and kernel space",
+			"Memory used by multiple CPUs for IPC",
+			"Memory shared between containers and the host",
+		},
+	},
+	{
+		Column:  "buff/cache",
+		Correct: "Memory used by kernel buffers and page cache, most of which is reclaimable under pressure",
+		Distractors: []string{
+			"Memory permanently reserved by the kernel for I/O buffers",
+			"Memory used as a write-back cache for swap",
+			"Memory used by user-space processes for their own caches",
+		},
+	},
+	{
+		Column:  "available",
+		Correct: "The kernel's estimate of memory usable for new allocations without swapping (including reclaimable cache)",
+		Distractors: []string{
+			"Completely unused memory only",
+			"Free memory plus free swap",
+			"Memory currently held by processes that could be killed cleanly",
+		},
+	},
+}
+
 func freeQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if !strings.Contains(c.Output, "Mem:") || !strings.Contains(c.Output, "available") {
+	if !freeOutputDetected(c.Output) {
 		return nil
 	}
 	return []Question{{
@@ -604,7 +753,7 @@ func outputHasPSIName(output, name string) bool {
 }
 
 func psRssQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if !strings.Contains(c.Output, "RSS") && !strings.Contains(strings.ToLower(c.Output), "rss") {
+	if !psRssOutputDetected(c.Output) {
 		return nil
 	}
 	qs := []Question{{
@@ -634,7 +783,7 @@ func psRssQuestions(si SystemInfo, c CapturedCommand) []Question {
 }
 
 func psRssColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if !strings.Contains(c.Output, "RSS") && !strings.Contains(strings.ToLower(c.Output), "rss") {
+	if !psRssOutputDetected(c.Output) {
 		return nil
 	}
 	return columnQuestionsFromPicks(
@@ -643,6 +792,159 @@ func psRssColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 			return fmt.Sprintf("In `ps -eo pid,rss,comm` output, what does the `%s` column represent?", column)
 		},
 	)
+}
+
+// psRssOutputDetected gates psRssQuestions/psRssColumnQuestions on the
+// presence of an RSS column. `top`-style output uses "RES" instead, so this
+// check ensures top output doesn't get routed to ps-shaped questions.
+func psRssOutputDetected(output string) bool {
+	if !strings.Contains(output, "RSS") && !strings.Contains(strings.ToLower(output), "rss") {
+		return false
+	}
+	// Top output contains "%MEM" + a RES column header; reject so it falls
+	// through to topMemColumnQuestions.
+	if topOutputDetected(output) {
+		return false
+	}
+	return true
+}
+
+// sarWHeaderRe matches the column row of `sar -W` (swap pages per second).
+var sarWHeaderRe = regexp.MustCompile(`pswpin/s\s+pswpout/s`)
+
+// sarWQuestions returns one random question — used by the extractor (free-form
+// practice mode) where a single comprehension check per capture suffices.
+func sarWQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if !sarWHeaderRe.MatchString(c.Output) {
+		return nil
+	}
+	return randomColumnQuestions(
+		availableColumnQuestionPicks(c.Output, sarWQuestionPicks),
+		1,
+		sarWStemFor,
+	)
+}
+
+// sarWColumnQuestions returns the full pool, used by the guide step.
+func sarWColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if !sarWHeaderRe.MatchString(c.Output) {
+		return nil
+	}
+	return columnQuestionsFromPicks(
+		availableColumnQuestionPicks(c.Output, sarWQuestionPicks),
+		sarWStemFor,
+	)
+}
+
+func sarWStemFor(column string) string {
+	return fmt.Sprintf("In `sar -W` output, what does the `%s` column represent?", column)
+}
+
+var sarWQuestionPicks = []columnQuestionPick{
+	{
+		Column:  "pswpin/s",
+		Correct: "Pages swapped in from swap to RAM per second during the sample interval",
+		Distractors: []string{
+			"Total pages swapped in since boot",
+			"Pages of page cache reclaimed per second",
+			"Page faults serviced from swap per second",
+		},
+	},
+	{
+		Column:  "pswpout/s",
+		Correct: "Pages swapped out from RAM to swap per second during the sample interval",
+		Distractors: []string{
+			"Total pages swapped out since boot",
+			"Pages of page cache evicted per second",
+			"Pages written by the page cache writeback thread per second",
+		},
+	},
+}
+
+// topHeaderRe matches the column row of `top -b` output. We require PID,
+// USER, VIRT, RES, and %MEM so that a bare uptime/ps capture (which can
+// mention %MEM in a process-level table from `ps -o pcpu,pmem`) doesn't
+// qualify. Note: \b doesn't help around `%` (not a word char), so we
+// match the literal substrings directly.
+var topHeaderRe = regexp.MustCompile(`(?m)^\s*PID\s+USER.*VIRT.*RES.*%MEM`)
+
+func topOutputDetected(output string) bool {
+	return topHeaderRe.MatchString(output)
+}
+
+// topMemQuestions returns one random column question — extractor variant.
+func topMemQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if !topOutputDetected(c.Output) {
+		return nil
+	}
+	return randomColumnQuestions(
+		availableColumnQuestionPicks(c.Output, topMemQuestionPicks),
+		1,
+		topMemStemFor,
+	)
+}
+
+// topMemColumnQuestions returns the full pool — guide-step variant.
+func topMemColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if !topOutputDetected(c.Output) {
+		return nil
+	}
+	return columnQuestionsFromPicks(
+		availableColumnQuestionPicks(c.Output, topMemQuestionPicks),
+		topMemStemFor,
+	)
+}
+
+func topMemStemFor(column string) string {
+	return fmt.Sprintf("In `top` output sorted by memory, what does the `%s` column represent?", column)
+}
+
+var topMemQuestionPicks = []columnQuestionPick{
+	{
+		Column:  "VIRT",
+		Correct: "Total virtual memory the process has reserved, including code, data, shared libraries, and mmap'd files — much of which may not be resident",
+		Distractors: []string{
+			"Memory currently in RAM for the process",
+			"Memory shared with other processes",
+			"Swap space currently used by the process",
+		},
+	},
+	{
+		Column:  "RES",
+		Correct: "Resident memory: the portion of VIRT currently in RAM (top's name for RSS)",
+		Distractors: []string{
+			"Memory reserved by the process but never touched",
+			"The process's private anonymous memory only",
+			"Total memory the process has ever allocated",
+		},
+	},
+	{
+		Column:  "SHR",
+		Correct: "Resident memory that is shared with at least one other process (libc, mmaped binaries, shared anonymous mappings)",
+		Distractors: []string{
+			"Total memory the process has allocated for shared-memory IPC",
+			"Swap shared between processes",
+			"Memory shared with the kernel",
+		},
+	},
+	{
+		Column:  "%MEM",
+		Correct: "RES as a percentage of total physical memory on the host",
+		Distractors: []string{
+			"VIRT as a percentage of total swap space",
+			"Percentage of memory the process is actively writing to",
+			"Percentage of CPU time the process is spending on memory operations",
+		},
+	},
+	{
+		Column:  "%CPU",
+		Correct: "Recent CPU usage as a percentage of one CPU's capacity (so values above 100% are possible on multi-threaded processes)",
+		Distractors: []string{
+			"Percentage of total CPU capacity across all logical CPUs",
+			"Cumulative CPU time since the process started, expressed as a percent of uptime",
+			"Percentage of the user's allotted CPU quota",
+		},
+	},
 }
 
 var psRSSQuestionPicks = []columnQuestionPick{

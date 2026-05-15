@@ -23,12 +23,15 @@ var cpuInvestigation = &Investigation{
 // ----- Guide steps -----
 
 func cpuSteps(si SystemInfo) []GuideStep {
+	loadavgVariants := cpuLoadavgVariants()
+	loadavgPick := pickStepVariant(si, loadavgVariants)
+
 	steps := []GuideStep{
 		{
 			Name:        "loadavg",
-			Intro:       "Step 1: Load averages give a coarse picture of run-queue pressure\nover 1, 5, and 15-minute windows.",
-			Suggested:   "uptime",
-			QuestionsFn: uptimeQuestions,
+			Intro:       "Step 1: Load averages and recent run-queue counters give a coarse\npicture of CPU pressure over 1-, 5-, and 15-minute windows.",
+			Suggested:   loadavgPick.Cmd,
+			QuestionsFn: combineVariantQuestions(loadavgVariants),
 			Teaching: fmt.Sprintf(
 				"Rule of thumb: a 1-minute load average above %d (= number of logical CPUs on this machine)\n"+
 					"indicates more runnable processes than CPUs — the run-queue is saturated.\n"+
@@ -49,19 +52,17 @@ func cpuSteps(si SystemInfo) []GuideStep {
 		})
 	}
 
+	runqueueVariants := cpuRunqueueVariants(si)
+	runqueuePick := pickStepVariant(si, runqueueVariants)
+
 	steps = append(steps, GuideStep{
-		Name:          "runqueue",
-		Intro:         "Step 3: vmstat shows the run-queue length (`r`) and CPU breakdown\n(us/sy/id/wa) over short intervals.",
-		Suggested:     "vmstat 1 3",
-		QuestionsFn:   vmstatColumnQuestions,
+		Name: "runqueue",
+		Intro: "Step 3: look at saturation signals — run-queue length, CPU stall pressure,\n" +
+			"or the idle-vs-wait breakdown — over a few short samples.",
+		Suggested:     runqueuePick.Cmd,
+		QuestionsFn:   combineVariantQuestions(runqueueVariants),
 		QuestionCount: 3,
-		Teaching: fmt.Sprintf(
-			"If `r` consistently exceeds %d (= NumCPU on this system), the run-queue is\n"+
-				"saturated. High `wa` means CPUs are idle waiting on I/O — the bottleneck is\n"+
-				"storage, not CPU. Non-zero `st` means the hypervisor is giving cycles to\n"+
-				"another tenant; on cloud VMs, sustained `st` is contention you can't fix\n"+
-				"from inside the guest.",
-			si.NumCPU),
+		Teaching:      runqueuePick.Teaching,
 	})
 
 	steps = append(steps, GuideStep{
@@ -80,13 +81,68 @@ func cpuSteps(si SystemInfo) []GuideStep {
 	return steps
 }
 
+// cpuLoadavgVariants is the pool of commands the loadavg step can suggest.
+// wQuestions is listed before uptimeQuestions because `w` output contains
+// a `load average:` line that uptimeQuestions would also match — without
+// the ordering the learner who ran `w` would get a generic loadavg
+// question instead of one about the session table.
+func cpuLoadavgVariants() []stepVariant {
+	return []stepVariant{
+		{Cmd: "w", QuestionsFn: wQuestions},
+		{Cmd: "cat /proc/loadavg", QuestionsFn: procLoadavgQuestions},
+		{Cmd: "uptime", QuestionsFn: uptimeQuestions},
+	}
+}
+
+// cpuRunqueueVariants is the pool for the saturation step. vmstat is the
+// classic; PSI and sar -u look at the same dimension from different angles
+// when they're available. Each variant carries its own Teaching because
+// the columns and concepts being explained are different.
+func cpuRunqueueVariants(si SystemInfo) []stepVariant {
+	return []stepVariant{
+		{
+			Cmd:         "vmstat 1 3",
+			QuestionsFn: vmstatColumnQuestions,
+			Teaching: fmt.Sprintf(
+				"If `r` consistently exceeds %d (= NumCPU on this system), the run-queue is\n"+
+					"saturated. High `wa` means CPUs are idle waiting on I/O — the bottleneck is\n"+
+					"storage, not CPU. Non-zero `st` means the hypervisor is giving cycles to\n"+
+					"another tenant; on cloud VMs, sustained `st` is contention you can't fix\n"+
+					"from inside the guest.",
+				si.NumCPU),
+		},
+		{
+			Cmd:         "cat /proc/pressure/cpu",
+			QuestionsFn: procPressureCpuQuestions,
+			Teaching: "PSI's `some avg10/avg60/avg300` values are the share of time at least one\n" +
+				"task was stalled waiting for CPU over those windows. Sustained values above\n" +
+				"~10% indicate run-queue contention even when loadavg looks moderate. There's\n" +
+				"no `full` row for CPU because a fully-stalled run-queue would mean no task is\n" +
+				"running — indistinguishable from idle.",
+			Available: func(si SystemInfo) bool { return si.HasPSI },
+		},
+		{
+			Cmd:         "sar -u 1 3",
+			QuestionsFn: sarUColumnQuestions,
+			Teaching: "`sar -u` reports the same CPU breakdown as vmstat's CPU columns\n" +
+				"(%user/%system/%iowait/%steal/%idle) but is part of sysstat, which also\n" +
+				"archives historical samples. That makes `sar` the right tool for\n" +
+				"after-the-fact diagnosis — `sar -f` reads the archived data file for a\n" +
+				"previous day or hour.",
+			Available: func(si SystemInfo) bool { return si.HasSar },
+		},
+	}
+}
+
 // ----- Comprehension extractors (per-command) -----
 
 var cpuExtractors = []Extractor{
 	{BaseCmd: "uptime", QuestionsFn: uptimeQuestions},
-	{BaseCmd: "w", QuestionsFn: uptimeQuestions},
+	{BaseCmd: "w", QuestionsFn: wQuestions},
+	{BaseCmd: "cat", QuestionsFn: catCpuProcQuestions},
 	{BaseCmd: "vmstat", QuestionsFn: vmstatQuestions},
 	{BaseCmd: "mpstat", QuestionsFn: mpstatQuestions},
+	{BaseCmd: "sar", QuestionsFn: sarUQuestions},
 	{BaseCmd: "dmesg", QuestionsFn: dmesgQuestions},
 	{BaseCmd: "journalctl", QuestionsFn: dmesgQuestions},
 }
@@ -546,6 +602,243 @@ func kernelLogQuestionTool(cmd string) string {
 		return "journalctl"
 	}
 	return "dmesg"
+}
+
+// wHeaderRe matches `w`'s session-table header. We require both TTY and
+// JCPU so that arbitrary text containing the word "USER" doesn't qualify.
+var wHeaderRe = regexp.MustCompile(`(?m)^\s*USER\b.*\bTTY\b.*\bJCPU\b.*\bPCPU\b`)
+
+// wQuestions handles `w` output. `w` includes the same `load average:`
+// line as `uptime` plus a session table with TTY, IDLE, JCPU, and PCPU
+// columns; the pool covers both the loadavg-position question (shared with
+// uptime) and two w-specific column questions, and the guide picks one at
+// random.
+func wQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if !wHeaderRe.MatchString(c.Output) {
+		return nil
+	}
+	qs := []Question{
+		{
+			Stem:    "In `w`'s session table, what does the `JCPU` column measure?",
+			Correct: "Cumulative CPU time of all processes attached to that TTY since the user logged in",
+			Distractors: []string{
+				"CPU time used by the process shown in the `WHAT` column",
+				"Just-in-time CPU usage averaged over the last minute",
+				"The number of CPU cores currently bound to that session",
+			},
+		},
+		{
+			Stem:    "In `w`'s session table, what does the `PCPU` column measure?",
+			Correct: "CPU time used by the process named in the `WHAT` column",
+			Distractors: []string{
+				"Aggregate CPU usage across all the user's TTYs",
+				"Percentage of CPU capacity allocated to that user's process group",
+				"The pinned CPU index for that process",
+			},
+		},
+	}
+	qs = append(qs, uptimeQuestions(si, c)...)
+	return qs
+}
+
+// procLoadavgLineRe matches a single line in /proc/loadavg format:
+//
+//	0.42 0.31 0.28 1/234 5678
+//
+// Three load averages, then `running/total` scheduling entities, then the
+// PID of the most recently created task.
+var procLoadavgLineRe = regexp.MustCompile(`(?m)^\s*([0-9]+\.[0-9]+)\s+([0-9]+\.[0-9]+)\s+([0-9]+\.[0-9]+)\s+(\d+)/(\d+)\s+(\d+)\s*$`)
+
+// procLoadavgQuestions handles `cat /proc/loadavg`. Deliberately skips a
+// loadavg-position question (covered by uptimeQuestions) and asks about
+// the two fields the kernel emits *only* via /proc/loadavg.
+func procLoadavgQuestions(si SystemInfo, c CapturedCommand) []Question {
+	m := procLoadavgLineRe.FindStringSubmatch(c.Output)
+	if m == nil {
+		return nil
+	}
+	running, total, lastPid := m[4], m[5], m[6]
+	return []Question{
+		{
+			Stem: fmt.Sprintf(
+				"Your `/proc/loadavg` line included the field `%s/%s`.\n"+
+					"What do those two numbers represent?",
+				running, total),
+			Correct: "Currently runnable kernel scheduling entities, over the total number of scheduling entities (threads)",
+			Distractors: []string{
+				"The 1-minute load average expressed as a fraction of NumCPU",
+				"Running processes, over the configured kernel.pid_max",
+				"Open file descriptors, over the soft RLIMIT_NOFILE",
+			},
+		},
+		{
+			Stem: fmt.Sprintf(
+				"Your `/proc/loadavg` line ended with the field `%s`.\n"+
+					"What is this last numeric field?",
+				lastPid),
+			Correct: "The PID of the most recently created process or thread on the system",
+			Distractors: []string{
+				"Total context switches since boot",
+				"The number of CPU samples that contributed to the load averages",
+				"Total tasks blocked waiting on uninterruptible I/O",
+			},
+		},
+	}
+}
+
+// psiSomeRe matches a PSI `some` row in /proc/pressure/cpu, e.g.
+//
+//	some avg10=0.12 avg60=0.05 avg300=0.01 total=12345678
+var psiSomeRe = regexp.MustCompile(`some\s+avg10=([0-9.]+)\s+avg60=([0-9.]+)\s+avg300=([0-9.]+)\s+total=(\d+)`)
+
+// procPressureCpuQuestions handles `cat /proc/pressure/cpu` (PSI). All
+// three questions are returned so the guide step (QuestionCount=3) can
+// ask one of each per session.
+func procPressureCpuQuestions(si SystemInfo, c CapturedCommand) []Question {
+	m := psiSomeRe.FindStringSubmatch(c.Output)
+	if m == nil {
+		return nil
+	}
+	avg10, avg60, avg300, total := m[1], m[2], m[3], m[4]
+	return []Question{
+		{
+			Stem: fmt.Sprintf(
+				"Your PSI output included `some avg10=%s avg60=%s avg300=%s ...`.\n"+
+					"What does the `avg10` value mean?",
+				avg10, avg60, avg300),
+			Correct: "Percent of time, over the last 10 seconds, that at least one task was stalled waiting for CPU",
+			Distractors: []string{
+				"The 10-second moving average of load (runnable tasks)",
+				"Average context switches per second over a 10-second window",
+				"Number of CPUs idle on average over the last 10 seconds",
+			},
+		},
+		{
+			Stem:    "Why does `/proc/pressure/cpu` show only a `some` row, with no `full` row, unlike memory and I/O PSI?",
+			Correct: "A CPU stall means at least one task is waiting; if every task were stalled there would be nothing running, which is indistinguishable from idle — `full` isn't meaningful for CPU",
+			Distractors: []string{
+				"The `full` row is hidden unless the system has been under load for 60 seconds or more",
+				"Kernel limitation — the `full` row is planned for a future release",
+				"It's only shown to processes with CAP_SYS_ADMIN, so it's hidden for normal users",
+			},
+		},
+		{
+			Stem: fmt.Sprintf(
+				"Your PSI output ended with `total=%s`. What does that counter represent?",
+				total),
+			Correct: "Cumulative microseconds since boot during which at least one task was stalled on CPU",
+			Distractors: []string{
+				"Number of distinct tasks that have ever stalled on CPU since boot",
+				"Number of CPU-steal events recorded by the hypervisor",
+				"Cumulative milliseconds the run-queue has been non-empty",
+			},
+		},
+	}
+}
+
+// sarUHeaderRe is the column-header line printed by `sar -u`.
+var sarUHeaderRe = regexp.MustCompile(`%user\s+%nice\s+%system\s+%iowait\s+%steal\s+%idle`)
+
+// sarUQuestions returns one random column question. Used by the extractor
+// (free-form practice mode) where the user may run sar -u alongside other
+// commands and only needs one comprehension check.
+func sarUQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if !sarUHeaderRe.MatchString(c.Output) {
+		return nil
+	}
+	return randomColumnQuestions(
+		availableColumnQuestionPicks(c.Output, sarUQuestionPicks),
+		1,
+		sarUStemFor,
+	)
+}
+
+// sarUColumnQuestions returns the full pool of column questions. Used by
+// the guide step (QuestionCount=3) so the shuffler picks several different
+// columns per session.
+func sarUColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if !sarUHeaderRe.MatchString(c.Output) {
+		return nil
+	}
+	return columnQuestionsFromPicks(
+		availableColumnQuestionPicks(c.Output, sarUQuestionPicks),
+		sarUStemFor,
+	)
+}
+
+func sarUStemFor(column string) string {
+	return fmt.Sprintf("In the `sar -u` output, what does the `%s` column represent?", column)
+}
+
+var sarUQuestionPicks = []columnQuestionPick{
+	{
+		Column:  "%user",
+		Correct: "Percent of CPU time spent running user-space code, excluding niced processes",
+		Distractors: []string{
+			"Percent of CPU time spent in kernel code on behalf of user processes",
+			"Percent of CPU time available to non-root users",
+			"Percent of total CPUs occupied by user processes",
+		},
+	},
+	{
+		Column:  "%nice",
+		Correct: "Percent of CPU time spent running user-space processes with a positive nice value",
+		Distractors: []string{
+			"Percent of CPU time spent on cgroup-throttled processes",
+			"Percent of CPU time spent on systemd-managed services only",
+			"Percent of CPU time spent in interruptible sleep",
+		},
+	},
+	{
+		Column:  "%system",
+		Correct: "Percent of CPU time spent running kernel code",
+		Distractors: []string{
+			"Percent of CPU time spent on systemd-managed services only",
+			"Percent of CPU time spent running user-space code",
+			"Percent of CPU time spent on the system bus driver",
+		},
+	},
+	{
+		Column:  "%iowait",
+		Correct: "Percent of time the CPU was idle while there was an outstanding disk I/O request",
+		Distractors: []string{
+			"Percent of CPU time spent actively handling I/O interrupts",
+			"Wait time in seconds before each I/O operation completes",
+			"Percent of disk capacity currently in use",
+		},
+	},
+	{
+		Column:  "%steal",
+		Correct: "Percent of CPU time stolen by the hypervisor for other virtual machines",
+		Distractors: []string{
+			"Percent of CPU time stolen by higher-priority local processes",
+			"Percent of CPU time spent servicing software interrupts",
+			"Percent of CPU time the guest could not access due to a NUMA penalty",
+		},
+	},
+	{
+		Column:  "%idle",
+		Correct: "Percent of CPU time spent idle with no outstanding disk I/O wait",
+		Distractors: []string{
+			"Percent of CPU cores currently powered down",
+			"Percent of CPU time spent idle while waiting for disk I/O",
+			"Percent of total CPU capacity that's currently free",
+		},
+	},
+}
+
+// catCpuProcQuestions dispatches `cat` extractor matches to whichever
+// /proc file's question handler recognises the captured output. Returns
+// nil if neither matches, which is the right answer for an unrelated
+// `cat` invocation.
+func catCpuProcQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if qs := procLoadavgQuestions(si, c); len(qs) > 0 {
+		return qs
+	}
+	if qs := procPressureCpuQuestions(si, c); len(qs) > 0 {
+		return qs
+	}
+	return nil
 }
 
 // ----- Observations (cross-command, feed snapshot + recall + synthesis) -----

@@ -24,33 +24,31 @@ var diskInvestigation = &Investigation{
 // ----- Guide steps -----
 
 func diskSteps(si SystemInfo) []GuideStep {
+	deviceVariants := diskDeviceVariants()
+	devicePick := pickStepVariant(si, deviceVariants)
+
+	throughputVariants := diskThroughputVariants(si)
+	throughputPick := pickStepVariant(si, throughputVariants)
+
 	steps := []GuideStep{
 		{
 			Name:          "devices",
 			Intro:         "Step 1: orient yourself to what block devices the system has.",
-			Suggested:     "lsblk",
-			QuestionsFn:   lsblkColumnQuestions,
+			Suggested:     devicePick.Cmd,
+			QuestionsFn:   combineVariantQuestions(deviceVariants),
 			QuestionCount: 3,
 			AcceptAny:     true,
-			Teaching: "Note which devices are physical disks (TYPE=disk) vs partitions (part)\n" +
-				"vs LVM volumes (lvm). Per-device metrics from iostat will use the disk\n" +
-				"names you see here.",
+			Teaching:      devicePick.Teaching,
 		},
 		{
-			Name:          "throughput",
-			Intro:         "Step 2: per-device throughput, queue depth, and latency.\niostat -xz is the workhorse: -x for extended columns, -z to skip idle devices.\nWe pipe through `grep -vE '^loop'` so snap-loop mounts don't bury the real devices.",
-			Suggested:     "iostat -xz 1 3 | grep -vE '^loop'",
-			QuestionsFn:   iostatColumnQuestions,
+			Name: "throughput",
+			Intro: "Step 2: per-device throughput, queue depth, and latency.\n" +
+				"Look for high queue depth (`aqu-sz` / `avgqu-sz`) or high await/svctm —\n" +
+				"those are the saturation signals.",
+			Suggested:     throughputPick.Cmd,
+			QuestionsFn:   combineVariantQuestions(throughputVariants),
 			QuestionCount: 3,
-			Teaching: "Three signals matter most:\n" +
-				"  • r/s + w/s — workload (the offered IOPS).\n" +
-				"  • aqu-sz — average queue depth. Sustained > 1 means requests are\n" +
-				"    queueing; that's saturation.\n" +
-				"  • await — average request latency in ms. Compare to your device's\n" +
-				"    expected baseline.\n" +
-				"And one trap: %util on non-rotational devices (SSD, NVMe) is misleading\n" +
-				"— it measures \"at least one I/O in flight,\" which doesn't reflect parallel\n" +
-				"capacity. Read aqu-sz/await on those devices, not %util.",
+			Teaching:      throughputPick.Teaching,
 		},
 	}
 	if si.HasPSI {
@@ -97,12 +95,70 @@ func diskSteps(si SystemInfo) []GuideStep {
 	return steps
 }
 
+// diskDeviceVariants is the pool for the device-orientation step.
+// `lsblk` is the canonical view; `cat /proc/partitions` exposes the same
+// information in the raw kernel format (major/minor numbers, blocks, name).
+func diskDeviceVariants() []stepVariant {
+	return []stepVariant{
+		{
+			Cmd:         "lsblk",
+			QuestionsFn: lsblkColumnQuestions,
+			Teaching: "Note which devices are physical disks (TYPE=disk) vs partitions (part)\n" +
+				"vs LVM volumes (lvm). Per-device metrics from iostat will use the disk\n" +
+				"names you see here.",
+		},
+		{
+			Cmd:         "cat /proc/partitions",
+			QuestionsFn: procPartitionsColumnQuestions,
+			Teaching: "`/proc/partitions` is what `lsblk` reads under the hood. Fields are\n" +
+				"`major  minor  #blocks  name`. #blocks counts 1024-byte blocks, so a\n" +
+				"512 GiB disk shows ~500_000_000 blocks. No tree formatting and no\n" +
+				"mountpoints — when lsblk isn't installed (minimal containers, busybox),\n" +
+				"this is the fallback orientation tool.",
+		},
+	}
+}
+
+// diskThroughputVariants is the pool for the throughput / saturation step.
+// `iostat -xz` is the default; `sar -d` exposes a similar table (await,
+// avgqu-sz, %util) but with column names tied to sysstat's archive format,
+// and is the right tool for after-the-fact diagnosis via `sar -d -f`.
+func diskThroughputVariants(si SystemInfo) []stepVariant {
+	return []stepVariant{
+		{
+			Cmd:         "iostat -xz 1 3 | grep -vE '^loop'",
+			QuestionsFn: iostatColumnQuestions,
+			Teaching: "Three signals matter most:\n" +
+				"  • r/s + w/s — workload (the offered IOPS).\n" +
+				"  • aqu-sz — average queue depth. Sustained > 1 means requests are\n" +
+				"    queueing; that's saturation.\n" +
+				"  • await — average request latency in ms. Compare to your device's\n" +
+				"    expected baseline.\n" +
+				"And one trap: %util on non-rotational devices (SSD, NVMe) is misleading\n" +
+				"— it measures \"at least one I/O in flight,\" which doesn't reflect parallel\n" +
+				"capacity. Read aqu-sz/await on those devices, not %util.",
+		},
+		{
+			Cmd:         "sar -d 1 3",
+			QuestionsFn: sarDColumnQuestions,
+			Teaching: "`sar -d` reports per-device tps, throughput (rkB/s, wkB/s), average\n" +
+				"request size (areq-sz), queue depth (aqu-sz), and await — the same\n" +
+				"shape as iostat but persisted by sysstat. `sar -d -f /var/log/sa/...`\n" +
+				"replays an earlier window without a live capture.\n" +
+				"Caveat: device names appear as `dev<major>-<minor>` (e.g. `dev8-0`)\n" +
+				"rather than `sda`; cross-reference with `/proc/partitions` if unsure.",
+			Available: func(si SystemInfo) bool { return si.HasSar },
+		},
+	}
+}
+
 // ----- Comprehension extractors (per-command) -----
 
 var diskExtractors = []Extractor{
 	{BaseCmd: "iostat", QuestionsFn: iostatQuestions},
 	{BaseCmd: "lsblk", QuestionsFn: lsblkQuestions},
 	{BaseCmd: "pidstat", QuestionsFn: pidstatDQuestions},
+	{BaseCmd: "sar", QuestionsFn: sarDQuestions},
 	{BaseCmd: "cat", QuestionsFn: catDiskQuestions},
 	{BaseCmd: "dmesg", QuestionsFn: diskDmesgQuestions},
 	{BaseCmd: "journalctl", QuestionsFn: diskDmesgQuestions},
@@ -113,7 +169,214 @@ func catDiskQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if strings.Contains(c.Cmd, "/proc/pressure/io") {
 		return psiIOQuestions(si, c)
 	}
+	if strings.Contains(c.Cmd, "/proc/partitions") {
+		return procPartitionsQuestions(si, c)
+	}
 	return nil
+}
+
+// procPartitionsHeaderRe matches the header line of `/proc/partitions`,
+// which always begins with `major minor  #blocks  name`.
+var procPartitionsHeaderRe = regexp.MustCompile(`(?m)^\s*major\s+minor\s+#blocks\s+name\s*$`)
+
+// procPartitionsQuestions returns one random column question — extractor variant.
+func procPartitionsQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if !procPartitionsHeaderRe.MatchString(c.Output) {
+		return nil
+	}
+	return randomColumnQuestions(
+		availableColumnQuestionPicks(c.Output, procPartitionsQuestionPicks),
+		1,
+		procPartitionsStemFor,
+	)
+}
+
+// procPartitionsColumnQuestions returns the full pool — guide-step variant.
+func procPartitionsColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if !procPartitionsHeaderRe.MatchString(c.Output) {
+		return nil
+	}
+	return columnQuestionsFromPicks(
+		availableColumnQuestionPicks(c.Output, procPartitionsQuestionPicks),
+		procPartitionsStemFor,
+	)
+}
+
+func procPartitionsStemFor(column string) string {
+	return fmt.Sprintf("In `/proc/partitions`, what does the `%s` column represent?", column)
+}
+
+var procPartitionsQuestionPicks = []columnQuestionPick{
+	{
+		Column:  "major",
+		Correct: "The kernel major device number, identifying which driver owns the device",
+		Distractors: []string{
+			"The capacity of the device in major units (e.g. terabytes)",
+			"The partition's index within the disk, 1-based",
+			"The major version of the filesystem on the partition",
+		},
+	},
+	{
+		Column:  "minor",
+		Correct: "The kernel minor device number, distinguishing instances within a driver (e.g. sda=0, sda1=1)",
+		Distractors: []string{
+			"A minor version number for the partition table format",
+			"The disk's index within its bus",
+			"The number of inodes free on the partition",
+		},
+	},
+	{
+		Column:  "#blocks",
+		Correct: "The size of the device or partition counted in 1024-byte blocks",
+		Distractors: []string{
+			"The number of 512-byte sectors in the device",
+			"The current number of allocated filesystem blocks",
+			"The number of I/O requests outstanding to the device",
+		},
+	},
+	{
+		Column:  "name",
+		Correct: "The kernel block-device name (sda, sda1, nvme0n1, dm-0, …)",
+		Distractors: []string{
+			"The mount point where the device is currently mounted",
+			"The filesystem label set with `e2label` or `xfs_admin`",
+			"The user-friendly model name reported by the device",
+		},
+	},
+}
+
+// sarDHeaderRe matches the column row of `sar -d`. Pre-12.x sysstat uses
+// `avgqu-sz` / `avgrq-sz`; modern versions emit `aqu-sz` / `areq-sz`. We
+// require `DEV` plus `await` so a sar -W or sar -n match doesn't qualify.
+var sarDHeaderRe = regexp.MustCompile(`(?m)^[\d:]+\s+DEV\b.*\bawait\b`)
+
+// sarDQuestions returns one random column question — extractor variant.
+func sarDQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if !sarDHeaderRe.MatchString(c.Output) {
+		return nil
+	}
+	return randomColumnQuestions(
+		availableColumnQuestionPicks(c.Output, sarDQuestionPicks),
+		1,
+		sarDStemFor,
+	)
+}
+
+// sarDColumnQuestions returns the full pool — guide-step variant.
+func sarDColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if !sarDHeaderRe.MatchString(c.Output) {
+		return nil
+	}
+	return columnQuestionsFromPicks(
+		availableColumnQuestionPicks(c.Output, sarDQuestionPicks),
+		sarDStemFor,
+	)
+}
+
+func sarDStemFor(column string) string {
+	return fmt.Sprintf("In `sar -d` output, what does the `%s` column represent?", column)
+}
+
+var sarDQuestionPicks = []columnQuestionPick{
+	{
+		Column:  "DEV",
+		Correct: "The block device, often shown as `dev<major>-<minor>` (e.g. `dev8-0` for sda)",
+		Distractors: []string{
+			"The device driver module name",
+			"The mount point currently using the device",
+			"The hardware bus the device is attached to",
+		},
+	},
+	{
+		Column:  "tps",
+		Correct: "Transfers per second issued to the device — combined reads and writes",
+		Distractors: []string{
+			"Throughput in megabytes per second",
+			"Threads per second waiting on the device",
+			"Total transfers since boot, divided by uptime",
+		},
+	},
+	{
+		Column:  "rkB/s",
+		Correct: "Kilobytes read from the device per second during the sample interval",
+		Distractors: []string{
+			"Read requests per second, ignoring request size",
+			"Total kilobytes read since the sar process started",
+			"Bytes read from page cache per second",
+		},
+	},
+	{
+		Column:  "wkB/s",
+		Correct: "Kilobytes written to the device per second during the sample interval",
+		Distractors: []string{
+			"Write requests per second, ignoring request size",
+			"Total kilobytes written since the sar process started",
+			"Bytes flushed from dirty page cache per second",
+		},
+	},
+	{
+		Column:  "areq-sz",
+		Correct: "Average request size in kilobytes — total throughput divided by number of requests",
+		Distractors: []string{
+			"Average request queue depth",
+			"Average response size from the device",
+			"Average inter-arrival time between requests, in milliseconds",
+		},
+	},
+	{
+		Column:  "avgrq-sz",
+		Correct: "Average request size in sectors (older sysstat output for `areq-sz`)",
+		Distractors: []string{
+			"Average queue depth in requests",
+			"Average response time in milliseconds",
+			"Average request rate per second",
+		},
+	},
+	{
+		Column:  "aqu-sz",
+		Correct: "Average number of I/O requests outstanding to the device (queued plus in service)",
+		Distractors: []string{
+			"Average request size in kilobytes",
+			"Average time each request spent in the queue, in milliseconds",
+			"Maximum queue depth supported by the driver",
+		},
+	},
+	{
+		Column:  "avgqu-sz",
+		Correct: "Average number of outstanding requests (older sysstat output for `aqu-sz`)",
+		Distractors: []string{
+			"Average request size in sectors",
+			"Average queueing latency in milliseconds",
+			"Average rate of request arrivals",
+		},
+	},
+	{
+		Column:  "await",
+		Correct: "Average request latency in milliseconds, including queueing and service time",
+		Distractors: []string{
+			"Average wait before the request was queued (queueing time only)",
+			"Average request size in kilobytes",
+			"Percent of time the device had a request in flight",
+		},
+	},
+	{
+		Column:  "svctm",
+		Correct: "Average service time per request in milliseconds (deprecated and unreliable on modern kernels — prefer await)",
+		Distractors: []string{
+			"Total time the service has spent on I/O since boot",
+			"Average size of each service request in kilobytes",
+			"Average number of services contributing to the device load",
+		},
+	},
+	{
+		Column:  "%util",
+		Correct: "Fraction of wall-clock time the device had at least one I/O in flight",
+		Distractors: []string{
+			"Fraction of device IOPS capacity in use",
+			"Fraction of throughput consumed relative to the bus bandwidth",
+			"Fraction of disk space currently allocated",
+		},
+	},
 }
 
 var iostatHeaderRe = regexp.MustCompile(`(?m)^Device.*%util`)

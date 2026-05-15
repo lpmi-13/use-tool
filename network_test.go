@@ -500,3 +500,119 @@ func TestSarEdevQuestionsCoversBothDirections(t *testing.T) {
 		}
 	}
 }
+
+const sampleNetstatS = `Ip:
+    1234 total packets received
+    0 forwarded
+Tcp:
+    100 active connection openings
+    50 passive connection openings
+    10 failed connection attempts
+    5 connection resets received
+    20 connections established
+    1000000 segments received
+    900000 segments sent out
+    100 segments retransmitted
+    0 bad segments received
+    50 resets sent
+TcpExt:
+    100 syncookies sent
+    10 times the listen queue of a socket overflowed
+    5 SYNs to LISTEN sockets dropped`
+
+func TestNetstatSColumnQuestionsCoversObservedPhrases(t *testing.T) {
+	c := CapturedCommand{Cmd: "netstat -s", Output: sampleNetstatS}
+	qs := netstatSColumnQuestions(SystemInfo{}, c)
+	if len(qs) == 0 {
+		t.Fatal("expected questions for netstat -s output")
+	}
+	// Each phrase that appears in the sample should produce one question.
+	wantPhrases := []string{
+		"segments retransmitted",
+		"active connection openings",
+		"passive connection openings",
+		"failed connection attempts",
+		"connection resets received",
+		"times the listen queue",
+		"resets sent",
+	}
+	if len(qs) != len(wantPhrases) {
+		t.Errorf("expected %d questions matching observed phrases, got %d", len(wantPhrases), len(qs))
+	}
+	for _, phrase := range wantPhrases {
+		found := false
+		for _, q := range qs {
+			if strings.Contains(strings.ToLower(q.Stem), phrase) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected question matching phrase %q", phrase)
+		}
+	}
+}
+
+func TestNetstatSColumnQuestionsRejectsUnrelatedOutput(t *testing.T) {
+	c := CapturedCommand{Cmd: "echo", Output: "hello world"}
+	if qs := netstatSColumnQuestions(SystemInfo{}, c); qs != nil {
+		t.Errorf("expected nil for unrelated output, got %d", len(qs))
+	}
+}
+
+func TestNetstatSColumnQuestionsFiltersToObservedOnly(t *testing.T) {
+	// Trimmed input — only the retransmits line is present.
+	trimmed := "Tcp:\n    100 segments retransmitted\n    1000 segments sent out"
+	c := CapturedCommand{Cmd: "netstat -s", Output: trimmed}
+	qs := netstatSColumnQuestions(SystemInfo{}, c)
+	if len(qs) != 1 {
+		t.Fatalf("expected 1 question (only retransmits phrase present), got %d", len(qs))
+	}
+	if !strings.Contains(strings.ToLower(qs[0].Stem), "segments retransmitted") {
+		t.Errorf("expected retransmits question; got %q", qs[0].Stem)
+	}
+}
+
+func TestNetworkInterfaceVariantsDispatch(t *testing.T) {
+	combined := combineVariantQuestions(networkInterfaceVariants())
+	// `ip -s link` output → ipLink column questions
+	ipLinkOut := "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue\n    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00\n    RX: bytes packets errors dropped overrun mcast\n    1000 5 0 0 0 0\n    TX: bytes packets errors dropped carrier collsns\n    1000 5 0 0 0 0"
+	qs := combined(SystemInfo{}, CapturedCommand{Cmd: "ip -s link", Output: ipLinkOut})
+	if len(qs) == 0 {
+		t.Fatal("expected questions for ip -s link via interface variants")
+	}
+	// `cat /proc/net/dev` → procNetDev column questions
+	qs = combined(SystemInfo{}, CapturedCommand{Cmd: "cat /proc/net/dev", Output: sampleProcNetDev})
+	if len(qs) == 0 {
+		t.Fatal("expected questions for /proc/net/dev via interface variants")
+	}
+	gotProc := false
+	for _, q := range qs {
+		if strings.Contains(q.Stem, "/proc/net/dev") {
+			gotProc = true
+			break
+		}
+	}
+	if !gotProc {
+		t.Errorf("expected /proc/net/dev-style question; got %v", stems(qs))
+	}
+}
+
+func TestNetworkTCPVariantsDispatch(t *testing.T) {
+	combined := combineVariantQuestions(networkTCPVariants())
+	// netstat -s output → netstatSColumnQuestions
+	qs := combined(SystemInfo{}, CapturedCommand{Cmd: "netstat -s", Output: sampleNetstatS})
+	if len(qs) == 0 {
+		t.Fatal("expected questions for netstat -s via TCP variants")
+	}
+	gotNetstatS := false
+	for _, q := range qs {
+		if strings.Contains(q.Stem, "netstat -s") {
+			gotNetstatS = true
+			break
+		}
+	}
+	if !gotNetstatS {
+		t.Errorf("expected netstat -s-style question; got %v", stems(qs))
+	}
+}

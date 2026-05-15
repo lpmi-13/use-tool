@@ -53,6 +53,48 @@ type QuestionResult struct {
 
 type questionCommandRunner func(string) CapturedCommand
 
+// stepVariant is one of several interchangeable commands a single guide
+// step can use. At session start we pick one for the `Suggested` prompt;
+// the step's QuestionsFn dispatches across all variants so the learner can
+// also run a different one and still get a tailored comprehension check.
+type stepVariant struct {
+	Cmd         string
+	QuestionsFn func(SystemInfo, CapturedCommand) []Question
+	Teaching    string
+	Available   func(SystemInfo) bool
+}
+
+// pickStepVariant returns a variant available on this system, chosen at
+// random. Falls back to the first variant if none are marked available
+// (every step must always have some command to suggest).
+func pickStepVariant(si SystemInfo, variants []stepVariant) stepVariant {
+	var avail []stepVariant
+	for _, v := range variants {
+		if v.Available == nil || v.Available(si) {
+			avail = append(avail, v)
+		}
+	}
+	if len(avail) == 0 {
+		return variants[0]
+	}
+	return pickRandom(avail)
+}
+
+// combineVariantQuestions returns a QuestionsFn that walks variants in order
+// and returns the first non-empty result. Each variant's QuestionsFn is
+// expected to recognise only its own output format; order variants
+// most-specific first when formats can overlap.
+func combineVariantQuestions(variants []stepVariant) func(SystemInfo, CapturedCommand) []Question {
+	return func(si SystemInfo, c CapturedCommand) []Question {
+		for _, v := range variants {
+			if qs := v.QuestionsFn(si, c); len(qs) > 0 {
+				return qs
+			}
+		}
+		return nil
+	}
+}
+
 type SynthesisRule struct {
 	Requires []string
 	Generate func(SystemInfo, map[string]Value) (Question, bool)

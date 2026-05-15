@@ -506,3 +506,129 @@ func TestPSIIOQuestionsCoversBothMetrics(t *testing.T) {
 		}
 	}
 }
+
+const sampleProcPartitions = `major minor  #blocks  name
+
+   8        0  500107608 sda
+   8        1     524288 sda1
+   8        2  499582976 sda2
+ 259        0  976762584 nvme0n1
+ 254        0  499582976 dm-0`
+
+const sampleSarD = `Linux 6.1.0 (host)  10/05/2024  _x86_64_  (4 CPU)
+
+12:00:00          DEV       tps     rkB/s     wkB/s   areq-sz    aqu-sz     await     svctm     %util
+12:00:01          sda      1.00      0.00      4.00      4.00      0.01      5.00      1.00      0.10
+12:00:02          sda      8.00     32.00    256.00     36.00      0.50     45.00      6.00     50.00
+Average:          sda      4.50     16.00    130.00     32.50      0.25     30.00      4.00     25.00`
+
+func TestProcPartitionsColumnQuestionsCoversAllColumns(t *testing.T) {
+	c := CapturedCommand{Cmd: "cat /proc/partitions", Output: sampleProcPartitions}
+	qs := procPartitionsColumnQuestions(SystemInfo{}, c)
+	wantColumns := []string{"major", "minor", "#blocks", "name"}
+	if len(qs) != len(wantColumns) {
+		t.Fatalf("expected %d questions, got %d", len(wantColumns), len(qs))
+	}
+	for _, col := range wantColumns {
+		found := false
+		for _, q := range qs {
+			if strings.Contains(q.Stem, "`"+col+"`") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("procPartitionsColumnQuestions missing %q", col)
+		}
+	}
+}
+
+func TestProcPartitionsQuestionsRejectsUnrelatedOutput(t *testing.T) {
+	c := CapturedCommand{Cmd: "cat /proc/cpuinfo", Output: "processor   : 0\nvendor_id : GenuineIntel"}
+	if qs := procPartitionsQuestions(SystemInfo{}, c); qs != nil {
+		t.Errorf("expected nil for non-/proc/partitions output, got %d", len(qs))
+	}
+}
+
+func TestSarDColumnQuestionsCoversObservedColumns(t *testing.T) {
+	c := CapturedCommand{Cmd: "sar -d 1 3", Output: sampleSarD}
+	qs := sarDColumnQuestions(SystemInfo{}, c)
+	if len(qs) == 0 {
+		t.Fatal("expected questions for sar -d output")
+	}
+	wantColumns := []string{"DEV", "tps", "rkB/s", "wkB/s", "areq-sz", "aqu-sz", "await", "svctm", "%util"}
+	for _, col := range wantColumns {
+		found := false
+		for _, q := range qs {
+			if strings.Contains(q.Stem, "`"+col+"`") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("sarDColumnQuestions missing %q column question", col)
+		}
+	}
+}
+
+func TestSarDQuestionsRejectsSarWOutput(t *testing.T) {
+	// `sar -W` has a different header — must not match sar -d.
+	c := CapturedCommand{Cmd: "sar -W 1 3", Output: "12:00:00     pswpin/s pswpout/s\n12:00:01         0.00      0.00"}
+	if qs := sarDQuestions(SystemInfo{}, c); qs != nil {
+		t.Errorf("expected nil for sar -W output, got %d", len(qs))
+	}
+}
+
+func TestDiskExtractorsRouteVariantCommands(t *testing.T) {
+	cases := []struct {
+		cmd     string
+		output  string
+		wantSub string
+	}{
+		{"cat /proc/partitions", sampleProcPartitions, "/proc/partitions"},
+		{"sar -d 1 3", sampleSarD, "sar -d"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.cmd, func(t *testing.T) {
+			qs := extractQuestions(diskInvestigation, SystemInfo{}, CapturedCommand{Cmd: tc.cmd, Output: tc.output})
+			if len(qs) == 0 {
+				t.Fatalf("expected questions for %q", tc.cmd)
+			}
+			found := false
+			for _, q := range qs {
+				if strings.Contains(q.Stem, tc.wantSub) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("no question containing %q for %q", tc.wantSub, tc.cmd)
+			}
+		})
+	}
+}
+
+func TestDiskDeviceVariantsDispatch(t *testing.T) {
+	combined := combineVariantQuestions(diskDeviceVariants())
+	// lsblk output → lsblk column questions
+	lsblkOut := "NAME  MAJ:MIN RM   SIZE RO TYPE MOUNTPOINTS\nsda     8:0    0 465.8G  0 disk\nsda1    8:1    0   512M  0 part /boot/efi"
+	qs := combined(SystemInfo{}, CapturedCommand{Cmd: "lsblk", Output: lsblkOut})
+	if len(qs) == 0 {
+		t.Fatal("expected questions for lsblk via device variants")
+	}
+	// /proc/partitions output → proc-partitions column questions
+	qs = combined(SystemInfo{}, CapturedCommand{Cmd: "cat /proc/partitions", Output: sampleProcPartitions})
+	if len(qs) == 0 {
+		t.Fatal("expected questions for /proc/partitions via device variants")
+	}
+	gotProc := false
+	for _, q := range qs {
+		if strings.Contains(q.Stem, "/proc/partitions") {
+			gotProc = true
+			break
+		}
+	}
+	if !gotProc {
+		t.Errorf("expected procPartitions-style question; got %v", stems(qs))
+	}
+}

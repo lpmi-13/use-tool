@@ -23,17 +23,21 @@ var networkInvestigation = &Investigation{
 // ----- Guide steps -----
 
 func networkSteps(si SystemInfo) []GuideStep {
+	interfaceVariants := networkInterfaceVariants()
+	interfacePick := pickStepVariant(si, interfaceVariants)
+
+	tcpVariants := networkTCPVariants()
+	tcpPick := pickStepVariant(si, tcpVariants)
+
 	return []GuideStep{
 		{
 			Name:          "interfaces",
 			Intro:         "Step 1: orient yourself to the interfaces and their cumulative counters.",
-			Suggested:     "ip -s link",
-			QuestionsFn:   ipLinkColumnQuestions,
+			Suggested:     interfacePick.Cmd,
+			QuestionsFn:   combineVariantQuestions(interfaceVariants),
 			QuestionCount: 3,
 			AcceptAny:     true,
-			Teaching: "Each interface lists RX and TX byte/packet/error/dropped counters.\n" +
-				"These are cumulative since boot — useful for 'has anything ever been\n" +
-				"wrong here' but not for 'is it happening now'. Use sar -n EDEV for rates.",
+			Teaching:      interfacePick.Teaching,
 		},
 		{
 			Name:          "throughput",
@@ -67,13 +71,10 @@ func networkSteps(si SystemInfo) []GuideStep {
 		{
 			Name:          "tcp",
 			Intro:         "Step 4: protocol-level signals — TCP retransmits and listen overflows.",
-			Suggested:     "cat /proc/net/snmp /proc/net/netstat",
-			QuestionsFn:   catNetColumnQuestions,
+			Suggested:     tcpPick.Cmd,
+			QuestionsFn:   combineVariantQuestions(tcpVariants),
 			QuestionCount: 3,
-			Teaching: "RetransSegs / OutSegs gives the retransmit ratio. Healthy is < 0.5%.\n" +
-				"ListenOverflows in TcpExt: counts SYNs the kernel dropped because the\n" +
-				"application's listen queue was full — that's an application-side\n" +
-				"bottleneck, not network loss.",
+			Teaching:      tcpPick.Teaching,
 		},
 		{
 			Name:          "sockets",
@@ -97,6 +98,57 @@ func networkSteps(si SystemInfo) []GuideStep {
 			EmptyOutputMessage: "No matching link or NIC errors found.",
 			Teaching: "Repeated link-up/link-down sequences mean a flapping cable, transceiver,\n" +
 				"or peer port. NIC driver errors point at hardware or firmware faults.",
+		},
+	}
+}
+
+// networkInterfaceVariants is the pool for the interfaces step. Both
+// commands expose cumulative per-interface counters; their output formats
+// differ enough that each carries its own question pool.
+func networkInterfaceVariants() []stepVariant {
+	return []stepVariant{
+		{
+			Cmd:         "ip -s link",
+			QuestionsFn: ipLinkColumnQuestions,
+			Teaching: "Each interface lists RX and TX byte/packet/error/dropped counters.\n" +
+				"These are cumulative since boot — useful for 'has anything ever been\n" +
+				"wrong here' but not for 'is it happening now'. Use sar -n EDEV for rates.",
+		},
+		{
+			Cmd:         "cat /proc/net/dev",
+			QuestionsFn: procNetDevColumnQuestions,
+			Teaching: "`/proc/net/dev` is what every interface tool (ip, sar, netstat -i)\n" +
+				"reads under the hood. Format is positional, not labelled: after the\n" +
+				"interface name, 8 RX fields (bytes, packets, errs, drop, fifo, frame,\n" +
+				"compressed, multicast) followed by 8 TX fields in the same shape.\n" +
+				"Cumulative since boot — diff two reads with a known interval for a\n" +
+				"rate, or just use `sar -n DEV`.",
+		},
+	}
+}
+
+// networkTCPVariants is the pool for the TCP-signals step. The default
+// concatenates /proc/net/snmp and /proc/net/netstat; `netstat -s` is the
+// human-readable equivalent and is ubiquitous even on hosts without
+// sysstat installed.
+func networkTCPVariants() []stepVariant {
+	return []stepVariant{
+		{
+			Cmd:         "cat /proc/net/snmp /proc/net/netstat",
+			QuestionsFn: catNetColumnQuestions,
+			Teaching: "RetransSegs / OutSegs gives the retransmit ratio. Healthy is < 0.5%.\n" +
+				"ListenOverflows in TcpExt: counts SYNs the kernel dropped because the\n" +
+				"application's listen queue was full — that's an application-side\n" +
+				"bottleneck, not network loss.",
+		},
+		{
+			Cmd:         "netstat -s",
+			QuestionsFn: netstatSColumnQuestions,
+			Teaching: "`netstat -s` is the human-readable view of /proc/net/snmp and\n" +
+				"/proc/net/netstat. Look for the Tcp section's `segments retransmitted`\n" +
+				"vs `segments sent out` (the retransmit ratio) and TcpExt entries like\n" +
+				"`times the listen queue of a socket overflowed` (the listen-overflow\n" +
+				"count). Same signals, different presentation.",
 		},
 	}
 }
@@ -1000,6 +1052,109 @@ func netstatQuestions(si SystemInfo, c CapturedCommand) []Question {
 			"The application is closing connections without a FIN",
 		},
 	}}
+}
+
+// netstatSColumnQuestions returns the pool of phrase-keyed questions for
+// `netstat -s` output. Unlike column-headed tables, netstat -s is a
+// section-and-prose format, so we gate each question on a phrase appearing
+// in the captured output rather than on a column name.
+func netstatSColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
+	low := strings.ToLower(c.Output)
+	if !strings.Contains(low, "tcp") || !strings.Contains(low, "segments") {
+		return nil
+	}
+	var qs []Question
+	for _, pick := range netstatSPicks {
+		if !strings.Contains(low, pick.MarkerLower) {
+			continue
+		}
+		qs = append(qs, Question{
+			Stem:        pick.Stem,
+			Correct:     pick.Correct,
+			Distractors: pick.Distractors,
+		})
+	}
+	return qs
+}
+
+type phraseQuestionPick struct {
+	MarkerLower string
+	Stem        string
+	Correct     string
+	Distractors []string
+}
+
+var netstatSPicks = []phraseQuestionPick{
+	{
+		MarkerLower: "segments retransmitted",
+		Stem:        "In `netstat -s` output, a high count of `segments retransmitted` relative to `segments sent` indicates:",
+		Correct:     "End-to-end packet loss — somewhere between this host and the peer, segments are being dropped",
+		Distractors: []string{
+			"The local TCP stack is misconfigured",
+			"Excessive retransmit timeout firing due to a clock drift",
+			"The application is closing connections without a FIN",
+		},
+	},
+	{
+		MarkerLower: "active connection openings",
+		Stem:        "In `netstat -s`, what does the Tcp section's `active connection openings` count?",
+		Correct:     "TCP connections initiated outward from this host (i.e. local `connect()` calls that completed the handshake)",
+		Distractors: []string{
+			"TCP listeners currently bound on this host",
+			"Inbound TCP connections accepted by local servers",
+			"TCP connections that are currently in ESTABLISHED state",
+		},
+	},
+	{
+		MarkerLower: "passive connection openings",
+		Stem:        "In `netstat -s`, what does the Tcp section's `passive connection openings` count?",
+		Correct:     "Inbound TCP connections accepted by local listening sockets",
+		Distractors: []string{
+			"Outbound TCP connections initiated from this host",
+			"TCP listeners closed without serving any client",
+			"TCP connections opened in the background by retransmit timers",
+		},
+	},
+	{
+		MarkerLower: "failed connection attempts",
+		Stem:        "In `netstat -s`, what does the Tcp section's `failed connection attempts` count?",
+		Correct:     "TCP connection attempts that aborted before reaching ESTABLISHED — e.g. SYN with no SYN-ACK, or RST during handshake",
+		Distractors: []string{
+			"Connections that succeeded but failed authentication at the application layer",
+			"Connections closed by the peer immediately after handshake",
+			"DNS lookups that failed before a connection could be opened",
+		},
+	},
+	{
+		MarkerLower: "connection resets received",
+		Stem:        "In `netstat -s`, what does the Tcp section's `connection resets received` count?",
+		Correct:     "TCP connections this host received an RST for, i.e. the peer aborted the connection",
+		Distractors: []string{
+			"RSTs this host sent because the peer was unreachable",
+			"Connections this host reset because the application crashed",
+			"Connections that timed out while waiting for the peer to ACK",
+		},
+	},
+	{
+		MarkerLower: "times the listen queue",
+		Stem:        "In `netstat -s` TcpExt, what does the line `times the listen queue of a socket overflowed` measure?",
+		Correct:     "How many SYNs the kernel dropped because the application's accept queue (Send-Q in `ss -lnt`) was full — an application-side bottleneck, not network loss",
+		Distractors: []string{
+			"How many times the NIC ring buffer overflowed",
+			"How many TCP receive windows overflowed on established connections",
+			"How many listen sockets had to be re-bound after a port collision",
+		},
+	},
+	{
+		MarkerLower: "resets sent",
+		Stem:        "In `netstat -s`, what does the Tcp section's `resets sent` count?",
+		Correct:     "TCP RST segments this host transmitted, including kernel-generated RSTs to non-listening ports",
+		Distractors: []string{
+			"TCP connections reset by the peer and received here",
+			"Application-level reconnect attempts",
+			"Outbound packets dropped by qdisc",
+		},
+	},
 }
 
 func networkDmesgQuestions(si SystemInfo, c CapturedCommand) []Question {

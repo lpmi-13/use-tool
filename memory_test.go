@@ -732,3 +732,172 @@ func TestPSRSSQuestionsUseObservedTopProcess(t *testing.T) {
 		}
 	}
 }
+
+const sampleSarW = `Linux 6.1.0 (host)  10/05/2024  _x86_64_  (4 CPU)
+
+12:00:00     pswpin/s pswpout/s
+12:00:01         0.00      0.00
+12:00:02         0.00      1.50
+12:00:03         0.00      0.00
+Average:         0.00      0.50`
+
+const sampleTopMem = `top - 14:32:01 up  3:14,  2 users,  load average: 0.50, 0.30, 0.20
+Tasks: 281 total,   1 running, 280 sleeping,   0 stopped,   0 zombie
+%Cpu(s):  3.5 us,  1.2 sy,  0.0 ni, 95.1 id,  0.2 wa,  0.0 hi,  0.0 si,  0.0 st
+MiB Mem :  15978.5 total,   2456.2 free,  10234.5 used,   3287.8 buff/cache
+MiB Swap:   2048.0 total,   2048.0 free,      0.0 used.   3987.6 avail Mem
+
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+   1234 alice     20   0 5634892 1.234g  56234 S   0.0   7.9   3:01.23 firefox
+   5678 bob       20   0  892348 234567  34567 S   0.0   1.5   0:23.45 chrome`
+
+func TestFreeColumnQuestionsCoversObservedColumns(t *testing.T) {
+	c := CapturedCommand{Cmd: "free -h", Output: sampleFreeH}
+	qs := freeColumnQuestions(SystemInfo{}, c)
+	if len(qs) == 0 {
+		t.Fatal("expected questions for free -h output")
+	}
+	want := []string{"total", "used", "free", "shared", "buff/cache", "available"}
+	for _, col := range want {
+		found := false
+		for _, q := range qs {
+			if strings.Contains(q.Stem, "`"+col+"`") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("freeColumnQuestions missing %q column question", col)
+		}
+	}
+}
+
+func TestFreeColumnQuestionsRejectsUnrelatedOutput(t *testing.T) {
+	c := CapturedCommand{Cmd: "echo", Output: "hello world"}
+	if qs := freeColumnQuestions(SystemInfo{}, c); qs != nil {
+		t.Errorf("expected nil for unrelated output, got %d", len(qs))
+	}
+}
+
+func TestSarWColumnQuestionsCoversBothColumns(t *testing.T) {
+	c := CapturedCommand{Cmd: "sar -W 1 3", Output: sampleSarW}
+	qs := sarWColumnQuestions(SystemInfo{}, c)
+	if len(qs) != 2 {
+		t.Fatalf("expected 2 questions (pswpin/s and pswpout/s), got %d", len(qs))
+	}
+	wantColumns := []string{"pswpin/s", "pswpout/s"}
+	for _, col := range wantColumns {
+		found := false
+		for _, q := range qs {
+			if strings.Contains(q.Stem, col) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("sarWColumnQuestions missing %q column question", col)
+		}
+	}
+}
+
+func TestSarWQuestionsRejectsUnrelatedOutput(t *testing.T) {
+	// `sar -d` output also has columns but no pswpin/s — must not match.
+	c := CapturedCommand{Cmd: "sar -d 1 3", Output: "DEV tps rkB/s wkB/s areq-sz aqu-sz await svctm %util"}
+	if qs := sarWQuestions(SystemInfo{}, c); qs != nil {
+		t.Errorf("expected nil for non-sar-W output, got %d", len(qs))
+	}
+}
+
+func TestTopMemColumnQuestionsCoversKeyColumns(t *testing.T) {
+	c := CapturedCommand{Cmd: "top -bn1 -o %MEM", Output: sampleTopMem}
+	qs := topMemColumnQuestions(SystemInfo{}, c)
+	if len(qs) == 0 {
+		t.Fatal("expected questions for top output")
+	}
+	wantColumns := []string{"VIRT", "RES", "SHR", "%MEM"}
+	for _, col := range wantColumns {
+		found := false
+		for _, q := range qs {
+			if strings.Contains(q.Stem, "`"+col+"`") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("topMemColumnQuestions missing %q column question", col)
+		}
+	}
+}
+
+func TestTopMemQuestionsRejectsPSOutput(t *testing.T) {
+	// `ps` output has "RSS" not "RES" and lacks the top header. Must not match.
+	c := CapturedCommand{Cmd: "ps -eo pid,rss,comm", Output: "  PID   RSS COMMAND\n 1234 5678 firefox"}
+	if qs := topMemQuestions(SystemInfo{}, c); qs != nil {
+		t.Errorf("expected nil for ps output, got %d", len(qs))
+	}
+}
+
+func TestPsRssQuestionsRejectsTopOutput(t *testing.T) {
+	// Inverse: top output should not route to psRss questions.
+	c := CapturedCommand{Cmd: "top -bn1", Output: sampleTopMem}
+	if qs := psRssQuestions(SystemInfo{}, c); qs != nil {
+		t.Errorf("expected psRssQuestions nil for top output, got %d", len(qs))
+	}
+	if qs := psRssColumnQuestions(SystemInfo{}, c); qs != nil {
+		t.Errorf("expected psRssColumnQuestions nil for top output, got %d", len(qs))
+	}
+}
+
+func TestMemoryExtractorsRouteVariantCommands(t *testing.T) {
+	cases := []struct {
+		cmd     string
+		output  string
+		wantSub string
+	}{
+		{"free -h", sampleFreeH, "available"},
+		{"sar -W 1 3", sampleSarW, "sar -W"},
+		{"top -bn1 -o %MEM", sampleTopMem, "top"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.cmd, func(t *testing.T) {
+			qs := extractQuestions(memoryInvestigation, SystemInfo{}, CapturedCommand{Cmd: tc.cmd, Output: tc.output})
+			if len(qs) == 0 {
+				t.Fatalf("expected questions for %q", tc.cmd)
+			}
+			found := false
+			for _, q := range qs {
+				if strings.Contains(q.Stem, tc.wantSub) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("no question containing %q for %q", tc.wantSub, tc.cmd)
+			}
+		})
+	}
+}
+
+func TestMemoryBaselineVariantsDispatch(t *testing.T) {
+	combined := combineVariantQuestions(memoryBaselineVariants())
+	// meminfo output → meminfo questions
+	qs := combined(SystemInfo{}, CapturedCommand{Cmd: "cat /proc/meminfo", Output: sampleMeminfo})
+	if len(qs) == 0 {
+		t.Fatal("expected meminfo questions via baseline variants")
+	}
+	// free -h output → free column questions
+	qs = combined(SystemInfo{}, CapturedCommand{Cmd: "free -h", Output: sampleFreeH})
+	if len(qs) == 0 {
+		t.Fatal("expected free questions via baseline variants")
+	}
+	gotFreeCol := false
+	for _, q := range qs {
+		if strings.Contains(q.Stem, "buff/cache") || strings.Contains(q.Stem, "`available`") {
+			gotFreeCol = true
+			break
+		}
+	}
+	if !gotFreeCol {
+		t.Errorf("expected free-column-style question for free output; got %v", stems(qs))
+	}
+}

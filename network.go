@@ -1164,8 +1164,9 @@ func networkDmesgQuestions(si SystemInfo, c CapturedCommand) []Question {
 		!strings.Contains(low, "nic link") {
 		return nil
 	}
+	tool := kernelLogQuestionTool(c.Cmd)
 	return []Question{{
-		Stem:    "Repeated `Link is Down` followed by `Link is Up` for the same interface in dmesg suggests:",
+		Stem:    fmt.Sprintf("Repeated `Link is Down` followed by `Link is Up` for the same interface in `%s` output suggests:", tool),
 		Correct: "A flapping cable, transceiver, or peer port — the physical layer is intermittently disconnecting",
 		Distractors: []string{
 			"The kernel is rotating IP addresses for that interface",

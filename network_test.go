@@ -283,6 +283,25 @@ func TestNetworkDmesgQuestionsSkipsBenign(t *testing.T) {
 	}
 }
 
+func TestNetworkExtractQuestionsAcceptsJournalctl(t *testing.T) {
+	cmd := "journalctl -k -b --no-pager | grep -iE 'link is|carrier' | tail"
+	qs := extractQuestions(networkInvestigation, SystemInfo{}, CapturedCommand{
+		Cmd:    cmd,
+		Output: sampleDmesgLinkFlap,
+	})
+	if len(qs) == 0 {
+		t.Fatal("expected journalctl kernel log output to generate network dmesg questions")
+	}
+	for _, q := range qs {
+		if strings.Contains(q.Stem, "`dmesg`") {
+			t.Errorf("question should not mention dmesg when journalctl was captured: %q", q.Stem)
+		}
+		if !strings.Contains(q.Stem, "`"+cmd+"`") {
+			t.Errorf("expected question to mention the actual captured command, got %q", q.Stem)
+		}
+	}
+}
+
 func TestExtractDmesgNetKeywordsCounts(t *testing.T) {
 	caps := []CapturedCommand{{Cmd: "dmesg", Output: sampleDmesgLinkFlap}}
 	v, ok := extractDmesgNetKeywords(SystemInfo{}, caps)

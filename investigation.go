@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"math/rand"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -229,7 +230,7 @@ func extractQuestions(inv *Investigation, si SystemInfo, c CapturedCommand) []Qu
 			qs = append(qs, e.QuestionsFn(si, c)...)
 		}
 	}
-	return qs
+	return personalizeQuestions(qs, c.Cmd)
 }
 
 // baseCmd returns the first whitespace-separated token of a command line,
@@ -246,6 +247,25 @@ func baseCmd(cmd string) string {
 		base = fields[1]
 	}
 	return base
+}
+
+// personalizeQuestions rewrites the leading ``In `<base>...` `` reference in
+// each question stem so it shows the exact command the learner ran, rather
+// than the canonical form baked into the generator (e.g. `iostat -x`). We
+// only touch the first backticked reference and only when it begins with the
+// base command of actualCmd, so column names like `r/s` or `%util` are left
+// alone.
+func personalizeQuestions(qs []Question, actualCmd string) []Question {
+	base := baseCmd(actualCmd)
+	if base == "" || len(qs) == 0 {
+		return qs
+	}
+	re := regexp.MustCompile("`" + regexp.QuoteMeta(base) + `(\b[^` + "`" + `]*)?` + "`")
+	replacement := "`" + actualCmd + "`"
+	for i := range qs {
+		qs[i].Stem = re.ReplaceAllString(qs[i].Stem, replacement)
+	}
+	return qs
 }
 
 // pickUniqueDistractors selects up to `want` strings from `pool`, skipping

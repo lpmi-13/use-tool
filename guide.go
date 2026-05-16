@@ -96,7 +96,7 @@ func guideQuestions(si SystemInfo, step GuideStep, captured CapturedCommand) []Q
 	if step.QuestionsFn == nil {
 		return nil
 	}
-	return step.QuestionsFn(si, captured)
+	return personalizeQuestions(step.QuestionsFn(si, captured), captured.Cmd)
 }
 
 func chooseGuideQuestion(questions []Question) (Question, bool) {

@@ -272,15 +272,16 @@ func TestExtractDmesgCpuKeywordsAcceptsSudoAndPipelines(t *testing.T) {
 }
 
 func TestCPUExtractQuestionsAcceptsJournalctl(t *testing.T) {
+	cmd := "journalctl -k -b -p warning --no-pager -n 30"
 	qs := extractQuestions(cpuInvestigation, SystemInfo{}, CapturedCommand{
-		Cmd:    "journalctl -k -b -p warning --no-pager -n 30",
+		Cmd:    cmd,
 		Output: sampleDmesgWithMCE,
 	})
 	if len(qs) == 0 {
 		t.Fatal("expected journalctl kernel log output to generate CPU dmesg questions")
 	}
-	if !strings.Contains(qs[0].Stem, "`journalctl` output") {
-		t.Fatalf("expected question to mention journalctl output, got %q", qs[0].Stem)
+	if !strings.Contains(qs[0].Stem, "`"+cmd+"` output") {
+		t.Fatalf("expected question to mention the actual captured command, got %q", qs[0].Stem)
 	}
 	if strings.Contains(qs[0].Stem, "`dmesg` output") {
 		t.Fatalf("question should not mention dmesg when journalctl was captured: %q", qs[0].Stem)

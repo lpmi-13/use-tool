@@ -738,9 +738,10 @@ func diskDmesgQuestions(si SystemInfo, c CapturedCommand) []Question {
 		!strings.Contains(low, "ext4-fs error") {
 		return nil
 	}
+	tool := kernelLogQuestionTool(c.Cmd)
 	return []Question{
 		{
-			Stem:    "If `dmesg` shows `Remounting filesystem read-only`, what just happened and what's the immediate consequence for processes?",
+			Stem:    fmt.Sprintf("If `%s` shows `Remounting filesystem read-only`, what just happened and what's the immediate consequence for processes?", tool),
 			Correct: "The kernel hit unrecoverable I/O errors and remounted the filesystem read-only as a safety measure; subsequent writes will fail with EROFS",
 			Distractors: []string{
 				"An administrator enabled read-only mode; processes will pause until it's unset",
@@ -749,7 +750,7 @@ func diskDmesgQuestions(si SystemInfo, c CapturedCommand) []Question {
 			},
 		},
 		{
-			Stem:    "Recurring `I/O error` lines on a single device most strongly suggest:",
+			Stem:    fmt.Sprintf("In `%s` output, recurring `I/O error` lines on a single device most strongly suggest:", tool),
 			Correct: "Hardware degradation — the storage media or its connection is failing",
 			Distractors: []string{
 				"The kernel I/O scheduler is misconfigured",

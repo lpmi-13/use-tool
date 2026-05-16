@@ -324,6 +324,25 @@ func TestDiskDmesgQuestionsSkipsBenign(t *testing.T) {
 	}
 }
 
+func TestDiskExtractQuestionsAcceptsJournalctl(t *testing.T) {
+	cmd := "journalctl -k -b --no-pager | grep -iE 'i/o error|read-only' | tail"
+	qs := extractQuestions(diskInvestigation, SystemInfo{}, CapturedCommand{
+		Cmd:    cmd,
+		Output: sampleDmesgIOError,
+	})
+	if len(qs) == 0 {
+		t.Fatal("expected journalctl kernel log output to generate disk dmesg questions")
+	}
+	for _, q := range qs {
+		if strings.Contains(q.Stem, "`dmesg`") {
+			t.Errorf("question should not mention dmesg when journalctl was captured: %q", q.Stem)
+		}
+		if !strings.Contains(q.Stem, "`"+cmd+"`") {
+			t.Errorf("expected question to mention the actual captured command, got %q", q.Stem)
+		}
+	}
+}
+
 func TestLsblkQuestionsFires(t *testing.T) {
 	c := CapturedCommand{Cmd: "lsblk", Output: sampleLsblk}
 	qs := lsblkQuestions(SystemInfo{}, c)

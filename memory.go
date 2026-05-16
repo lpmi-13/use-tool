@@ -959,7 +959,7 @@ var psRSSQuestionPicks = []columnQuestionPick{
 	},
 	{
 		Column:  "RSS",
-		Correct: "Resident set size: memory currently resident in RAM for the process, reported in kilobytes by this ps format",
+		Correct: "Memory currently resident in RAM for the process, reported in kilobytes by this ps format",
 		Distractors: []string{
 			"Private memory only, excluding shared libraries",
 			"Total virtual address space reserved by the process",

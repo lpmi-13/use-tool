@@ -46,6 +46,7 @@ func networkSteps(si SystemInfo) []GuideStep {
 			Suggested:     "sar -n DEV 1 3",
 			QuestionsFn:   sarDevColumnQuestions,
 			QuestionCount: 3,
+			Filter:        filterNoiseInterfaces,
 			Teaching: "rxkB/s and txkB/s give the per-second receive/transmit rate.\n" +
 				"To convert to a percentage of link capacity, you need ethtool to learn\n" +
 				"the link speed. On VMs and containers, virtual interfaces often report\n" +
@@ -64,6 +65,7 @@ func networkSteps(si SystemInfo) []GuideStep {
 			Suggested:     "sar -n EDEV 1 3",
 			QuestionsFn:   sarEdevColumnQuestions,
 			QuestionCount: 3,
+			Filter:        filterNoiseInterfaces,
 			Teaching: "rxdrop/s > 0 means the kernel discarded incoming packets, usually\n" +
 				"because the NIC ring buffer or kernel queue was full. txdrop/s on the\n" +
 				"send side means the qdisc dropped packets. Either is real saturation\n" +
@@ -157,17 +159,19 @@ func isNoiseInterface(name string) bool {
 	return false
 }
 
-// filterNoiseInterfaces drops loopback and container/virtual interface stanzas
-// from the interfaces-step output so the learner sees only USE-relevant
-// uplinks. It dispatches on the captured command's format and, as a safety
-// net, returns the original output unchanged if filtering would hide every
-// interface (e.g. a host with only `lo` and veths).
+// filterNoiseInterfaces drops loopback and container/virtual interface rows or
+// stanzas from network guide output so the learner sees only USE-relevant
+// uplinks. It dispatches on the captured command's format and, as a safety net,
+// returns the original output unchanged if filtering would hide every interface
+// (e.g. a host with only `lo` and veths).
 func filterNoiseInterfaces(c CapturedCommand) string {
 	switch baseCmd(c.Cmd) {
 	case "ip":
 		return filterIPLinkOutput(c.Output)
 	case "cat":
 		return filterProcNetDevOutput(c.Output)
+	case "sar":
+		return filterSarNetworkOutput(c.Output)
 	default:
 		return c.Output
 	}
@@ -217,6 +221,61 @@ func filterProcNetDevOutput(output string) string {
 		return output
 	}
 	return strings.Join(out, "\n")
+}
+
+func filterSarNetworkOutput(output string) string {
+	lines := strings.Split(output, "\n")
+	out := make([]string, 0, len(lines))
+	ifaceField := -1
+	sawIface, keptIface := false, false
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			ifaceField = -1
+			out = append(out, line)
+			continue
+		}
+		if idx := sarIfaceHeaderIndex(fields); idx >= 0 {
+			ifaceField = idx
+			out = append(out, line)
+			continue
+		}
+		if !isSarTableRowPrefix(fields[0]) || ifaceField < 0 || len(fields) <= ifaceField {
+			out = append(out, line)
+			continue
+		}
+
+		iface := fields[ifaceField]
+		sawIface = true
+		if isNoiseInterface(iface) {
+			continue
+		}
+		keptIface = true
+		out = append(out, line)
+	}
+	if sawIface && !keptIface {
+		return output
+	}
+	return strings.Join(out, "\n")
+}
+
+func sarIfaceHeaderIndex(fields []string) int {
+	for i, f := range fields {
+		if f != "IFACE" {
+			continue
+		}
+		if i == 0 {
+			return -1
+		}
+		if isSarTableRowPrefix(fields[0]) {
+			return i
+		}
+	}
+	return -1
+}
+
+func isSarTableRowPrefix(s string) bool {
+	return isTimestamp(s) || s == "Average:"
 }
 
 // networkTCPVariants is the pool for the TCP-signals step. The default

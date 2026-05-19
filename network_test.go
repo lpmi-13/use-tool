@@ -343,6 +343,68 @@ func TestFilterNoiseInterfacesProcNetDev(t *testing.T) {
 	}
 }
 
+const sampleSarDevWithVeth = sampleSarDev + `
+14:00:04       veth1a2b3c      9.00      8.00      7.00      6.00      0.00      0.00      0.00      0.00
+Average:       veth1a2b3c      9.00      8.00      7.00      6.00      0.00      0.00      0.00      0.00`
+
+func TestFilterNoiseInterfacesSarDev(t *testing.T) {
+	got := filterNoiseInterfaces(CapturedCommand{Cmd: "sar -n DEV 1 2", Output: sampleSarDevWithVeth})
+	if !strings.Contains(got, "IFACE") || !strings.Contains(got, "rxkB/s") {
+		t.Error("expected sar DEV header to be kept")
+	}
+	if !strings.Contains(got, "         eth0") {
+		t.Error("expected eth0 rows to be kept")
+	}
+	for _, drop := range []string{"           lo", "veth1a2b3c"} {
+		if strings.Contains(got, drop) {
+			t.Errorf("expected %q rows to be dropped", strings.TrimSpace(drop))
+		}
+	}
+}
+
+const sampleSarEdevWithVeth = sampleSarEdev + `
+14:00:04       veth1a2b3c      0.00      0.00      0.00     44.00      0.00      0.00      0.00      0.00      0.00
+Average:       veth1a2b3c      0.00      0.00      0.00     44.00      0.00      0.00      0.00      0.00      0.00`
+
+func TestFilterNoiseInterfacesSarEdev(t *testing.T) {
+	got := filterNoiseInterfaces(CapturedCommand{Cmd: "sar -n EDEV 1 2", Output: sampleSarEdevWithVeth})
+	if !strings.Contains(got, "IFACE") || !strings.Contains(got, "rxdrop/s") {
+		t.Error("expected sar EDEV header to be kept")
+	}
+	if !strings.Contains(got, "         eth0") {
+		t.Error("expected eth0 rows to be kept")
+	}
+	for _, drop := range []string{"           lo", "veth1a2b3c"} {
+		if strings.Contains(got, drop) {
+			t.Errorf("expected %q rows to be dropped", strings.TrimSpace(drop))
+		}
+	}
+}
+
+func TestFilterNoiseInterfacesSarKeepsAllWhenOnlyNoise(t *testing.T) {
+	onlyNoise := `Linux 6.1.0 (host)  10/05/2024  _x86_64_  (4 CPU)
+
+14:00:01        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s
+14:00:02           lo      0.00      0.00      0.00      0.00
+14:00:02       veth1a2b3c      9.00      8.00      7.00      6.00`
+	got := filterNoiseInterfaces(CapturedCommand{Cmd: "sar -n DEV 1 2", Output: onlyNoise})
+	if got != onlyNoise {
+		t.Errorf("expected original sar output when filtering would hide every interface, got:\n%s", got)
+	}
+}
+
+func TestNetworkSarStepsUseNoiseFilter(t *testing.T) {
+	for _, name := range []string{"throughput", "drops"} {
+		step, ok := findGuideStep(networkSteps(SystemInfo{}), name)
+		if !ok {
+			t.Fatalf("expected %s guide step", name)
+		}
+		if step.Filter == nil {
+			t.Fatalf("expected %s guide step to filter noisy interfaces", name)
+		}
+	}
+}
+
 func TestFilterNoiseInterfacesKeepsAllWhenOnlyNoise(t *testing.T) {
 	onlyNoise := `1: lo: <LOOPBACK,UP> mtu 65536 qdisc noqueue state UNKNOWN
     RX:  bytes  packets

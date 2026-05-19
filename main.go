@@ -153,9 +153,17 @@ func fileExists(path string) bool {
 }
 
 func runCommand(cmdStr string) CapturedCommand {
+	return runCommandStreaming(cmdStr, os.Stdout)
+}
+
+// runCommandStreaming runs cmdStr, capturing stdout+stderr while mirroring
+// stdout to liveOut. Pass os.Stdout for normal live display, or io.Discard
+// when the caller intends to post-process the output before showing it.
+// Stderr always streams to os.Stderr so genuine errors surface immediately.
+func runCommandStreaming(cmdStr string, liveOut io.Writer) CapturedCommand {
 	cmd := exec.Command("sh", "-c", cmdStr)
 	buf := &cappedBuffer{limit: maxCaptureBytes}
-	cmd.Stdout = io.MultiWriter(os.Stdout, buf)
+	cmd.Stdout = io.MultiWriter(liveOut, buf)
 	cmd.Stderr = io.MultiWriter(os.Stderr, buf)
 	cmd.Stdin = os.Stdin
 	failed := false
@@ -198,7 +206,20 @@ func runCommand(cmdStr string) CapturedCommand {
 }
 
 func (s *Session) runAndCapture(cmdStr string) CapturedCommand {
-	c := runCommand(cmdStr)
+	return s.runAndCaptureFiltered(cmdStr, nil)
+}
+
+// runAndCaptureFiltered runs cmdStr and, when filter is non-nil, rewrites the
+// captured output before it is shown or stored. To avoid the raw output
+// streaming past first, the command runs without live stdout and the filtered
+// result is printed afterward.
+func (s *Session) runAndCaptureFiltered(cmdStr string, filter func(CapturedCommand) string) CapturedCommand {
+	var c CapturedCommand
+	if filter == nil {
+		c = runCommand(cmdStr)
+	} else {
+		c = runCommandStreaming(cmdStr, io.Discard)
+	}
 	if c.Failed {
 		if isDmesgPermissionFailure(c.Output) || isJournalctlFailure(c.Cmd, c.Output) {
 			s.kernelLogBlocks++
@@ -211,6 +232,13 @@ func (s *Session) runAndCapture(cmdStr string) CapturedCommand {
 			}
 		}
 		return c
+	}
+	if filter != nil {
+		c.Output = filter(c)
+		fmt.Print(c.Output)
+		if c.Output != "" && !strings.HasSuffix(c.Output, "\n") {
+			fmt.Println()
+		}
 	}
 	s.appendCaptured(c)
 	return c

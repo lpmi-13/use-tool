@@ -33,6 +33,12 @@ type GuideStep struct {
 	AcceptAny          bool
 	EmptyOutputMessage string
 	Teaching           string
+	// Filter, if set, rewrites the captured command output before it is
+	// shown to the learner and stored for questions. Used to drop noise
+	// (e.g. loopback and container veth interfaces) so the step focuses on
+	// USE-relevant data. The command itself is left untouched, so question
+	// stems still reference the clean canonical command.
+	Filter func(CapturedCommand) string
 }
 
 type Extractor struct {

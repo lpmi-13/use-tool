@@ -302,6 +302,67 @@ func TestNetworkExtractQuestionsAcceptsJournalctl(t *testing.T) {
 	}
 }
 
+const sampleIpLinkWithVeth = sampleIpLink + `
+3: veth1a2b3c@if6: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT
+    link/ether aa:bb:cc:dd:ee:ff brd ff:ff:ff:ff:ff:ff
+    RX:  bytes  packets  errors  dropped overrun mcast
+          500       4       0       0       0       0
+    TX:  bytes  packets  errors  dropped carrier collsns
+          600       5       0       0       0       0`
+
+func TestFilterNoiseInterfacesIPLink(t *testing.T) {
+	got := filterNoiseInterfaces(CapturedCommand{Cmd: "ip -s link", Output: sampleIpLinkWithVeth})
+	if !strings.Contains(got, "eth0:") {
+		t.Error("expected eth0 stanza to be kept")
+	}
+	if strings.Contains(got, "lo:") {
+		t.Error("expected loopback stanza to be dropped")
+	}
+	if strings.Contains(got, "veth1a2b3c") {
+		t.Error("expected veth stanza to be dropped")
+	}
+	// Real interface keeps its full stanza, including the RX/TX rows the
+	// column questions key off.
+	if !strings.Contains(got, "RX:") || !strings.Contains(got, "TX:") {
+		t.Error("expected kept stanza to retain its RX/TX rows")
+	}
+}
+
+func TestFilterNoiseInterfacesProcNetDev(t *testing.T) {
+	got := filterNoiseInterfaces(CapturedCommand{Cmd: "cat /proc/net/dev", Output: sampleProcNetDev})
+	if !strings.Contains(got, "eth0:") {
+		t.Error("expected eth0 row to be kept")
+	}
+	if !strings.Contains(got, "Inter-|") || !strings.Contains(got, "face |") {
+		t.Error("expected the two header rows to be kept")
+	}
+	for _, drop := range []string{"\n    lo:", "docker0:"} {
+		if strings.Contains(got, drop) {
+			t.Errorf("expected %q to be dropped", strings.TrimSpace(drop))
+		}
+	}
+}
+
+func TestFilterNoiseInterfacesKeepsAllWhenOnlyNoise(t *testing.T) {
+	onlyNoise := `1: lo: <LOOPBACK,UP> mtu 65536 qdisc noqueue state UNKNOWN
+    RX:  bytes  packets
+        10       1
+2: docker0: <BROADCAST,MULTICAST,UP> mtu 1500 qdisc noqueue state UP
+    RX:  bytes  packets
+        20       2`
+	got := filterNoiseInterfaces(CapturedCommand{Cmd: "ip -s link", Output: onlyNoise})
+	if got != onlyNoise {
+		t.Errorf("expected original output when filtering would hide every interface, got:\n%s", got)
+	}
+}
+
+func TestFilterNoiseInterfacesIgnoresOtherCommands(t *testing.T) {
+	c := CapturedCommand{Cmd: "ss -s", Output: sampleSsSummary}
+	if got := filterNoiseInterfaces(c); got != sampleSsSummary {
+		t.Error("expected unrecognized commands to pass through unchanged")
+	}
+}
+
 func TestExtractDmesgNetKeywordsCounts(t *testing.T) {
 	caps := []CapturedCommand{{Cmd: "dmesg", Output: sampleDmesgLinkFlap}}
 	v, ok := extractDmesgNetKeywords(SystemInfo{}, caps)

@@ -37,6 +37,7 @@ func networkSteps(si SystemInfo) []GuideStep {
 			QuestionsFn:   combineVariantQuestions(interfaceVariants),
 			QuestionCount: 3,
 			AcceptAny:     true,
+			Filter:        filterNoiseInterfaces,
 			Teaching:      interfacePick.Teaching,
 		},
 		{
@@ -125,6 +126,97 @@ func networkInterfaceVariants() []stepVariant {
 				"rate, or just use `sar -n DEV`.",
 		},
 	}
+}
+
+// ipLinkHeaderRe matches the per-interface header line `ip -s link` prints,
+// e.g. `2: eth0: <BROADCAST,...` or `7: veth1a2b@if6: <...`. The captured
+// group is the interface name (without the `@ifN` peer suffix).
+var ipLinkHeaderRe = regexp.MustCompile(`^\d+:\s+([^:@\s]+)`)
+
+// noiseInterfacePrefixes are interface-name prefixes that belong to container,
+// virtualization, and overlay subsystems rather than the physical/uplink path
+// a USE walkthrough cares about. `lo` is handled separately as an exact match.
+var noiseInterfacePrefixes = []string{
+	"veth", "docker", "br-", "virbr", "vnet",
+	"cni", "flannel", "cali", "cilium", "kube",
+}
+
+func isNoiseInterface(name string) bool {
+	name = strings.TrimSpace(name)
+	if i := strings.IndexByte(name, '@'); i >= 0 {
+		name = name[:i]
+	}
+	if name == "lo" {
+		return true
+	}
+	for _, p := range noiseInterfacePrefixes {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// filterNoiseInterfaces drops loopback and container/virtual interface stanzas
+// from the interfaces-step output so the learner sees only USE-relevant
+// uplinks. It dispatches on the captured command's format and, as a safety
+// net, returns the original output unchanged if filtering would hide every
+// interface (e.g. a host with only `lo` and veths).
+func filterNoiseInterfaces(c CapturedCommand) string {
+	switch baseCmd(c.Cmd) {
+	case "ip":
+		return filterIPLinkOutput(c.Output)
+	case "cat":
+		return filterProcNetDevOutput(c.Output)
+	default:
+		return c.Output
+	}
+}
+
+func filterIPLinkOutput(output string) string {
+	lines := strings.Split(output, "\n")
+	out := make([]string, 0, len(lines))
+	keep := true
+	sawIface, keptIface := false, false
+	for _, line := range lines {
+		if m := ipLinkHeaderRe.FindStringSubmatch(line); m != nil {
+			sawIface = true
+			keep = !isNoiseInterface(m[1])
+			keptIface = keptIface || keep
+		}
+		if keep {
+			out = append(out, line)
+		}
+	}
+	if sawIface && !keptIface {
+		return output
+	}
+	return strings.Join(out, "\n")
+}
+
+func filterProcNetDevOutput(output string) string {
+	lines := strings.Split(output, "\n")
+	out := make([]string, 0, len(lines))
+	sawIface, keptIface := false, false
+	for _, line := range lines {
+		idx := strings.IndexByte(line, ':')
+		// Header rows ("Inter-|  Receive", " face |bytes ...") carry a `|`
+		// and no interface name; keep them and any non-data lines verbatim.
+		if idx < 0 || strings.Contains(line, "|") {
+			out = append(out, line)
+			continue
+		}
+		sawIface = true
+		if isNoiseInterface(line[:idx]) {
+			continue
+		}
+		keptIface = true
+		out = append(out, line)
+	}
+	if sawIface && !keptIface {
+		return output
+	}
+	return strings.Join(out, "\n")
 }
 
 // networkTCPVariants is the pool for the TCP-signals step. The default

@@ -383,14 +383,6 @@ func TestWideColumnGuideStepsAskThreeHeaderQuestions(t *testing.T) {
 			},
 		},
 		{
-			name: "network TCP",
-			step: mustFindGuideStep(t, networkSteps(SystemInfo{}), "tcp"),
-			captured: CapturedCommand{
-				Cmd:    "cat /proc/net/snmp /proc/net/netstat",
-				Output: sampleSnmpTcp + "\n" + sampleNetstatExt,
-			},
-		},
-		{
 			name: "network sockets",
 			step: mustFindGuideStep(t, networkSteps(SystemInfo{}), "sockets"),
 			captured: CapturedCommand{

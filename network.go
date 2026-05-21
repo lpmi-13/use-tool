@@ -278,20 +278,15 @@ func isSarTableRowPrefix(s string) bool {
 	return isTimestamp(s) || s == "Average:"
 }
 
-// networkTCPVariants is the pool for the TCP-signals step. The default
-// concatenates /proc/net/snmp and /proc/net/netstat; `netstat -s` is the
-// human-readable equivalent and is ubiquitous even on hosts without
-// sysstat installed.
+// networkTCPVariants is the pool for the TCP-signals step. We use the
+// human-readable `netstat -s` rather than a raw `cat /proc/net/snmp
+// /proc/net/netstat`: the proc files dump hundreds of unlabeled,
+// space-separated counters whose header and data lines are far apart —
+// unreadable for a learner — while `netstat -s` surfaces the same signals
+// (retransmit ratio, listen-queue overflows) with names attached, and is
+// ubiquitous even on hosts without sysstat installed.
 func networkTCPVariants() []stepVariant {
 	return []stepVariant{
-		{
-			Cmd:         "cat /proc/net/snmp /proc/net/netstat",
-			QuestionsFn: catNetColumnQuestions,
-			Teaching: "RetransSegs / OutSegs gives the retransmit ratio. Healthy is < 0.5%.\n" +
-				"ListenOverflows in TcpExt: counts SYNs the kernel dropped because the\n" +
-				"application's listen queue was full — that's an application-side\n" +
-				"bottleneck, not network loss.",
-		},
 		{
 			Cmd:         "netstat -s",
 			QuestionsFn: netstatSColumnQuestions,
@@ -299,7 +294,7 @@ func networkTCPVariants() []stepVariant {
 				"/proc/net/netstat. Look for the Tcp section's `segments retransmitted`\n" +
 				"vs `segments sent out` (the retransmit ratio) and TcpExt entries like\n" +
 				"`times the listen queue of a socket overflowed` (the listen-overflow\n" +
-				"count). Same signals, different presentation.",
+				"count).",
 		},
 	}
 }
@@ -335,20 +330,6 @@ func catNetQuestions(si SystemInfo, c CapturedCommand) []Question {
 	}
 	if strings.Contains(c.Cmd, "/proc/net/dev") {
 		qs = append(qs, procNetDevQuestions(si, c)...)
-	}
-	return qs
-}
-
-func catNetColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
-	var qs []Question
-	if strings.Contains(c.Cmd, "/proc/net/snmp") {
-		qs = append(qs, snmpColumnQuestions(si, c)...)
-	}
-	if strings.Contains(c.Cmd, "/proc/net/netstat") {
-		qs = append(qs, netstatExtColumnQuestions(si, c)...)
-	}
-	if strings.Contains(c.Cmd, "/proc/net/dev") {
-		qs = append(qs, procNetDevColumnQuestions(si, c)...)
 	}
 	return qs
 }
@@ -902,111 +883,6 @@ func snmpQuestions(si SystemInfo, c CapturedCommand) []Question {
 	}
 }
 
-func snmpColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if !snmpTcpHeaderRe.MatchString(c.Output) {
-		return nil
-	}
-	return columnQuestionsFromPicks(
-		availableColumnQuestionPicks(c.Output, snmpQuestionPicks),
-		func(column string) string {
-			return fmt.Sprintf("In `/proc/net/snmp` TCP output, what does `%s` represent?", column)
-		},
-	)
-}
-
-var snmpQuestionPicks = []columnQuestionPick{
-	{
-		Column:  "ActiveOpens",
-		Correct: "TCP connections actively opened by this host",
-		Distractors: []string{
-			"TCP connections passively accepted by local listeners",
-			"Current established TCP connections",
-			"TCP retransmits initiated by this host",
-		},
-	},
-	{
-		Column:  "PassiveOpens",
-		Correct: "TCP connections passively opened by local listening sockets",
-		Distractors: []string{
-			"TCP connections actively opened by clients on this host",
-			"TCP sockets waiting in TIME_WAIT",
-			"TCP connections reset by peers",
-		},
-	},
-	{
-		Column:  "AttemptFails",
-		Correct: "Failed TCP connection attempts",
-		Distractors: []string{
-			"Failed packet checksum validations",
-			"Failed DNS lookups",
-			"Failed interface carrier checks",
-		},
-	},
-	{
-		Column:  "EstabResets",
-		Correct: "Established TCP connections that were reset",
-		Distractors: []string{
-			"Current established TCP connections",
-			"TCP listeners that reset their backlog",
-			"TCP retransmission timer resets",
-		},
-	},
-	{
-		Column:  "CurrEstab",
-		Correct: "TCP connections currently in ESTABLISHED or CLOSE-WAIT",
-		Distractors: []string{
-			"TCP connections established since boot",
-			"TCP listen sockets currently bound",
-			"TCP connections waiting in SYN-SENT",
-		},
-	},
-	{
-		Column:  "InSegs",
-		Correct: "TCP segments received",
-		Distractors: []string{
-			"TCP segments sent",
-			"TCP segments retransmitted",
-			"Incoming IP packets dropped by the NIC",
-		},
-	},
-	{
-		Column:  "OutSegs",
-		Correct: "TCP segments sent, excluding retransmitted segments on Linux",
-		Distractors: []string{
-			"TCP segments received",
-			"TCP segments queued but not sent",
-			"Outgoing packets dropped by qdisc",
-		},
-	},
-	{
-		Column:  "RetransSegs",
-		Correct: "TCP segments retransmitted",
-		Distractors: []string{
-			"TCP connections reset by the peer",
-			"TCP segments sent for the first time",
-			"TCP packets received out of order",
-		},
-	},
-	{
-		Column:  "InErrs",
-		Correct: "TCP segments received with errors",
-		Distractors: []string{
-			"Incoming interface errors across all protocols",
-			"TCP connection attempts that failed",
-			"Packets dropped by firewall rules",
-		},
-	},
-	{
-		Column:  "OutRsts",
-		Correct: "TCP reset segments sent",
-		Distractors: []string{
-			"TCP segments retransmitted after timeout",
-			"Outgoing route lookup failures",
-			"TCP sockets currently reset but not closed",
-		},
-	},
-}
-
 var netstatExtTcpExtRe = regexp.MustCompile(`(?m)^TcpExt:\s+\w`)
 
 func netstatExtQuestions(si SystemInfo, c CapturedCommand) []Question {
@@ -1022,102 +898,6 @@ func netstatExtQuestions(si SystemInfo, c CapturedCommand) []Question {
 			"The system has too many sockets in TIME_WAIT and can't open new ones",
 		},
 	}}
-}
-
-func netstatExtColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if !netstatExtTcpExtRe.MatchString(c.Output) {
-		return nil
-	}
-	return columnQuestionsFromPicks(
-		availableColumnQuestionPicks(c.Output, netstatExtQuestionPicks),
-		func(column string) string {
-			return fmt.Sprintf("In `/proc/net/netstat` TcpExt output, what does `%s` represent?", column)
-		},
-	)
-}
-
-var netstatExtQuestionPicks = []columnQuestionPick{
-	{
-		Column:  "SyncookiesSent",
-		Correct: "SYN cookies sent when the SYN backlog was under pressure",
-		Distractors: []string{
-			"Application cookies sent over HTTP",
-			"TCP resets sent by local sockets",
-			"TLS session tickets sent",
-		},
-	},
-	{
-		Column:  "SyncookiesRecv",
-		Correct: "Valid SYN cookies received back from clients",
-		Distractors: []string{
-			"TCP SYN packets received by listeners",
-			"Invalid SYN cookies rejected",
-			"Application cookies received over HTTP",
-		},
-	},
-	{
-		Column:  "SyncookiesFailed",
-		Correct: "Invalid SYN cookie responses received",
-		Distractors: []string{
-			"Failed TCP retransmissions",
-			"Failed DNS cookie validations",
-			"Failed application login cookies",
-		},
-	},
-	{
-		Column:  "EmbryonicRsts",
-		Correct: "Resets received for connections that were not fully established yet",
-		Distractors: []string{
-			"Established connections reset by local applications",
-			"TCP listeners restarted by systemd",
-			"Packets dropped because receive queues overflowed",
-		},
-	},
-	{
-		Column:  "PruneCalled",
-		Correct: "Times the kernel tried to prune TCP receive queues under memory pressure",
-		Distractors: []string{
-			"Times old routes were pruned from the routing table",
-			"Times sockets were pruned from TIME_WAIT only",
-			"Times the NIC pruned packets from hardware rings",
-		},
-	},
-	{
-		Column:  "RcvPruned",
-		Correct: "Packets pruned from receive queues because of memory pressure",
-		Distractors: []string{
-			"Receive packets dropped by interface errors",
-			"Receive queues resized by autotuning",
-			"Packets removed after successful delivery",
-		},
-	},
-	{
-		Column:  "OfoPruned",
-		Correct: "Out-of-order packets pruned from TCP queues",
-		Distractors: []string{
-			"Packets pruned from ordered send queues",
-			"Firewall rules pruned from nftables",
-			"Packets dropped due to bad checksums",
-		},
-	},
-	{
-		Column:  "ListenOverflows",
-		Correct: "Times a listening socket's accept queue overflowed",
-		Distractors: []string{
-			"Times the NIC receive FIFO overflowed",
-			"TCP receive-window overflows on established connections",
-			"Listen sockets opened since boot",
-		},
-	},
-	{
-		Column:  "ListenDrops",
-		Correct: "Connection attempts dropped because a listening socket could not accept them",
-		Distractors: []string{
-			"Established connections dropped by the peer",
-			"Packets dropped by the physical interface",
-			"Listen sockets closed by applications",
-		},
-	},
 }
 
 func procNetDevQuestions(si SystemInfo, c CapturedCommand) []Question {
@@ -1877,16 +1657,6 @@ var networkCommands = []CommandRef{
 		Cmd:     "sar -n EDEV 1 N",
 		Section: "Saturation",
 		Summary: "Per-interface error/drop rates.\nrxdrop/s > 0 = NIC ring buffer or kernel queue is filling.\n(sysstat package.)",
-	},
-	{
-		Cmd:     "cat /proc/net/snmp",
-		Section: "Saturation",
-		Summary: "Protocol-level counters. The Tcp: line carries\nOutSegs and RetransSegs — divide for retransmit ratio.",
-	},
-	{
-		Cmd:     "cat /proc/net/netstat",
-		Section: "Saturation",
-		Summary: "Extended TCP/IP counters. TcpExt: ListenOverflows counts\nSYNs the kernel dropped because the application's accept queue was full.",
 	},
 	{
 		Cmd:     "ss -lnt",

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 )
@@ -163,65 +162,8 @@ func TestExtractIostatRequiresIostatCommand(t *testing.T) {
 	}
 }
 
-func TestIostatQuestionsFires(t *testing.T) {
-	si := SystemInfo{}
-	c := CapturedCommand{Cmd: "iostat -xz 1 1", Output: sampleIostatModern}
-	qs := iostatQuestions(si, c)
-	if len(qs) == 0 {
-		t.Fatal("expected questions for iostat output")
-	}
-}
 
-func TestIostatQuestionsRejectsUnrelated(t *testing.T) {
-	si := SystemInfo{}
-	c := CapturedCommand{Cmd: "iostat", Output: "no extended header here"}
-	if qs := iostatQuestions(si, c); qs != nil {
-		t.Error("expected nil for output without %util header")
-	}
-}
 
-func TestIostatQuestionsCoversModernColumns(t *testing.T) {
-	c := CapturedCommand{Cmd: "iostat -xz 1 1", Output: sampleIostatModern}
-	wantCorrect := map[string]string{
-		"r/s":     "Read requests completed per second for the device",
-		"w/s":     "Write requests completed per second for the device",
-		"r_await": "Average read request latency in milliseconds, including queueing and service time",
-		"w_await": "Average write request latency in milliseconds, including queueing and service time",
-		"aqu-sz":  "Average number of I/O requests outstanding to the device (queued plus in service)",
-		"%util":   "The fraction of wall-clock time during which at least one I/O request was in flight",
-	}
-	available := availableIostatQuestionPicks(c.Output)
-	if len(available) != len(wantCorrect) {
-		t.Fatalf("expected %d available iostat columns, got %d (%v)", len(wantCorrect), len(available), available)
-	}
-
-	seen := map[string]bool{}
-	for i := 0; i < 500; i++ {
-		qs := iostatQuestions(SystemInfo{}, c)
-		if len(qs) != 1 {
-			t.Fatalf("iteration %d: expected 1 question, got %d", i, len(qs))
-		}
-		column := ""
-		for candidate := range wantCorrect {
-			if strings.Contains(qs[0].Stem, fmt.Sprintf("`%s`", candidate)) {
-				column = candidate
-				break
-			}
-		}
-		if column == "" {
-			t.Fatalf("iteration %d: stem does not ask about a known iostat column: %q", i, qs[0].Stem)
-		}
-		if qs[0].Correct != wantCorrect[column] {
-			t.Fatalf("iteration %d: column %q had correct answer %q, want %q", i, column, qs[0].Correct, wantCorrect[column])
-		}
-		seen[column] = true
-	}
-	for column := range wantCorrect {
-		if !seen[column] {
-			t.Errorf("column %q never appeared across 500 iterations; saw %v", column, seen)
-		}
-	}
-}
 
 func TestIostatQuestionsCoversOlderColumns(t *testing.T) {
 	c := CapturedCommand{Cmd: "iostat -xz 1 1", Output: sampleIostatOlder}
@@ -324,102 +266,11 @@ func TestDiskDmesgQuestionsSkipsBenign(t *testing.T) {
 	}
 }
 
-func TestDiskExtractQuestionsAcceptsJournalctl(t *testing.T) {
-	cmd := "journalctl -k -b --no-pager | grep -iE 'i/o error|read-only' | tail"
-	qs := extractQuestions(diskInvestigation, SystemInfo{}, CapturedCommand{
-		Cmd:    cmd,
-		Output: sampleDmesgIOError,
-	})
-	if len(qs) == 0 {
-		t.Fatal("expected journalctl kernel log output to generate disk dmesg questions")
-	}
-	for _, q := range qs {
-		if strings.Contains(q.Stem, "`dmesg`") {
-			t.Errorf("question should not mention dmesg when journalctl was captured: %q", q.Stem)
-		}
-		if !strings.Contains(q.Stem, "`"+cmd+"`") {
-			t.Errorf("expected question to mention the actual captured command, got %q", q.Stem)
-		}
-	}
-}
 
-func TestLsblkQuestionsFires(t *testing.T) {
-	c := CapturedCommand{Cmd: "lsblk", Output: sampleLsblk}
-	qs := lsblkQuestions(SystemInfo{}, c)
-	if len(qs) == 0 {
-		t.Fatal("expected questions for lsblk output")
-	}
-}
 
-func TestPidstatDQuestionsFires(t *testing.T) {
-	c := CapturedCommand{Cmd: "pidstat -d 1 1", Output: `
-Linux 6.1.0  10/05/2024
-14:00:00       UID       PID   kB_rd/s   kB_wr/s kB_ccwr/s iodelay  Command
-14:00:01      1000      1234     12.50    400.00      0.00       2  postgres
-`}
-	qs := pidstatDQuestions(SystemInfo{}, c)
-	if len(qs) == 0 {
-		t.Fatal("expected questions for pidstat -d output")
-	}
-}
 
-func TestUtilAwaitConsistencySSDPattern(t *testing.T) {
-	// SSD-like: %util high, queue low, await low.
-	vs := map[string]Value{
-		"iostat_max_util_pct": {Number: 98},
-		"iostat_max_aqu_sz":   {Number: 0.5},
-		"iostat_max_await_ms": {Number: 1.2},
-	}
-	q, ok := utilAwaitConsistency.Generate(SystemInfo{}, vs)
-	if !ok {
-		t.Fatal("expected synthesis to fire")
-	}
-	if !strings.Contains(q.Correct, "Busy but not saturated") {
-		t.Errorf("wrong branch: %q", q.Correct)
-	}
-}
 
-func TestUtilAwaitConsistencyTrueSaturation(t *testing.T) {
-	vs := map[string]Value{
-		"iostat_max_util_pct": {Number: 99},
-		"iostat_max_aqu_sz":   {Number: 12},
-		"iostat_max_await_ms": {Number: 65},
-	}
-	q, ok := utilAwaitConsistency.Generate(SystemInfo{}, vs)
-	if !ok {
-		t.Fatal("expected synthesis to fire")
-	}
-	if !strings.Contains(q.Correct, "Saturated") {
-		t.Errorf("wrong branch: %q", q.Correct)
-	}
-}
 
-func TestUtilAwaitConsistencyHeadroom(t *testing.T) {
-	vs := map[string]Value{
-		"iostat_max_util_pct": {Number: 20},
-		"iostat_max_aqu_sz":   {Number: 0.1},
-		"iostat_max_await_ms": {Number: 0.8},
-	}
-	q, ok := utilAwaitConsistency.Generate(SystemInfo{}, vs)
-	if !ok {
-		t.Fatal("expected synthesis to fire")
-	}
-	if !strings.Contains(q.Correct, "Headroom") {
-		t.Errorf("wrong branch: %q", q.Correct)
-	}
-}
-
-func TestUtilAwaitConsistencyAmbiguousReturnsFalse(t *testing.T) {
-	// In between: not clearly saturated, not clearly idle, not clearly SSD-pattern.
-	vs := map[string]Value{
-		"iostat_max_util_pct": {Number: 70},
-		"iostat_max_aqu_sz":   {Number: 2.5},
-		"iostat_max_await_ms": {Number: 8},
-	}
-	if _, ok := utilAwaitConsistency.Generate(SystemInfo{}, vs); ok {
-		t.Error("expected synthesis to skip the ambiguous middle case")
-	}
-}
 
 func TestDiskInvestigationRegistered(t *testing.T) {
 	inv, err := getInvestigation("disk")
@@ -429,68 +280,14 @@ func TestDiskInvestigationRegistered(t *testing.T) {
 	if inv.Name != "disk" {
 		t.Errorf("unexpected name %q", inv.Name)
 	}
-	if len(inv.Observations) == 0 || len(inv.Commands) == 0 || len(inv.Extractors) == 0 {
+	if len(inv.Observations) == 0 || len(inv.Commands) == 0 {
 		t.Error("disk investigation is missing observations/commands/extractors")
 	}
 }
 
 // ----- recall edge cases -----
 
-func TestIostatMaxUtilRecallAtBoundaries(t *testing.T) {
-	for _, util := range []float64{0, 100} {
-		v := Value{Number: util}
-		qs := iostatMaxUtilRecall(v)
-		if len(qs) != 1 {
-			t.Fatalf("expected 1 question at %%util=%v, got %d", util, len(qs))
-		}
-		q := qs[0]
-		seen := map[string]bool{q.Correct: true}
-		for _, d := range q.Distractors {
-			if seen[d] {
-				t.Errorf("duplicate option at %%util=%v: %v", util, q.Distractors)
-			}
-			seen[d] = true
-		}
-	}
-}
 
-func TestPidstatDQuestionsCoversReadAndWrite(t *testing.T) {
-	c := CapturedCommand{Cmd: "pidstat -d 1 1", Output: `
-Linux 6.1.0  10/05/2024
-14:00:00       UID       PID   kB_rd/s   kB_wr/s kB_ccwr/s iodelay  Command
-14:00:01      1000      1234     12.50    400.00      0.00       2  postgres
-`}
-	seen := map[string]bool{}
-	wantCorrect := map[string]string{
-		"kB_rd/s": "The rate at which the process is causing data to be read from storage, in kilobytes per second",
-		"kB_wr/s": "The rate at which the process is causing data to be written to storage, in kilobytes per second",
-	}
-	for i := 0; i < 100; i++ {
-		qs := pidstatDQuestions(SystemInfo{}, c)
-		if len(qs) != 1 {
-			t.Fatalf("iteration %d: expected 1 question", i)
-		}
-		column := ""
-		for candidate := range wantCorrect {
-			if strings.Contains(qs[0].Stem, candidate) {
-				column = candidate
-				break
-			}
-		}
-		if column == "" {
-			t.Fatalf("iteration %d: stem does not ask about read/write rate: %q", i, qs[0].Stem)
-		}
-		if qs[0].Correct != wantCorrect[column] {
-			t.Fatalf("iteration %d: column %q had correct answer %q, want %q", i, column, qs[0].Correct, wantCorrect[column])
-		}
-		seen[column] = true
-	}
-	for _, want := range []string{"kB_rd/s", "kB_wr/s"} {
-		if !seen[want] {
-			t.Errorf("column %q never appeared across 100 iterations; saw %v", want, seen)
-		}
-	}
-}
 
 func TestPSIIOQuestionsCoversBothMetrics(t *testing.T) {
 	c := CapturedCommand{Cmd: "cat /proc/pressure/io", Output: samplePSIIO}
@@ -590,42 +387,6 @@ func TestSarDColumnQuestionsCoversObservedColumns(t *testing.T) {
 	}
 }
 
-func TestSarDQuestionsRejectsSarWOutput(t *testing.T) {
-	// `sar -W` has a different header — must not match sar -d.
-	c := CapturedCommand{Cmd: "sar -W 1 3", Output: "12:00:00     pswpin/s pswpout/s\n12:00:01         0.00      0.00"}
-	if qs := sarDQuestions(SystemInfo{}, c); qs != nil {
-		t.Errorf("expected nil for sar -W output, got %d", len(qs))
-	}
-}
-
-func TestDiskExtractorsRouteVariantCommands(t *testing.T) {
-	cases := []struct {
-		cmd     string
-		output  string
-		wantSub string
-	}{
-		{"cat /proc/partitions", sampleProcPartitions, "/proc/partitions"},
-		{"sar -d 1 3", sampleSarD, "sar -d"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.cmd, func(t *testing.T) {
-			qs := extractQuestions(diskInvestigation, SystemInfo{}, CapturedCommand{Cmd: tc.cmd, Output: tc.output})
-			if len(qs) == 0 {
-				t.Fatalf("expected questions for %q", tc.cmd)
-			}
-			found := false
-			for _, q := range qs {
-				if strings.Contains(q.Stem, tc.wantSub) {
-					found = true
-					break
-				}
-			}
-			if !found {
-				t.Errorf("no question containing %q for %q", tc.wantSub, tc.cmd)
-			}
-		})
-	}
-}
 
 func TestDiskDeviceVariantsDispatch(t *testing.T) {
 	combined := combineVariantQuestions(diskDeviceVariants())

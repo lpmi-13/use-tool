@@ -52,12 +52,40 @@ func (v Value) Mean() float64 {
 	return sum / float64(len(v.Samples))
 }
 
+// Signal is the diagnostic reading an observation contributes to its USE
+// dimension (its Section). For Utilization, Low/Moderate/High mean what they
+// say. For Saturation and Errors, Low means "absent" and High means "present"
+// (Moderate is unused there). SignalNone means the observation carries no
+// diagnostic reading — its value is informational, or it cannot be classified.
+type Signal int
+
+const (
+	SignalNone Signal = iota
+	SignalLow
+	SignalModerate
+	SignalHigh
+)
+
 type Observation struct {
 	Name    string
 	Title   string
 	Section string
+	// Resource is the USE subsystem this observation belongs to ("CPU",
+	// "Memory", "Disk", "Network"). It's set centrally in init() rather than
+	// per-entry, so the per-resource observation literals stay clean. Used
+	// by whole-system diagnose to group prompts by resource.
+	Resource string
 	Extract func(SystemInfo, []CapturedCommand) (Value, bool)
-	Recall  func(Value) []Question
+	// Verdict classifies this observation's value for its USE dimension,
+	// reading SystemInfo and the full Snapshot so a context-sensitive rule can
+	// consult sibling observations (e.g. a run-queue that only reads as
+	// saturation alongside low idle). A nil Verdict means the observation is
+	// informational: it can be displayed and recalled, but not cited as
+	// diagnosis evidence.
+	Verdict func(SystemInfo, Value, Snapshot) Signal
+	// Heuristic is the one-line rule of thumb shown in diagnose feedback,
+	// e.g. "vmstat r above NumCPU = threads waiting for CPU = saturation".
+	Heuristic string
 }
 
 type Snapshot struct {

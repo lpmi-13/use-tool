@@ -27,6 +27,10 @@ func cmdGuide(args []string) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	if inv.StepsFn == nil || len(inv.StepsFn(SystemInfo{})) == 0 {
+		fmt.Fprintf(os.Stderr, "%s has no guided walkthrough — run `use-tool practice %s` instead.\n", inv.Name, inv.Name)
+		os.Exit(2)
+	}
 	requireInteractive("guide")
 	si := detectSystem()
 	s := &Session{Investigation: inv, System: si}

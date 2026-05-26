@@ -13,11 +13,12 @@ var networkInvestigation = &Investigation{
 	Description: "Investigate network using Brendan Gregg's USE method.\n" +
 		"Run commands at the prompt; the harness captures their output\n" +
 		"and asks targeted questions about what you observed.",
-	StepsFn:        networkSteps,
-	Extractors:     networkExtractors,
-	Observations:   networkObservations,
-	SynthesisRules: networkSynthesisRules,
-	Commands:       networkCommands,
+	StepsFn:      networkSteps,
+	Observations: networkObservations,
+	Commands:     networkCommands,
+	DiagnoseNotes: map[string]string{
+		"Utilization": "network utilization can't be inferred without per-interface link speed, which the tool doesn't know — throughput numbers in the snapshot are informational only.",
+	},
 }
 
 // ----- Guide steps -----
@@ -301,64 +302,9 @@ func networkTCPVariants() []stepVariant {
 
 // ----- Comprehension extractors (per-command) -----
 
-var networkExtractors = []Extractor{
-	{BaseCmd: "ip", QuestionsFn: ipLinkQuestions},
-	{BaseCmd: "sar", QuestionsFn: sarNetQuestions},
-	{BaseCmd: "ss", QuestionsFn: ssSummaryQuestions},
-	{BaseCmd: "cat", QuestionsFn: catNetQuestions},
-	{BaseCmd: "netstat", QuestionsFn: netstatQuestions},
-	{BaseCmd: "dmesg", QuestionsFn: networkDmesgQuestions},
-	{BaseCmd: "journalctl", QuestionsFn: networkDmesgQuestions},
-}
-
 // sarNetQuestions dispatches by output shape (sar has many sub-modes).
-func sarNetQuestions(si SystemInfo, c CapturedCommand) []Question {
-	var qs []Question
-	qs = append(qs, sarDevQuestions(si, c)...)
-	qs = append(qs, sarEdevQuestions(si, c)...)
-	return qs
-}
 
 // catNetQuestions dispatches based on path looked at.
-func catNetQuestions(si SystemInfo, c CapturedCommand) []Question {
-	var qs []Question
-	if strings.Contains(c.Cmd, "/proc/net/snmp") {
-		qs = append(qs, snmpQuestions(si, c)...)
-	}
-	if strings.Contains(c.Cmd, "/proc/net/netstat") {
-		qs = append(qs, netstatExtQuestions(si, c)...)
-	}
-	if strings.Contains(c.Cmd, "/proc/net/dev") {
-		qs = append(qs, procNetDevQuestions(si, c)...)
-	}
-	return qs
-}
-
-func ipLinkQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if !strings.Contains(c.Output, "RX:") || !strings.Contains(c.Output, "TX:") {
-		return nil
-	}
-	return []Question{
-		{
-			Stem:    "In `ip -s link`, what's the difference between the RX `dropped` and `overrun` counters?",
-			Correct: "`dropped` includes any packet the kernel discarded (full queue, filter, no protocol handler); `overrun` specifically counts packets the NIC's hardware FIFO overflowed before the driver could read them",
-			Distractors: []string{
-				"They are aliases for the same counter exposed in two formats",
-				"`dropped` is software-side; `overrun` is filesystem-side",
-				"`dropped` is per-second; `overrun` is cumulative since boot",
-			},
-		},
-		{
-			Stem:    "The RX/TX counters in `ip -s link` are cumulative since boot. Why is that important when interpreting them?",
-			Correct: "A non-zero count tells you something happened *at some point*, not whether it's happening now; you need a rate (sar -n EDEV) to know if the issue is current",
-			Distractors: []string{
-				"They overflow every 24 hours, so values older than that are unreliable",
-				"They are per-CPU and must be summed manually before comparing",
-				"They reset on every link state change, so they only reflect the current uptime of the link",
-			},
-		},
-	}
-}
 
 func ipLinkColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !strings.Contains(c.Output, "RX:") || !strings.Contains(c.Output, "TX:") {
@@ -734,21 +680,6 @@ var sarEdevQuestionPicks = []columnQuestionPick{
 	},
 }
 
-func ssSummaryQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if !strings.Contains(c.Output, "TCP:") || !strings.Contains(c.Output, "estab") {
-		return nil
-	}
-	return []Question{{
-		Stem:    "In `ss -s` output, the `estab` count under TCP refers to:",
-		Correct: "The number of TCP connections currently in the ESTABLISHED state",
-		Distractors: []string{
-			"The total number of TCP connections opened since boot",
-			"The number of sockets that have completed a SYN handshake but not yet been accept()ed",
-			"The number of TCP listen sockets currently bound to ports",
-		},
-	}}
-}
-
 func ssSummaryColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !strings.Contains(c.Output, "TCP:") || !strings.Contains(c.Output, "estab") {
 		return nil
@@ -968,23 +899,6 @@ func procNetDevColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 	}
 }
 
-func netstatQuestions(si SystemInfo, c CapturedCommand) []Question {
-	low := strings.ToLower(c.Output)
-	if !strings.Contains(low, "tcp") || !strings.Contains(low, "segments") {
-		return nil
-	}
-	// netstat -s output contains "segments retransmitted"; we re-use the snmp question shape.
-	return []Question{{
-		Stem:    "In `netstat -s` output, a high count of `segments retransmitted` relative to `segments sent` indicates:",
-		Correct: "End-to-end packet loss — somewhere between this host and the peer, segments are being dropped",
-		Distractors: []string{
-			"The local TCP stack is misconfigured",
-			"Excessive retransmit timeout firing due to a clock drift",
-			"The application is closing connections without a FIN",
-		},
-	}}
-}
-
 // netstatSColumnQuestions returns the pool of phrase-keyed questions for
 // `netstat -s` output. Unlike column-headed tables, netstat -s is a
 // section-and-prose format, so we gate each question on a phrase appearing
@@ -1088,77 +1002,111 @@ var netstatSPicks = []phraseQuestionPick{
 	},
 }
 
-func networkDmesgQuestions(si SystemInfo, c CapturedCommand) []Question {
-	low := strings.ToLower(c.Output)
-	if !strings.Contains(low, "link is") &&
-		!strings.Contains(low, "carrier") &&
-		!strings.Contains(low, "nic link") {
-		return nil
-	}
-	tool := kernelLogQuestionTool(c.Cmd)
-	return []Question{{
-		Stem:    fmt.Sprintf("Repeated `Link is Down` followed by `Link is Up` for the same interface in `%s` output suggests:", tool),
-		Correct: "A flapping cable, transceiver, or peer port — the physical layer is intermittently disconnecting",
-		Distractors: []string{
-			"The kernel is rotating IP addresses for that interface",
-			"DHCP is renewing the lease and briefly losing the link",
-			"The NIC driver is being reloaded by udev",
-		},
-	}}
-}
-
 // ----- Observations -----
 
 var networkObservations = []Observation{
 	{
-		Name:    "net_peak_rx_kbps",
-		Title:   "Peak RX rate (across non-lo ifaces)",
-		Section: "Utilization",
-		Extract: extractSarNetPeak("rxkB/s"),
+		Name:      "net_peak_rx_kbps",
+		Title:     "Peak RX rate (across non-lo ifaces)",
+		Section:   "Utilization",
+		Extract:   extractSarNetPeak("rxkB/s"),
+		Heuristic: "absolute RX throughput is informational — utilization depends on the interface link speed, which the tool doesn't know",
 	},
 	{
-		Name:    "net_peak_tx_kbps",
-		Title:   "Peak TX rate (across non-lo ifaces)",
-		Section: "Utilization",
-		Extract: extractSarNetPeak("txkB/s"),
+		Name:      "net_peak_tx_kbps",
+		Title:     "Peak TX rate (across non-lo ifaces)",
+		Section:   "Utilization",
+		Extract:   extractSarNetPeak("txkB/s"),
+		Heuristic: "absolute TX throughput is informational — utilization depends on the interface link speed, which the tool doesn't know",
 	},
 	{
-		Name:    "tcp_estab_connections",
-		Title:   "Established TCP connections",
-		Section: "Utilization",
-		Extract: extractTCPEstab,
+		Name:      "tcp_estab_connections",
+		Title:     "Established TCP connections",
+		Section:   "Utilization",
+		Extract:   extractTCPEstab,
+		Heuristic: "connection count alone is informational — what counts as 'high' depends entirely on the workload",
 	},
 	{
-		Name:    "net_rx_drops_per_sec_max",
-		Title:   "Max rxdrop/s (sar -n EDEV)",
-		Section: "Saturation",
-		Extract: extractSarEdevPeak("rxdrop/s"),
-		Recall:  netRxDropsRecall,
+		Name:      "net_rx_drops_per_sec_max",
+		Title:     "Max rxdrop/s (sar -n EDEV)",
+		Section:   "Saturation",
+		Extract:   extractSarEdevPeak("rxdrop/s"),
+		Verdict:   verdictNetDrops,
+		Heuristic: "rxdrop/s > 0 = NIC ring buffer or kernel queue is filling = receive-side saturation",
 	},
 	{
-		Name:    "tcp_retransmit_ratio_pct",
-		Title:   "TCP retransmit ratio",
-		Section: "Saturation",
-		Extract: extractTCPRetransmitRatio,
+		Name:      "tcp_retransmit_ratio_pct",
+		Title:     "TCP retransmit ratio",
+		Section:   "Saturation",
+		Extract:   extractTCPRetransmitRatio,
+		Verdict:   verdictRetransRatio,
+		Heuristic: "retransmit ratio > ~0.5% sustained = end-to-end packet loss somewhere between this host and its peers",
 	},
 	{
-		Name:    "tcp_listen_overflows",
-		Title:   "Listen overflows (cumulative)",
-		Section: "Saturation",
-		Extract: extractListenOverflows,
+		Name:      "tcp_listen_overflows",
+		Title:     "Listen overflows (cumulative)",
+		Section:   "Saturation",
+		Extract:   extractListenOverflows,
+		Verdict:   verdictListenOverflows,
+		Heuristic: "ListenOverflows > 0 = SYNs the kernel dropped because the app's accept queue was full = application-side saturation (counter is cumulative since boot — context matters)",
 	},
 	{
-		Name:    "net_iface_errors_total",
-		Title:   "Cumulative interface errors",
-		Section: "Errors",
-		Extract: extractInterfaceErrors,
+		Name:      "net_iface_errors_total",
+		Title:     "Cumulative interface errors",
+		Section:   "Errors",
+		Extract:   extractInterfaceErrors,
+		Verdict:   verdictNetIfaceErrors,
+		Heuristic: "RX/TX errors on a NIC = link- or driver-level failures (counter is cumulative since boot — a single old value isn't necessarily live)",
 	},
 	{
-		Name:    "dmesg_net_keywords",
-		Title:   "dmesg link/NIC events",
-		Section: "Errors",
-		Extract: extractDmesgNetKeywords,
+		Name:      "dmesg_net_keywords",
+		Title:     "dmesg link/NIC events",
+		Section:   "Errors",
+		Extract:   extractDmesgNetKeywords,
+		Verdict:   verdictDmesgNet,
+		Heuristic: "repeated link up/down / carrier / NIC entries in the kernel log = flapping cable, peer port, or NIC driver issues",
 	},
+}
+
+// ----- Diagnosis verdicts -----
+
+func verdictNetDrops(_ SystemInfo, v Value, _ Snapshot) Signal {
+	if v.Number > 0 {
+		return SignalHigh
+	}
+	return SignalLow
+}
+
+func verdictRetransRatio(_ SystemInfo, v Value, _ Snapshot) Signal {
+	switch {
+	case v.Number > 0.5:
+		return SignalHigh
+	case v.Number > 0:
+		return SignalModerate
+	default:
+		return SignalLow
+	}
+}
+
+func verdictListenOverflows(_ SystemInfo, v Value, _ Snapshot) Signal {
+	if v.Number > 0 {
+		return SignalHigh
+	}
+	return SignalLow
+}
+
+func verdictNetIfaceErrors(_ SystemInfo, v Value, _ Snapshot) Signal {
+	if v.Number > 0 {
+		return SignalHigh
+	}
+	return SignalLow
+}
+
+func verdictDmesgNet(_ SystemInfo, v Value, _ Snapshot) Signal {
+	if v.Number > 0 {
+		return SignalHigh
+	}
+	return SignalLow
 }
 
 // extractSarNetPeak returns a function that finds the peak value of the named
@@ -1508,129 +1456,31 @@ func extractDmesgNetKeywords(si SystemInfo, caps []CapturedCommand) (Value, bool
 	if !seen {
 		return Value{}, false
 	}
-	return Value{Text: fmt.Sprintf("%d/%d lines mention link/NIC events", matched, totalLines)}, true
+	return Value{Number: float64(matched), Text: fmt.Sprintf("%d/%d lines mention link/NIC events", matched, totalLines)}, true
 }
 
 // ----- Recall question generators -----
 
-func netRxDropsRecall(v Value) []Question {
-	correct := fmt.Sprintf("%.1f", v.Number)
-	pool := []string{
-		fmt.Sprintf("%.1f", v.Number+5.0),
-		fmt.Sprintf("%.1f", v.Number+50.0),
-		fmt.Sprintf("%.1f", v.Number*5+1.0),
-		"0.0", "1.0", "5.0", "20.0",
-	}
-	return makeRecallQuestion(
-		"What was the highest `rxdrop/s` value you observed across non-loopback interfaces?",
-		correct, pool)
-}
-
 // ----- Synthesis rules -----
 
-var networkSynthesisRules = []SynthesisRule{
-	bandwidthLossConsistency,
-	listenQueueAttribution,
+func networkDmesgQuestions(si SystemInfo, c CapturedCommand) []Question {
+	low := strings.ToLower(c.Output)
+	if !strings.Contains(low, "link is") &&
+		!strings.Contains(low, "carrier") &&
+		!strings.Contains(low, "nic link") {
+		return nil
+	}
+	tool := kernelLogQuestionTool(c.Cmd)
+	return []Question{{
+		Stem:    fmt.Sprintf("Repeated `Link is Down` followed by `Link is Up` for the same interface in `%s` output suggests:", tool),
+		Correct: "A flapping cable, transceiver, or peer port — the physical layer is intermittently disconnecting",
+		Distractors: []string{
+			"The kernel is rotating IP addresses for that interface",
+			"DHCP is renewing the lease and briefly losing the link",
+			"The NIC driver is being reloaded by udev",
+		},
+	}}
 }
-
-// bandwidthLossConsistency teaches the marquee network lesson: the headline
-// throughput rate is necessary but insufficient. Loss can be present even
-// when bandwidth is well below capacity.
-var bandwidthLossConsistency = SynthesisRule{
-	Requires: []string{"net_rx_drops_per_sec_max", "tcp_retransmit_ratio_pct"},
-	Generate: func(si SystemInfo, vs map[string]Value) (Question, bool) {
-		drops := vs["net_rx_drops_per_sec_max"].Number
-		retrans := vs["tcp_retransmit_ratio_pct"].Number
-
-		var correct string
-		switch {
-		case drops < 1 && retrans < 0.5:
-			correct = "Healthy — no local interface drops and a low retransmit ratio. The network layer is not the bottleneck."
-		case drops < 1 && retrans >= 1:
-			correct = "Loss is downstream of this host — non-trivial retransmits with zero local interface drops point at an intermediate switch, the peer, or the path between."
-		case drops >= 5:
-			correct = "Local interface is dropping packets — typically an undersized NIC ring buffer, a misconfigured driver, or the kernel queue can't drain fast enough. Tunable from this host."
-		default:
-			return Question{}, false
-		}
-
-		pool := []string{
-			"Healthy — no local interface drops and a low retransmit ratio. The network layer is not the bottleneck.",
-			"Loss is downstream of this host — non-trivial retransmits with zero local interface drops point at an intermediate switch, the peer, or the path between.",
-			"Local interface is dropping packets — typically an undersized NIC ring buffer, a misconfigured driver, or the kernel queue can't drain fast enough. Tunable from this host.",
-			"Cannot be assessed — these two metrics measure unrelated things.",
-		}
-		var distractors []string
-		for _, p := range pool {
-			if p != correct {
-				distractors = append(distractors, p)
-			}
-		}
-		if len(distractors) > 3 {
-			distractors = distractors[:3]
-		}
-
-		return Question{
-			Stem: fmt.Sprintf(
-				"Max rxdrop/s observed: %.1f; TCP retransmit ratio: %.2f%%.\n"+
-					"Which best describes where loss (if any) is occurring?",
-				drops, retrans),
-			Correct:     correct,
-			Distractors: distractors,
-		}, true
-	},
-}
-
-// listenQueueAttribution teaches that "the network is slow" can mean
-// "the application isn't accept()ing fast enough" — the listen queue
-// overflows are a user-space signal, not a network-layer signal.
-var listenQueueAttribution = SynthesisRule{
-	Requires: []string{"tcp_listen_overflows", "tcp_retransmit_ratio_pct", "net_rx_drops_per_sec_max"},
-	Generate: func(si SystemInfo, vs map[string]Value) (Question, bool) {
-		overflows := vs["tcp_listen_overflows"].Number
-		retrans := vs["tcp_retransmit_ratio_pct"].Number
-		drops := vs["net_rx_drops_per_sec_max"].Number
-
-		var correct string
-		switch {
-		case overflows == 0:
-			return Question{}, false // not the interesting case
-		case overflows > 0 && retrans < 0.5 && drops < 1:
-			correct = "Application-side bottleneck — the listen queue is overflowing but retransmits and interface drops are healthy. The userspace process can't accept() new connections fast enough."
-		case overflows > 0 && (retrans >= 1 || drops >= 5):
-			correct = "Both layers are under pressure — listen queue overflows AND network-layer loss. Investigate the application's accept loop and the network in parallel."
-		default:
-			return Question{}, false
-		}
-
-		pool := []string{
-			"Application-side bottleneck — the listen queue is overflowing but retransmits and interface drops are healthy. The userspace process can't accept() new connections fast enough.",
-			"Both layers are under pressure — listen queue overflows AND network-layer loss. Investigate the application's accept loop and the network in parallel.",
-			"Healthy — listen overflows are a normal background noise from past traffic spikes.",
-			"Cannot be assessed — these signals measure unrelated subsystems.",
-		}
-		var distractors []string
-		for _, p := range pool {
-			if p != correct {
-				distractors = append(distractors, p)
-			}
-		}
-		if len(distractors) > 3 {
-			distractors = distractors[:3]
-		}
-
-		return Question{
-			Stem: fmt.Sprintf(
-				"Listen overflows: %.0f cumulative; TCP retransmit ratio: %.2f%%; max rxdrop/s: %.1f.\n"+
-					"Which best describes where the bottleneck lives?",
-				overflows, retrans, drops),
-			Correct:     correct,
-			Distractors: distractors,
-		}, true
-	},
-}
-
-// ----- Command reference -----
 
 var networkCommands = []CommandRef{
 	{
@@ -1639,9 +1489,10 @@ var networkCommands = []CommandRef{
 		Summary: "Per-interface RX/TX counters (cumulative since boot).\nFastest orientation; useful for 'has anything ever gone wrong here'.",
 	},
 	{
-		Cmd:     "sar -n DEV 1 N",
-		Section: "Utilization",
-		Summary: "Per-interface throughput rate over N intervals.\nrxkB/s and txkB/s are the headline numbers. (sysstat package.)",
+		Cmd:      "sar -n DEV 1 N",
+		Section:  "Utilization",
+		Summary:  "Per-interface throughput rate over N intervals.\nrxkB/s and txkB/s are the headline numbers. (sysstat package.)",
+		Requires: []string{"sar"},
 	},
 	{
 		Cmd:     "ethtool eth0",
@@ -1654,9 +1505,10 @@ var networkCommands = []CommandRef{
 		Summary: "Socket count summary by protocol and state.\nThe TCP estab number is current connection load.",
 	},
 	{
-		Cmd:     "sar -n EDEV 1 N",
-		Section: "Saturation",
-		Summary: "Per-interface error/drop rates.\nrxdrop/s > 0 = NIC ring buffer or kernel queue is filling.\n(sysstat package.)",
+		Cmd:      "sar -n EDEV 1 N",
+		Section:  "Saturation",
+		Summary:  "Per-interface error/drop rates.\nrxdrop/s > 0 = NIC ring buffer or kernel queue is filling.\n(sysstat package.)",
+		Requires: []string{"sar"},
 	},
 	{
 		Cmd:     "ss -lnt",

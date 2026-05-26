@@ -11,14 +11,17 @@ import (
 )
 
 type Investigation struct {
-	Name           string
-	Title          string
-	Description    string
-	StepsFn        func(SystemInfo) []GuideStep
-	Extractors     []Extractor
-	Observations   []Observation
-	SynthesisRules []SynthesisRule
-	Commands       []CommandRef
+	Name         string
+	Title        string
+	Description  string
+	StepsFn      func(SystemInfo) []GuideStep
+	Observations []Observation
+	Commands     []CommandRef
+	// DiagnoseNotes carries per-dimension caveats shown to the learner at the
+	// `diagnose` verdict prompt — e.g. for Network Utilization, explaining
+	// that the tool cannot infer utilization without per-interface link speed.
+	// A nil map or missing entry prints nothing.
+	DiagnoseNotes map[string]string
 }
 
 type GuideStep struct {
@@ -39,11 +42,6 @@ type GuideStep struct {
 	// USE-relevant data. The command itself is left untouched, so question
 	// stems still reference the clean canonical command.
 	Filter func(CapturedCommand) string
-}
-
-type Extractor struct {
-	BaseCmd     string
-	QuestionsFn func(SystemInfo, CapturedCommand) []Question
 }
 
 type Question struct {
@@ -102,11 +100,6 @@ func combineVariantQuestions(variants []stepVariant) func(SystemInfo, CapturedCo
 	}
 }
 
-type SynthesisRule struct {
-	Requires []string
-	Generate func(SystemInfo, map[string]Value) (Question, bool)
-}
-
 type CommandRef struct {
 	Cmd                 string
 	Section             string
@@ -124,6 +117,18 @@ func journalctlAlternative(si SystemInfo, cmd string) []string {
 	return []string{cmd}
 }
 
+// Resource labels used by whole-system diagnose to group prompts. These are
+// the strings stored in Observation.Resource by init().
+const (
+	ResourceCPU     = "CPU"
+	ResourceMemory  = "Memory"
+	ResourceDisk    = "Disk"
+	ResourceNetwork = "Network"
+)
+
+// resourceOrder is the canonical USE walk order for `practice system`.
+var resourceOrder = []string{ResourceCPU, ResourceMemory, ResourceDisk, ResourceNetwork}
+
 var investigations = map[string]*Investigation{
 	"cpu":     cpuInvestigation,
 	"memory":  memoryInvestigation,
@@ -132,6 +137,70 @@ var investigations = map[string]*Investigation{
 }
 
 var appRand = rand.New(rand.NewSource(time.Now().UnixNano()))
+
+// tagObservations stamps a Resource label onto every entry in obs, mutating
+// the backing array. Observation slices in the per-resource Investigation
+// structs share that backing array, so the tag propagates through.
+func tagObservations(obs []Observation, resource string) {
+	for i := range obs {
+		obs[i].Resource = resource
+	}
+}
+
+func init() {
+	tagObservations(cpuObservations, ResourceCPU)
+	tagObservations(memoryObservations, ResourceMemory)
+	tagObservations(diskObservations, ResourceDisk)
+	tagObservations(networkObservations, ResourceNetwork)
+
+	// systemInvestigation aggregates the four resources for whole-system
+	// practice + diagnose. It is practice-only: there is no guided walkthrough
+	// across all four resources, so StepsFn returns nothing.
+	sysObs := make([]Observation, 0,
+		len(cpuObservations)+len(memoryObservations)+len(diskObservations)+len(networkObservations))
+	sysObs = append(sysObs, cpuObservations...)
+	sysObs = append(sysObs, memoryObservations...)
+	sysObs = append(sysObs, diskObservations...)
+	sysObs = append(sysObs, networkObservations...)
+
+	var sysCmds []CommandRef
+	sysCmds = append(sysCmds, cpuInvestigation.Commands...)
+	sysCmds = append(sysCmds, memoryInvestigation.Commands...)
+	sysCmds = append(sysCmds, diskInvestigation.Commands...)
+	sysCmds = append(sysCmds, networkInvestigation.Commands...)
+
+	investigations["system"] = &Investigation{
+		Name:  "system",
+		Title: "System — whole-system USE diagnosis",
+		Description: "Practice across the full system: capture any commands across CPU,\n" +
+			"memory, disk, and network, then run `diagnose` to assess each resource\n" +
+			"by USE (Utilization, Saturation, Errors).",
+		StepsFn:      func(SystemInfo) []GuideStep { return nil },
+		Observations: sysObs,
+		Commands:     sysCmds,
+		// DiagnoseNotes is intentionally nil at the system level: notes are
+		// per-(resource, dim) and must be looked up from the per-resource
+		// investigation at prompt time (see investigationForResource).
+	}
+}
+
+// investigationForResource maps a Resource label back to its per-resource
+// Investigation. Used by `diagnose` in system mode so that a per-dimension
+// note (e.g. Network Utilization's inferrability caveat) fires only at the
+// prompt for the resource it belongs to.
+func investigationForResource(resource string) *Investigation {
+	switch resource {
+	case ResourceCPU:
+		return cpuInvestigation
+	case ResourceMemory:
+		return memoryInvestigation
+	case ResourceDisk:
+		return diskInvestigation
+	case ResourceNetwork:
+		return networkInvestigation
+	}
+	return nil
+}
 
 func resourceNames() []string {
 	out := make([]string, 0, len(investigations))
@@ -225,20 +294,6 @@ func isExitCommand(line string) bool {
 	}
 }
 
-func extractQuestions(inv *Investigation, si SystemInfo, c CapturedCommand) []Question {
-	base := baseCmd(c.Cmd)
-	if base == "" {
-		return nil
-	}
-	var qs []Question
-	for _, e := range inv.Extractors {
-		if e.BaseCmd == base {
-			qs = append(qs, e.QuestionsFn(si, c)...)
-		}
-	}
-	return personalizeQuestions(qs, c.Cmd)
-}
-
 // baseCmd returns the first whitespace-separated token of a command line,
 // skipping a leading `sudo`. Returns "" for empty input. Used to match
 // captured commands against an extractor without false positives like
@@ -321,41 +376,6 @@ func makeRecallQuestion(stem, correct string, pool []string) []Question {
 // average) and shouldn't always pick the same one.
 func pickRandom[T any](xs []T) T {
 	return xs[appRand.Intn(len(xs))]
-}
-
-func recallQuestions(inv *Investigation, snap Snapshot) []Question {
-	var qs []Question
-	for _, obs := range inv.Observations {
-		if obs.Recall == nil {
-			continue
-		}
-		v, ok := snap.Values[obs.Name]
-		if !ok {
-			continue
-		}
-		qs = append(qs, obs.Recall(v)...)
-	}
-	return qs
-}
-
-func synthesisQuestions(inv *Investigation, si SystemInfo, snap Snapshot) []Question {
-	var qs []Question
-	for _, rule := range inv.SynthesisRules {
-		ready := true
-		for _, req := range rule.Requires {
-			if _, ok := snap.Values[req]; !ok {
-				ready = false
-				break
-			}
-		}
-		if !ready {
-			continue
-		}
-		if q, ok := rule.Generate(si, snap.Values); ok {
-			qs = append(qs, q)
-		}
-	}
-	return qs
 }
 
 func printCommands(inv *Investigation, si SystemInfo) {

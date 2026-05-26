@@ -13,11 +13,9 @@ var memoryInvestigation = &Investigation{
 	Description: "Investigate memory using Brendan Gregg's USE method.\n" +
 		"Run commands at the prompt; the harness captures their output\n" +
 		"and asks targeted questions about what you observed.",
-	StepsFn:        memorySteps,
-	Extractors:     memoryExtractors,
-	Observations:   memoryObservations,
-	SynthesisRules: memorySynthesisRules,
-	Commands:       memoryCommands,
+	StepsFn:      memorySteps,
+	Observations: memoryObservations,
+	Commands:     memoryCommands,
 }
 
 // ----- Guide steps -----
@@ -158,25 +156,8 @@ func memoryTopConsumerVariants() []stepVariant {
 
 // ----- Comprehension extractors (per-command) -----
 
-var memoryExtractors = []Extractor{
-	{BaseCmd: "cat", QuestionsFn: catMemoryQuestions},
-	{BaseCmd: "free", QuestionsFn: freeQuestions},
-	{BaseCmd: "vmstat", QuestionsFn: vmstatMemoryQuestions},
-	{BaseCmd: "ps", QuestionsFn: psRssQuestions},
-	{BaseCmd: "sar", QuestionsFn: sarWQuestions},
-	{BaseCmd: "top", QuestionsFn: topMemQuestions},
-	{BaseCmd: "dmesg", QuestionsFn: oomQuestions},
-	{BaseCmd: "journalctl", QuestionsFn: oomQuestions},
-}
-
 // catMemoryQuestions dispatches based on what the captured output looks like
 // (since `cat` is a multipurpose command).
-func catMemoryQuestions(si SystemInfo, c CapturedCommand) []Question {
-	var qs []Question
-	qs = append(qs, meminfoQuestions(si, c)...)
-	qs = append(qs, psiMemoryQuestions(si, c)...)
-	return qs
-}
 
 var meminfoMarkerRe = regexp.MustCompile(`(?m)^MemTotal:\s`)
 
@@ -465,108 +446,7 @@ var freeQuestionPicks = []columnQuestionPick{
 	},
 }
 
-func freeQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if !freeOutputDetected(c.Output) {
-		return nil
-	}
-	return []Question{{
-		Stem:    "In `free` output, the `available` column differs from `free`. Which best describes `available`?",
-		Correct: "An estimate of how much memory is usable for new allocations without swapping",
-		Distractors: []string{
-			"Memory currently mapped but not yet faulted in",
-			"Free memory minus kernel reserved memory",
-			"Free memory plus swap free",
-		},
-	}}
-}
-
 var vmstatMemHeaderRe = regexp.MustCompile(`(?m)^\s*r\s+b\s+swpd`)
-
-func vmstatMemoryQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if !vmstatMemHeaderRe.MatchString(c.Output) {
-		return nil
-	}
-	// Randomize whether we ask about `si` or `so` so the learner has to
-	// distinguish direction rather than memorising one column.
-	type swapPick struct {
-		col, correct, sibling string
-	}
-	pick := pickRandom([]swapPick{
-		{"si", "Pages swapped in from swap to memory per second", "Pages swapped out from memory to swap per second"},
-		{"so", "Pages swapped out from memory to swap per second", "Pages swapped in from swap to memory per second"},
-	})
-	qs := []Question{
-		{
-			Stem:    fmt.Sprintf("In `vmstat` output, what does the `%s` column under `swap` represent?", pick.col),
-			Correct: pick.correct,
-			Distractors: []string{
-				pick.sibling, // the OTHER direction is the strongest distractor
-				"Number of context switches per second",
-				"Free swap space in kilobytes",
-			},
-		},
-	}
-
-	siV, siOK := extractVmstatColumn("si")(si, []CapturedCommand{c})
-	soV, soOK := extractVmstatColumn("so")(si, []CapturedCommand{c})
-	if siOK && soOK {
-		swapMax := maxFloat(siV.Max(), soV.Max())
-		correct := fmt.Sprintf("%.0f", swapMax)
-		pool := []string{
-			fmt.Sprintf("%.0f", swapMax+10),
-			fmt.Sprintf("%.0f", swapMax+50),
-			fmt.Sprintf("%.0f", swapMax*5+1),
-			"0", "10", "100", "1000",
-		}
-		qs = append(qs, makeRecallQuestion(
-			fmt.Sprintf(
-				"This `vmstat` run reported `si` samples %s and `so` samples %s.\n"+
-					"What was the highest observed swap-activity sample across those two columns?",
-				formatSamples(siV.Samples), formatSamples(soV.Samples)),
-			correct, pool)...)
-
-		var correctInterpretation string
-		var distractors []string
-		if swapMax == 0 {
-			correctInterpretation = "No host-level swap-in or swap-out activity was observed in these samples; check PSI if the system still feels slow"
-			distractors = []string{
-				"Memory pressure is impossible because swap activity is zero",
-				"The system is definitely swapping because `swpd` was present in the header",
-				"The `si`/`so` columns show free swap capacity, not activity",
-			}
-		} else {
-			correctInterpretation = "At least one sample showed paging activity, so the working set may be exceeding RAM during the sample window"
-			distractors = []string{
-				"Non-zero `si`/`so` is harmless because it only counts page cache reclamation",
-				"Swap activity rules out memory pressure and points to disk errors only",
-				"The `si`/`so` columns show free swap capacity, not activity",
-			}
-		}
-		qs = append(qs, Question{
-			Stem: fmt.Sprintf(
-				"This `vmstat` run had max `si` %.0f and max `so` %.0f.\n"+
-					"Which interpretation best fits these samples?",
-				siV.Max(), soV.Max()),
-			Correct:     correctInterpretation,
-			Distractors: distractors,
-		})
-		if swapMax == 0 {
-			qs = append(qs, Question{
-				Stem: fmt.Sprintf(
-					"This `vmstat` run showed max `si` %.0f and max `so` %.0f.\n"+
-						"If the system still feels slow, what should you check next?",
-					siV.Max(), soV.Max()),
-				Correct: "PSI (/proc/pressure/memory) — pressure can exist at the cgroup level without host-level swap activity",
-				Distractors: []string{
-					"The `swpd` column to confirm swap is configured",
-					"`free -h` again, since vmstat samples are often stale",
-					"Disable swap and re-test — swap is the only source of memory pressure",
-				},
-			})
-		}
-	}
-	return qs
-}
 
 func formatSamples(samples []float64) string {
 	if len(samples) == 0 {
@@ -752,36 +632,6 @@ func outputHasPSIName(output, name string) bool {
 	return false
 }
 
-func psRssQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if !psRssOutputDetected(c.Output) {
-		return nil
-	}
-	qs := []Question{{
-		Stem:    "Summing RSS across all processes can exceed total physical memory used. Why?",
-		Correct: "Shared pages (libc, mmaped binaries) are counted once in each process's RSS",
-		Distractors: []string{
-			"RSS includes swapped-out pages",
-			"RSS is reported in pages, not bytes, so the unit is misleading",
-			"The kernel double-counts pages that are also in the page cache",
-		},
-	}}
-	if proc, rss, ok := topRSSProcess(c.Output); ok {
-		qs = append(qs, Question{
-			Stem: fmt.Sprintf(
-				"In this `ps` output, the largest RSS entry is `%s` at %s.\n"+
-					"What is the most important caveat when interpreting that number?",
-				proc, formatKiBGiB(rss)),
-			Correct: "RSS includes shared pages, so this is not the process's fully private memory footprint",
-			Distractors: []string{
-				"RSS includes memory that has already been swapped out",
-				"RSS is a cumulative lifetime allocation counter",
-				"RSS is the amount of swap reserved for the process",
-			},
-		})
-	}
-	return qs
-}
-
 func psRssColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !psRssOutputDetected(c.Output) {
 		return nil
@@ -814,16 +664,6 @@ var sarWHeaderRe = regexp.MustCompile(`pswpin/s\s+pswpout/s`)
 
 // sarWQuestions returns one random question — used by the extractor (free-form
 // practice mode) where a single comprehension check per capture suffices.
-func sarWQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if !sarWHeaderRe.MatchString(c.Output) {
-		return nil
-	}
-	return randomColumnQuestions(
-		availableColumnQuestionPicks(c.Output, sarWQuestionPicks),
-		1,
-		sarWStemFor,
-	)
-}
 
 // sarWColumnQuestions returns the full pool, used by the guide step.
 func sarWColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
@@ -873,16 +713,6 @@ func topOutputDetected(output string) bool {
 }
 
 // topMemQuestions returns one random column question — extractor variant.
-func topMemQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if !topOutputDetected(c.Output) {
-		return nil
-	}
-	return randomColumnQuestions(
-		availableColumnQuestionPicks(c.Output, topMemQuestionPicks),
-		1,
-		topMemStemFor,
-	)
-}
 
 // topMemColumnQuestions returns the full pool — guide-step variant.
 func topMemColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
@@ -992,35 +822,6 @@ func topRSSProcess(output string) (string, float64, bool) {
 	return "", 0, false
 }
 
-func oomQuestions(si SystemInfo, c CapturedCommand) []Question {
-	low := strings.ToLower(c.Output)
-	if !strings.Contains(low, "out of memory") &&
-		!strings.Contains(low, "killed process") &&
-		!strings.Contains(low, "oom-killer") {
-		return nil
-	}
-	return []Question{
-		{
-			Stem:    "When the kernel logs an OOM kill, how does it choose the victim process?",
-			Correct: "The process with the highest `oom_score`, biased by RSS and `oom_score_adj`",
-			Distractors: []string{
-				"The process that requested the allocation that triggered OOM",
-				"The most recently started process",
-				"The process with the lowest priority (`nice` value)",
-			},
-		},
-		{
-			Stem:    "An OOM kill log line includes a memcg path (e.g. `oom-kill: ... oom_memcg=/system.slice/foo.service`).\nWhat does this tell you?",
-			Correct: "The OOM was scoped to a cgroup memory limit, not the host running out of memory",
-			Distractors: []string{
-				"The host ran out of memory and systemd was the trigger",
-				"The cgroup is exempt from OOM kills but logged the event",
-				"Only services managed by systemd can be OOM-killed",
-			},
-		},
-	}
-}
-
 // ----- Observations -----
 
 var memoryObservations = []Observation{
@@ -1029,57 +830,130 @@ var memoryObservations = []Observation{
 		Title:   "Memory used",
 		Section: "Utilization",
 		Extract: extractMemUsedPct,
-		Recall:  memUsedPctRecall,
+		// Deliberately no Verdict: on Linux 'used' includes reclaimable
+		// page cache, so high used% is routine on healthy systems. The
+		// Heuristic explains this if the learner tries to cite it.
+		Heuristic: "On Linux 'used' includes reclaimable page cache, so a high used% is not pressure. The honest utilization signal is available memory (and saturation = swap activity / PSI).",
 	},
 	{
-		Name:    "mem_available_gib",
-		Title:   "Memory available",
-		Section: "Utilization",
-		Extract: extractMemAvailableGiB,
+		Name:      "mem_available_gib",
+		Title:     "Memory available",
+		Section:   "Utilization",
+		Extract:   extractMemAvailableGiB,
+		Verdict:   verdictMemAvailable,
+		Heuristic: "available memory in the low-GiB range indicates real pressure (Linux already counts reclaimable cache toward available)",
 	},
 	{
-		Name:    "cache_buffers_gib",
-		Title:   "Cache + buffers",
-		Section: "Utilization",
-		Extract: extractCacheBuffersGiB,
+		Name:      "cache_buffers_gib",
+		Title:     "Cache + buffers",
+		Section:   "Utilization",
+		Extract:   extractCacheBuffersGiB,
+		Heuristic: "cache + buffers is reclaimable memory the kernel hands back under pressure — informational, not a verdict on its own",
 	},
 	{
-		Name:    "swap_used_pct",
-		Title:   "Swap used",
-		Section: "Utilization",
-		Extract: extractSwapUsedPct,
+		Name:      "swap_used_pct",
+		Title:     "Swap used",
+		Section:   "Utilization",
+		Extract:   extractSwapUsedPct,
+		Verdict:   verdictSwapUsed,
+		Heuristic: "sustained swap use indicates memory pressure: the kernel is pushing anonymous pages out of RAM",
 	},
 	{
-		Name:    "vmstat_si",
-		Title:   "vmstat si (swap-in)",
-		Section: "Saturation",
-		Extract: extractVmstatColumn("si"),
-		Recall:  swapSamplesRecall("si"),
+		Name:      "vmstat_si",
+		Title:     "vmstat si (swap-in)",
+		Section:   "Saturation",
+		Extract:   extractVmstatColumn("si"),
+		Verdict:   verdictSwapActivity,
+		Heuristic: "vmstat si > 0 = pages being swapped IN from disk = the kernel needed RAM it had paged out (the tool drops vmstat's since-boot first row, so the verdict reflects interval samples only)",
 	},
 	{
-		Name:    "vmstat_so",
-		Title:   "vmstat so (swap-out)",
-		Section: "Saturation",
-		Extract: extractVmstatColumn("so"),
+		Name:      "vmstat_so",
+		Title:     "vmstat so (swap-out)",
+		Section:   "Saturation",
+		Extract:   extractVmstatColumn("so"),
+		Verdict:   verdictSwapActivity,
+		Heuristic: "vmstat so > 0 = pages being swapped OUT to disk = active reclaim under memory pressure (the tool drops vmstat's since-boot first row)",
 	},
 	{
-		Name:    "psi_mem_some_avg10",
-		Title:   "PSI memory some (avg10)",
-		Section: "Saturation",
-		Extract: extractPSIMemory("some"),
+		Name:      "psi_mem_some_avg10",
+		Title:     "PSI memory some (avg10)",
+		Section:   "Saturation",
+		Extract:   extractPSIMemory("some"),
+		Verdict:   verdictPSISome,
+		Heuristic: "PSI memory 'some' avg10 = percent of the last 10s window with at least one task stalled on memory; >10% sustained = saturation",
 	},
 	{
-		Name:    "psi_mem_full_avg10",
-		Title:   "PSI memory full (avg10)",
-		Section: "Saturation",
-		Extract: extractPSIMemory("full"),
+		Name:      "psi_mem_full_avg10",
+		Title:     "PSI memory full (avg10)",
+		Section:   "Saturation",
+		Extract:   extractPSIMemory("full"),
+		Verdict:   verdictPSIFull,
+		Heuristic: "PSI memory 'full' avg10 = percent of the window where ALL non-idle tasks stalled on memory; any sustained non-zero = severe saturation",
 	},
 	{
-		Name:    "dmesg_oom_count",
-		Title:   "OOM events in dmesg",
-		Section: "Errors",
-		Extract: extractDmesgOOM,
+		Name:      "dmesg_oom_count",
+		Title:     "OOM events in dmesg",
+		Section:   "Errors",
+		Extract:   extractDmesgOOM,
+		Verdict:   verdictDmesgOOM,
+		Heuristic: "OOM-killer entries in the kernel log = memory has already been exhausted; the kernel killed processes to reclaim",
 	},
+}
+
+// ----- Diagnosis verdicts -----
+
+func verdictMemAvailable(_ SystemInfo, v Value, _ Snapshot) Signal {
+	switch {
+	case v.Number < 0.5:
+		return SignalHigh
+	case v.Number < 2:
+		return SignalModerate
+	default:
+		return SignalLow
+	}
+}
+
+func verdictSwapUsed(_ SystemInfo, v Value, _ Snapshot) Signal {
+	switch {
+	case v.Number >= 50:
+		return SignalHigh
+	case v.Number >= 5:
+		return SignalModerate
+	default:
+		return SignalLow
+	}
+}
+
+func verdictSwapActivity(_ SystemInfo, v Value, _ Snapshot) Signal {
+	if v.Max() > 0 {
+		return SignalHigh
+	}
+	return SignalLow
+}
+
+func verdictPSISome(_ SystemInfo, v Value, _ Snapshot) Signal {
+	switch {
+	case v.Number > 10:
+		return SignalHigh
+	case v.Number > 0:
+		return SignalModerate
+	default:
+		return SignalLow
+	}
+}
+
+func verdictPSIFull(_ SystemInfo, v Value, _ Snapshot) Signal {
+	if v.Number > 0 {
+		return SignalHigh
+	}
+	return SignalLow
+}
+
+func verdictDmesgOOM(_ SystemInfo, v Value, _ Snapshot) Signal {
+	if v.Number > 0 {
+		return SignalHigh
+	}
+	return SignalLow
 }
 
 // parseMeminfoKB pulls a single key:value (in kB) from /proc/meminfo output
@@ -1428,118 +1302,43 @@ func extractDmesgOOM(si SystemInfo, caps []CapturedCommand) (Value, bool) {
 		return Value{}, false
 	}
 	return Value{
-		Text: fmt.Sprintf("%d/%d lines mention OOM", matched, totalLines),
+		Number: float64(matched),
+		Text:   fmt.Sprintf("%d/%d lines mention OOM", matched, totalLines),
 	}, true
 }
 
 // ----- Recall question generators -----
 
-func memUsedPctRecall(v Value) []Question {
-	correct := fmt.Sprintf("%.0f%%", v.Number)
-	pool := []string{
-		fmt.Sprintf("%.0f%%", clamp(v.Number+25, 0, 100)),
-		fmt.Sprintf("%.0f%%", clamp(v.Number-20, 0, 100)),
-		fmt.Sprintf("%.0f%%", clamp(v.Number+10, 0, 100)),
-		"0%", "25%", "50%", "75%", "99%",
-	}
-	return makeRecallQuestion(
-		"What memory-used percentage did you observe (treating reclaimable cache as available)?",
-		correct, pool)
-}
-
-func swapSamplesRecall(col string) func(Value) []Question {
-	return func(v Value) []Question {
-		if len(v.Samples) == 0 {
-			return nil
-		}
-		max := v.Samples[0]
-		for _, x := range v.Samples {
-			if x > max {
-				max = x
-			}
-		}
-		correct := fmt.Sprintf("%.0f", max)
-		pool := []string{
-			fmt.Sprintf("%.0f", max+10),
-			fmt.Sprintf("%.0f", max+50),
-			fmt.Sprintf("%.0f", max*5+1),
-			"0", "10", "100", "1000",
-		}
-		return makeRecallQuestion(
-			fmt.Sprintf("What was the highest `%s` (swap) sample you observed in vmstat?", col),
-			correct, pool)
-	}
-}
-
 // ----- Synthesis rules -----
 
-var memorySynthesisRules = []SynthesisRule{
-	swapPSIConsistency,
+func oomQuestions(si SystemInfo, c CapturedCommand) []Question {
+	low := strings.ToLower(c.Output)
+	if !strings.Contains(low, "out of memory") &&
+		!strings.Contains(low, "killed process") &&
+		!strings.Contains(low, "oom-killer") {
+		return nil
+	}
+	return []Question{
+		{
+			Stem:    "When the kernel logs an OOM kill, how does it choose the victim process?",
+			Correct: "The process with the highest `oom_score`, biased by RSS and `oom_score_adj`",
+			Distractors: []string{
+				"The process that requested the allocation that triggered OOM",
+				"The most recently started process",
+				"The process with the lowest priority (`nice` value)",
+			},
+		},
+		{
+			Stem:    "An OOM kill log line includes a memcg path (e.g. `oom-kill: ... oom_memcg=/system.slice/foo.service`).\nWhat does this tell you?",
+			Correct: "The OOM was scoped to a cgroup memory limit, not the host running out of memory",
+			Distractors: []string{
+				"The host ran out of memory and systemd was the trigger",
+				"The cgroup is exempt from OOM kills but logged the event",
+				"Only services managed by systemd can be OOM-killed",
+			},
+		},
+	}
 }
-
-var swapPSIConsistency = SynthesisRule{
-	Requires: []string{"vmstat_si", "vmstat_so", "psi_mem_full_avg10"},
-	Generate: func(si SystemInfo, vs map[string]Value) (Question, bool) {
-		siV := vs["vmstat_si"]
-		soV := vs["vmstat_so"]
-		psiFull := vs["psi_mem_full_avg10"].Number
-
-		swapMax := 0.0
-		for _, x := range siV.Samples {
-			if x > swapMax {
-				swapMax = x
-			}
-		}
-		for _, x := range soV.Samples {
-			if x > swapMax {
-				swapMax = x
-			}
-		}
-
-		var correct string
-		switch {
-		case swapMax == 0 && psiFull < 0.5:
-			correct = "Consistent — no swap activity matches near-zero PSI full; the system is not under memory pressure."
-		case swapMax > 0 && psiFull > 1:
-			correct = "Consistent — paging activity matches measurable PSI full stalls; tasks are being slowed by memory."
-		case swapMax == 0 && psiFull > 5:
-			correct = "Inconsistent at the host level — PSI shows stalls but no host swap activity, which often means cgroup-level memory pressure (a container hit its limit)."
-		case swapMax > 5 && psiFull < 0.5:
-			correct = "Unusual — visible paging but very low PSI full; could be fast swap (NVMe) absorbing the cost, or a sampling artifact."
-		default:
-			return Question{}, false
-		}
-
-		pool := []string{
-			"Consistent — no swap activity matches near-zero PSI full; the system is not under memory pressure.",
-			"Consistent — paging activity matches measurable PSI full stalls; tasks are being slowed by memory.",
-			"Inconsistent at the host level — PSI shows stalls but no host swap activity, which often means cgroup-level memory pressure (a container hit its limit).",
-			"Unusual — visible paging but very low PSI full; could be fast swap (NVMe) absorbing the cost, or a sampling artifact.",
-			"Cannot be compared — PSI and vmstat measure entirely unrelated subsystems.",
-		}
-		var distractors []string
-		for _, p := range pool {
-			if p != correct {
-				distractors = append(distractors, p)
-			}
-		}
-		if len(distractors) > 3 {
-			distractors = distractors[:3]
-		}
-
-		return Question{
-			Stem: fmt.Sprintf(
-				"Highest swap-activity sample (max of `si`/`so`) was %.0f.\n"+
-					"PSI memory `full avg10` was %.2f%%.\n"+
-					"Which best describes the relationship between these two readings?",
-				swapMax, psiFull),
-			Correct:     correct,
-			Distractors: distractors,
-		}, true
-	},
-}
-
-// ----- Command reference -----
 
 var memoryCommands = []CommandRef{
 	{
@@ -1568,19 +1367,22 @@ var memoryCommands = []CommandRef{
 		Summary: "Watch the `si` and `so` columns. Sustained non-zero\nvalues mean the working set exceeds physical memory.",
 	},
 	{
-		Cmd:     "cat /proc/pressure/memory",
-		Section: "Saturation",
-		Summary: "PSI: time-share of tasks stalled on memory.\n`full` > 0 is the strongest saturation signal.\nLinux 4.20+ with PSI enabled (kernel.org/PSI).",
+		Cmd:      "cat /proc/pressure/memory",
+		Section:  "Saturation",
+		Summary:  "PSI: time-share of tasks stalled on memory.\n`full` > 0 is the strongest saturation signal.\nLinux 4.20+ with PSI enabled (kernel.org/PSI).",
+		Requires: []string{"psi"},
 	},
 	{
-		Cmd:     "sar -B 1 N",
-		Section: "Saturation",
-		Summary: "Paging stats (pgpgin/pgpgout/fault/majflt) over time.\n(sysstat package.)",
+		Cmd:      "sar -B 1 N",
+		Section:  "Saturation",
+		Summary:  "Paging stats (pgpgin/pgpgout/fault/majflt) over time.\n(sysstat package.)",
+		Requires: []string{"sar"},
 	},
 	{
-		Cmd:     "sar -W 1 N",
-		Section: "Saturation",
-		Summary: "Swap-in/swap-out rate over time. (sysstat package.)",
+		Cmd:      "sar -W 1 N",
+		Section:  "Saturation",
+		Summary:  "Swap-in/swap-out rate over time. (sysstat package.)",
+		Requires: []string{"sar"},
 	},
 	{
 		Cmd:     "dmesg -T | grep -iE 'killed process|out of memory|oom-killer'",

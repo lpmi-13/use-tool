@@ -14,11 +14,9 @@ var diskInvestigation = &Investigation{
 	Description: "Investigate disk I/O using Brendan Gregg's USE method.\n" +
 		"Run commands at the prompt; the harness captures their output\n" +
 		"and asks targeted questions about what you observed.",
-	StepsFn:        diskSteps,
-	Extractors:     diskExtractors,
-	Observations:   diskObservations,
-	SynthesisRules: diskSynthesisRules,
-	Commands:       diskCommands,
+	StepsFn:      diskSteps,
+	Observations: diskObservations,
+	Commands:     diskCommands,
 }
 
 // ----- Guide steps -----
@@ -154,26 +152,7 @@ func diskThroughputVariants(si SystemInfo) []stepVariant {
 
 // ----- Comprehension extractors (per-command) -----
 
-var diskExtractors = []Extractor{
-	{BaseCmd: "iostat", QuestionsFn: iostatQuestions},
-	{BaseCmd: "lsblk", QuestionsFn: lsblkQuestions},
-	{BaseCmd: "pidstat", QuestionsFn: pidstatDQuestions},
-	{BaseCmd: "sar", QuestionsFn: sarDQuestions},
-	{BaseCmd: "cat", QuestionsFn: catDiskQuestions},
-	{BaseCmd: "dmesg", QuestionsFn: diskDmesgQuestions},
-	{BaseCmd: "journalctl", QuestionsFn: diskDmesgQuestions},
-}
-
 // catDiskQuestions dispatches based on the path looked at.
-func catDiskQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if strings.Contains(c.Cmd, "/proc/pressure/io") {
-		return psiIOQuestions(si, c)
-	}
-	if strings.Contains(c.Cmd, "/proc/partitions") {
-		return procPartitionsQuestions(si, c)
-	}
-	return nil
-}
 
 // procPartitionsHeaderRe matches the header line of `/proc/partitions`,
 // which always begins with `major minor  #blocks  name`.
@@ -251,16 +230,6 @@ var procPartitionsQuestionPicks = []columnQuestionPick{
 var sarDHeaderRe = regexp.MustCompile(`(?m)^[\d:]+\s+DEV\b.*\bawait\b`)
 
 // sarDQuestions returns one random column question — extractor variant.
-func sarDQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if !sarDHeaderRe.MatchString(c.Output) {
-		return nil
-	}
-	return randomColumnQuestions(
-		availableColumnQuestionPicks(c.Output, sarDQuestionPicks),
-		1,
-		sarDStemFor,
-	)
-}
 
 // sarDColumnQuestions returns the full pool — guide-step variant.
 func sarDColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
@@ -381,19 +350,6 @@ var sarDQuestionPicks = []columnQuestionPick{
 
 var iostatHeaderRe = regexp.MustCompile(`(?m)^Device.*%util`)
 
-func iostatQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if !iostatHeaderRe.MatchString(c.Output) {
-		return nil
-	}
-	return randomColumnQuestions(
-		availableIostatQuestionPicks(c.Output),
-		1,
-		func(column string) string {
-			return fmt.Sprintf("In `iostat -x` output, what does the `%s` column represent?", column)
-		},
-	)
-}
-
 func iostatColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !iostatHeaderRe.MatchString(c.Output) {
 		return nil
@@ -485,21 +441,6 @@ func availableIostatQuestionPicks(output string) []columnQuestionPick {
 	return availableColumnQuestionPicks(output, iostatQuestionPicks)
 }
 
-func lsblkQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if !strings.Contains(c.Output, "NAME") || !strings.Contains(c.Output, "TYPE") {
-		return nil
-	}
-	return []Question{{
-		Stem:    "In `lsblk`, what's the difference between a row with TYPE=disk and one with TYPE=part?",
-		Correct: "`disk` is a whole physical (or virtual) block device; `part` is a partition that lives on a disk",
-		Distractors: []string{
-			"`disk` is mounted; `part` is not",
-			"`disk` rows show capacity; `part` rows show usage",
-			"`disk` is local; `part` is networked",
-		},
-	}}
-}
-
 func lsblkColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !strings.Contains(c.Output, "NAME") || !strings.Contains(c.Output, "TYPE") {
 		return nil
@@ -576,41 +517,6 @@ var lsblkQuestionPicks = []columnQuestionPick{
 			"The applications currently writing to the device",
 		},
 	},
-}
-
-func pidstatDQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if !strings.Contains(c.Output, "kB_rd/s") && !strings.Contains(c.Output, "kB_wr/s") {
-		return nil
-	}
-	// Randomize between read and write directions.
-	type ioPick struct {
-		col     string
-		correct string
-		dMapped string // distractor: "...memory-mapped files only"
-		dUptime string // distractor: "...divided by uptime"
-		dQueue  string // distractor: "...still in the kernel's queue"
-	}
-	pick := pickRandom([]ioPick{
-		{
-			col:     "kB_rd/s",
-			correct: "The rate at which the process is causing data to be read from storage, in kilobytes per second",
-			dMapped: "The rate at which the process is reading from memory-mapped files only",
-			dUptime: "Total bytes read by the process since it started, divided by uptime",
-			dQueue:  "The size of pending reads still in the kernel's I/O queue",
-		},
-		{
-			col:     "kB_wr/s",
-			correct: "The rate at which the process is causing data to be written to storage, in kilobytes per second",
-			dMapped: "The rate at which the process is writing to memory-mapped files only",
-			dUptime: "Total bytes written by the process since it started, divided by uptime",
-			dQueue:  "The size of pending writes still in the kernel's writeback queue",
-		},
-	})
-	return []Question{{
-		Stem:        fmt.Sprintf("In `pidstat -d` output, what does the `%s` column measure for each process?", pick.col),
-		Correct:     pick.correct,
-		Distractors: []string{pick.dMapped, pick.dUptime, pick.dQueue},
-	}}
 }
 
 func pidstatDColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
@@ -730,83 +636,102 @@ func psiIOColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 	return psiColumnQuestions("/proc/pressure/io", "I/O", c.Output)
 }
 
-func diskDmesgQuestions(si SystemInfo, c CapturedCommand) []Question {
-	low := strings.ToLower(c.Output)
-	if !strings.Contains(low, "i/o error") &&
-		!strings.Contains(low, "buffer i/o error") &&
-		!strings.Contains(low, "read-only") &&
-		!strings.Contains(low, "ext4-fs error") {
-		return nil
-	}
-	tool := kernelLogQuestionTool(c.Cmd)
-	return []Question{
-		{
-			Stem:    fmt.Sprintf("If `%s` shows `Remounting filesystem read-only`, what just happened and what's the immediate consequence for processes?", tool),
-			Correct: "The kernel hit unrecoverable I/O errors and remounted the filesystem read-only as a safety measure; subsequent writes will fail with EROFS",
-			Distractors: []string{
-				"An administrator enabled read-only mode; processes will pause until it's unset",
-				"The filesystem is being checked; writes are temporarily queued and will replay",
-				"Disk space is exhausted; processes will see ENOSPC until space frees",
-			},
-		},
-		{
-			Stem:    fmt.Sprintf("In `%s` output, recurring `I/O error` lines on a single device most strongly suggest:", tool),
-			Correct: "Hardware degradation — the storage media or its connection is failing",
-			Distractors: []string{
-				"The kernel I/O scheduler is misconfigured",
-				"The filesystem needs to be reformatted",
-				"A user-space process is opening too many file descriptors",
-			},
-		},
-	}
-}
-
 // ----- Observations -----
 
 var diskObservations = []Observation{
 	{
-		Name:    "iostat_max_util_pct",
-		Title:   "Max %util across devices",
-		Section: "Utilization",
-		Extract: extractIostatMaxUtil,
-		Recall:  iostatMaxUtilRecall,
+		Name:      "iostat_max_util_pct",
+		Title:     "Max %util across devices",
+		Section:   "Utilization",
+		Extract:   extractIostatMaxUtil,
+		Verdict:   verdictDiskUtil,
+		Heuristic: "%util near 100 = device backplane busy that interval (note: on SSDs/NVMe with parallel queues %util can saturate while the device still has headroom; corroborate with aqu-sz / await)",
 	},
 	{
-		Name:    "iostat_peak_iops",
-		Title:   "Peak per-device IOPS (r/s + w/s)",
-		Section: "Utilization",
-		Extract: extractIostatPeakIOPS,
+		Name:      "iostat_peak_iops",
+		Title:     "Peak per-device IOPS (r/s + w/s)",
+		Section:   "Utilization",
+		Extract:   extractIostatPeakIOPS,
+		Heuristic: "absolute IOPS is informational — what counts as high depends entirely on the device class (HDD vs SATA SSD vs NVMe)",
 	},
 	{
-		Name:    "iostat_max_aqu_sz",
-		Title:   "Max queue depth (aqu-sz)",
-		Section: "Saturation",
-		Extract: extractIostatMaxAquSz,
+		Name:      "iostat_max_aqu_sz",
+		Title:     "Max queue depth (aqu-sz)",
+		Section:   "Saturation",
+		Extract:   extractIostatMaxAquSz,
+		Verdict:   verdictAquSz,
+		Heuristic: "average queue depth > 1 sustained = requests are queueing behind the device = saturation",
 	},
 	{
-		Name:    "iostat_max_await_ms",
-		Title:   "Max await (ms)",
-		Section: "Saturation",
-		Extract: extractIostatMaxAwait,
+		Name:      "iostat_max_await_ms",
+		Title:     "Max await (ms)",
+		Section:   "Saturation",
+		Extract:   extractIostatMaxAwait,
+		Verdict:   verdictAwait,
+		Heuristic: "await is end-to-end request latency (queue + service); sustained >20ms on SSDs/NVMe is suspicious",
 	},
 	{
-		Name:    "psi_io_some_avg10",
-		Title:   "PSI io some (avg10)",
-		Section: "Saturation",
-		Extract: extractPSIIO("some"),
+		Name:      "psi_io_some_avg10",
+		Title:     "PSI io some (avg10)",
+		Section:   "Saturation",
+		Extract:   extractPSIIO("some"),
+		Verdict:   verdictPSISome,
+		Heuristic: "PSI io 'some' avg10 = percent of the last 10s with at least one task stalled on I/O; >10% sustained = saturation",
 	},
 	{
-		Name:    "psi_io_full_avg10",
-		Title:   "PSI io full (avg10)",
-		Section: "Saturation",
-		Extract: extractPSIIO("full"),
+		Name:      "psi_io_full_avg10",
+		Title:     "PSI io full (avg10)",
+		Section:   "Saturation",
+		Extract:   extractPSIIO("full"),
+		Verdict:   verdictPSIFull,
+		Heuristic: "PSI io 'full' avg10 = percent of the window where ALL non-idle tasks stalled on I/O; any sustained non-zero = severe saturation",
 	},
 	{
-		Name:    "dmesg_io_errors",
-		Title:   "I/O errors in dmesg",
-		Section: "Errors",
-		Extract: extractDmesgIOErrors,
+		Name:      "dmesg_io_errors",
+		Title:     "I/O errors in dmesg",
+		Section:   "Errors",
+		Extract:   extractDmesgIOErrors,
+		Verdict:   verdictDmesgIOErrors,
+		Heuristic: "I/O error / buffer error / read-only remount entries in the kernel log = device-level failures",
 	},
+}
+
+// ----- Diagnosis verdicts -----
+
+func verdictDiskUtil(_ SystemInfo, v Value, _ Snapshot) Signal {
+	switch {
+	case v.Number >= 80:
+		return SignalHigh
+	case v.Number >= 50:
+		return SignalModerate
+	default:
+		return SignalLow
+	}
+}
+
+func verdictAquSz(_ SystemInfo, v Value, _ Snapshot) Signal {
+	if v.Number > 1 {
+		return SignalHigh
+	}
+	return SignalLow
+}
+
+func verdictAwait(_ SystemInfo, v Value, _ Snapshot) Signal {
+	switch {
+	case v.Number >= 20:
+		return SignalHigh
+	case v.Number >= 10:
+		return SignalModerate
+	default:
+		return SignalLow
+	}
+}
+
+func verdictDmesgIOErrors(_ SystemInfo, v Value, _ Snapshot) Signal {
+	if v.Number > 0 {
+		return SignalHigh
+	}
+	return SignalLow
 }
 
 // iostatRow holds the columns we care about from one iostat output row.
@@ -1089,81 +1014,45 @@ func extractDmesgIOErrors(si SystemInfo, caps []CapturedCommand) (Value, bool) {
 		return Value{}, false
 	}
 	return Value{
-		Text: fmt.Sprintf("%d/%d lines mention I/O errors or read-only remounts", matched, totalLines),
+		Number: float64(matched),
+		Text:   fmt.Sprintf("%d/%d lines mention I/O errors or read-only remounts", matched, totalLines),
 	}, true
 }
 
 // ----- Recall question generators -----
 
-func iostatMaxUtilRecall(v Value) []Question {
-	correct := fmt.Sprintf("%.0f%%", v.Number)
-	pool := []string{
-		fmt.Sprintf("%.0f%%", clamp(v.Number-10, 0, 100)),
-		fmt.Sprintf("%.0f%%", clamp(v.Number-25, 0, 100)),
-		fmt.Sprintf("%.0f%%", clamp(v.Number-50, 0, 100)),
-		"0%", "25%", "50%", "75%", "100%",
-	}
-	return makeRecallQuestion(
-		"What was the highest `%util` value you observed in iostat across all devices?",
-		correct, pool)
-}
-
 // ----- Synthesis rules -----
 
-var diskSynthesisRules = []SynthesisRule{
-	utilAwaitConsistency,
+func diskDmesgQuestions(si SystemInfo, c CapturedCommand) []Question {
+	low := strings.ToLower(c.Output)
+	if !strings.Contains(low, "i/o error") &&
+		!strings.Contains(low, "buffer i/o error") &&
+		!strings.Contains(low, "read-only") &&
+		!strings.Contains(low, "ext4-fs error") {
+		return nil
+	}
+	tool := kernelLogQuestionTool(c.Cmd)
+	return []Question{
+		{
+			Stem:    fmt.Sprintf("If `%s` shows `Remounting filesystem read-only`, what just happened and what's the immediate consequence for processes?", tool),
+			Correct: "The kernel hit unrecoverable I/O errors and remounted the filesystem read-only as a safety measure; subsequent writes will fail with EROFS",
+			Distractors: []string{
+				"An administrator enabled read-only mode; processes will pause until it's unset",
+				"The filesystem is being checked; writes are temporarily queued and will replay",
+				"Disk space is exhausted; processes will see ENOSPC until space frees",
+			},
+		},
+		{
+			Stem:    fmt.Sprintf("In `%s` output, recurring `I/O error` lines on a single device most strongly suggest:", tool),
+			Correct: "Hardware degradation — the storage media or its connection is failing",
+			Distractors: []string{
+				"The kernel I/O scheduler is misconfigured",
+				"The filesystem needs to be reformatted",
+				"A user-space process is opening too many file descriptors",
+			},
+		},
+	}
 }
-
-// utilAwaitConsistency lands the SSD %util gotcha: high %util alone says
-// nothing about saturation on parallel devices; you have to read aqu-sz and
-// await alongside it.
-var utilAwaitConsistency = SynthesisRule{
-	Requires: []string{"iostat_max_util_pct", "iostat_max_aqu_sz", "iostat_max_await_ms"},
-	Generate: func(si SystemInfo, vs map[string]Value) (Question, bool) {
-		util := vs["iostat_max_util_pct"].Number
-		aqu := vs["iostat_max_aqu_sz"].Number
-		await := vs["iostat_max_await_ms"].Number
-
-		var correct string
-		switch {
-		case util >= 90 && aqu < 2 && await < 5:
-			correct = "Busy but not saturated — high %util with low queue depth and low await is the signature of a parallel (SSD/NVMe) device that can absorb the load. %util is misleading here."
-		case aqu >= 4 && await >= 20:
-			correct = "Saturated — high queue depth and high await mean requests are queueing and waiting. The device cannot keep up with offered load."
-		case util < 50 && aqu < 1 && await < 5:
-			correct = "Headroom — low utilization, no queueing, low latency. The disk has spare capacity."
-		default:
-			return Question{}, false
-		}
-
-		pool := []string{
-			"Busy but not saturated — high %util with low queue depth and low await is the signature of a parallel (SSD/NVMe) device that can absorb the load. %util is misleading here.",
-			"Saturated — high queue depth and high await mean requests are queueing and waiting. The device cannot keep up with offered load.",
-			"Headroom — low utilization, no queueing, low latency. The disk has spare capacity.",
-			"Cannot be assessed — these three columns measure unrelated subsystems.",
-		}
-		var distractors []string
-		for _, p := range pool {
-			if p != correct {
-				distractors = append(distractors, p)
-			}
-		}
-		if len(distractors) > 3 {
-			distractors = distractors[:3]
-		}
-
-		return Question{
-			Stem: fmt.Sprintf(
-				"Max %%util observed: %.0f%%; max aqu-sz: %.1f; max await: %.1f ms.\n"+
-					"Which best describes what these three numbers say together?",
-				util, aqu, await),
-			Correct:     correct,
-			Distractors: distractors,
-		}, true
-	},
-}
-
-// ----- Command reference -----
 
 var diskCommands = []CommandRef{
 	{
@@ -1172,9 +1061,10 @@ var diskCommands = []CommandRef{
 		Summary: "Tree of block devices and their partitions/LVMs.\nFastest orientation when you don't know the device names.",
 	},
 	{
-		Cmd:     "iostat -xz 1 N | grep -vE '^loop'",
-		Section: "Utilization",
-		Summary: "Per-device extended stats over N intervals.\n-x adds %util/await/aqu-sz; -z hides idle devices.\nThe grep filters snap loop-mounts so the real devices don't get\nlost in ~25 rows of `loop0..loopN` noise. Drop the pipe if you\nspecifically want to see those.\nThe single most important disk command.",
+		Cmd:      "iostat -xz 1 N | grep -vE '^loop'",
+		Section:  "Utilization",
+		Summary:  "Per-device extended stats over N intervals.\n-x adds %util/await/aqu-sz; -z hides idle devices.\nThe grep filters snap loop-mounts so the real devices don't get\nlost in ~25 rows of `loop0..loopN` noise. Drop the pipe if you\nspecifically want to see those.\nThe single most important disk command.",
+		Requires: []string{"iostat"},
 	},
 	{
 		Cmd:     "df -h",
@@ -1182,14 +1072,16 @@ var diskCommands = []CommandRef{
 		Summary: "Filesystem capacity (not bandwidth).\nUseful when 'disk full' is the suspected problem.",
 	},
 	{
-		Cmd:     "iostat -xz 1 N | grep -vE '^loop'",
-		Section: "Saturation",
-		Summary: "Same command — read aqu-sz (queueing) and await (latency).\nSustained aqu-sz > 1 or await well above your device baseline\n= saturation, regardless of what %util shows.",
+		Cmd:      "iostat -xz 1 N | grep -vE '^loop'",
+		Section:  "Saturation",
+		Summary:  "Same command — read aqu-sz (queueing) and await (latency).\nSustained aqu-sz > 1 or await well above your device baseline\n= saturation, regardless of what %util shows.",
+		Requires: []string{"iostat"},
 	},
 	{
-		Cmd:     "cat /proc/pressure/io",
-		Section: "Saturation",
-		Summary: "PSI: time-share of tasks stalled on I/O.\n`full` > 0 is the strongest saturation signal.\nLinux 4.20+ with PSI enabled.",
+		Cmd:      "cat /proc/pressure/io",
+		Section:  "Saturation",
+		Summary:  "PSI: time-share of tasks stalled on I/O.\n`full` > 0 is the strongest saturation signal.\nLinux 4.20+ with PSI enabled.",
+		Requires: []string{"psi"},
 	},
 	{
 		Cmd:     "pidstat -d 1 N",

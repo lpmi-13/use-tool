@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -13,11 +14,9 @@ var cpuInvestigation = &Investigation{
 	Description: "Investigate CPU using Brendan Gregg's USE method.\n" +
 		"Run commands at the prompt; the harness captures their output\n" +
 		"and asks targeted questions about what you observed.",
-	StepsFn:        cpuSteps,
-	Extractors:     cpuExtractors,
-	Observations:   cpuObservations,
-	SynthesisRules: cpuSynthesisRules,
-	Commands:       cpuCommands,
+	StepsFn:      cpuSteps,
+	Observations: cpuObservations,
+	Commands:     cpuCommands,
 }
 
 // ----- Guide steps -----
@@ -116,9 +115,10 @@ func cpuRunqueueVariants(si SystemInfo) []stepVariant {
 			QuestionsFn: procPressureCpuQuestions,
 			Teaching: "PSI's `some avg10/avg60/avg300` values are the share of time at least one\n" +
 				"task was stalled waiting for CPU over those windows. Sustained values above\n" +
-				"~10% indicate run-queue contention even when loadavg looks moderate. There's\n" +
-				"no `full` row for CPU because a fully-stalled run-queue would mean no task is\n" +
-				"running — indistinguishable from idle.",
+				"~10% indicate run-queue contention even when loadavg looks moderate. For\n" +
+				"system-wide CPU PSI, `some` is the useful pressure signal; a `full` row may\n" +
+				"appear, but CPU `full` is undefined at system level and is reported as zero\n" +
+				"for compatibility.",
 			Available: func(si SystemInfo) bool { return si.HasPSI },
 		},
 		{
@@ -135,17 +135,6 @@ func cpuRunqueueVariants(si SystemInfo) []stepVariant {
 }
 
 // ----- Comprehension extractors (per-command) -----
-
-var cpuExtractors = []Extractor{
-	{BaseCmd: "uptime", QuestionsFn: uptimeQuestions},
-	{BaseCmd: "w", QuestionsFn: wQuestions},
-	{BaseCmd: "cat", QuestionsFn: catCpuProcQuestions},
-	{BaseCmd: "vmstat", QuestionsFn: vmstatQuestions},
-	{BaseCmd: "mpstat", QuestionsFn: mpstatQuestions},
-	{BaseCmd: "sar", QuestionsFn: sarUQuestions},
-	{BaseCmd: "dmesg", QuestionsFn: dmesgQuestions},
-	{BaseCmd: "journalctl", QuestionsFn: dmesgQuestions},
-}
 
 var loadAvgRe = regexp.MustCompile(`load average:\s*([0-9.]+),\s*([0-9.]+),\s*([0-9.]+)`)
 
@@ -184,19 +173,6 @@ func uptimeQuestions(si SystemInfo, c CapturedCommand) []Question {
 }
 
 var vmstatHeaderRe = regexp.MustCompile(`(?m)^\s*r\s+b\s+swpd`)
-
-func vmstatQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if !vmstatHeaderRe.MatchString(c.Output) {
-		return nil
-	}
-	return randomColumnQuestions(
-		availableColumnQuestionPicks(c.Output, vmstatCPUQuestionPicks),
-		1,
-		func(column string) string {
-			return fmt.Sprintf("In the `vmstat` output, what does the `%s` column represent?", column)
-		},
-	)
-}
 
 func vmstatColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !vmstatHeaderRe.MatchString(c.Output) {
@@ -427,19 +403,6 @@ var vmstatCPUQuestionPicks = filterColumnQuestionPicks(vmstatQuestionPicks, "r",
 
 var mpstatHeaderRe = regexp.MustCompile(`%idle`)
 
-func mpstatQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if !mpstatHeaderRe.MatchString(c.Output) {
-		return nil
-	}
-	return randomColumnQuestions(
-		availableMpstatQuestionPicks(c.Output),
-		1,
-		func(column string) string {
-			return fmt.Sprintf("In the `mpstat` output, what does the `%s` column represent?", column)
-		},
-	)
-}
-
 func mpstatColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !mpstatHeaderRe.MatchString(c.Output) {
 		return nil
@@ -454,30 +417,12 @@ func mpstatColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 
 var mpstatQuestionPicks = []columnQuestionPick{
 	{
-		Column:  "CPU",
-		Correct: "The logical CPU identifier for the row; `all` is the aggregate across CPUs",
-		Distractors: []string{
-			"The percentage of total CPU capacity used by the row",
-			"The process ID currently running on that CPU",
-			"The physical socket number only, excluding logical CPUs",
-		},
-	},
-	{
 		Column:  "%usr",
 		Correct: "Percent of CPU time spent running user-space code",
 		Distractors: []string{
 			"Percent of CPU time spent in the kernel",
 			"Percent of CPU time spent idle",
 			"Percent of CPU time spent waiting on outstanding disk I/O",
-		},
-	},
-	{
-		Column:  "%nice",
-		Correct: "Percent of CPU time spent running niced user-space processes",
-		Distractors: []string{
-			"Percent of CPU time spent running normal-priority user-space code",
-			"Percent of CPU time spent handling software interrupts",
-			"Percent of CPU time taken by the hypervisor",
 		},
 	},
 	{
@@ -526,24 +471,6 @@ var mpstatQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "%guest",
-		Correct: "Percent of CPU time spent running a guest virtual CPU",
-		Distractors: []string{
-			"Percent of CPU time stolen by the hypervisor",
-			"Percent of CPU time spent running niced host processes",
-			"Percent of CPU time spent idle",
-		},
-	},
-	{
-		Column:  "%gnice",
-		Correct: "Percent of CPU time spent running a niced guest virtual CPU",
-		Distractors: []string{
-			"Percent of CPU time spent running normal niced host processes",
-			"Percent of CPU time stolen by the hypervisor",
-			"Percent of CPU time spent servicing software interrupts",
-		},
-	},
-	{
 		Column:  "%idle",
 		Correct: "Percent of CPU time spent idle with no outstanding disk I/O wait",
 		Distractors: []string{
@@ -567,34 +494,6 @@ func outputHasColumn(output, column string) bool {
 		}
 	}
 	return false
-}
-
-func dmesgQuestions(si SystemInfo, c CapturedCommand) []Question {
-	low := strings.ToLower(c.Output)
-	tool := kernelLogQuestionTool(c.Cmd)
-	if strings.Contains(low, "machine check") || strings.Contains(low, "mce:") {
-		return []Question{{
-			Stem:    fmt.Sprintf("Your `%s` output mentions a machine-check (MCE) event. What does this typically indicate?", tool),
-			Correct: "A hardware-level CPU or memory error reported by the processor",
-			Distractors: []string{
-				"A scheduling decision made by the kernel",
-				"A user-space program crashing",
-				"A successful firmware update",
-			},
-		}}
-	}
-	if strings.Contains(low, "thermal") || strings.Contains(low, "throttl") {
-		return []Question{{
-			Stem:    fmt.Sprintf("Your `%s` output mentions thermal throttling. What is the immediate effect on the CPU?", tool),
-			Correct: "The CPU clocks down to reduce heat, lowering effective performance",
-			Distractors: []string{
-				"The CPU is taken offline until it cools down",
-				"Workloads are migrated to other physical sockets",
-				"The kernel kills the highest-CPU processes",
-			},
-		}}
-	}
-	return nil
 }
 
 func kernelLogQuestionTool(cmd string) string {
@@ -690,6 +589,8 @@ func procLoadavgQuestions(si SystemInfo, c CapturedCommand) []Question {
 //
 //	some avg10=0.12 avg60=0.05 avg300=0.01 total=12345678
 var psiSomeRe = regexp.MustCompile(`some\s+avg10=([0-9.]+)\s+avg60=([0-9.]+)\s+avg300=([0-9.]+)\s+total=(\d+)`)
+var psiFullRe = regexp.MustCompile(`(?m)^full\s+avg10=([0-9.]+)\s+avg60=([0-9.]+)\s+avg300=([0-9.]+)\s+total=(\d+)`)
+var psiCPULineRe = regexp.MustCompile(`^(some|full)\s+avg10=([0-9.]+)\s+avg60=([0-9.]+)\s+avg300=([0-9.]+)\s+total=(\d+)`)
 
 // procPressureCpuQuestions handles `cat /proc/pressure/cpu` (PSI). All
 // three questions are returned so the guide step (QuestionCount=3) can
@@ -700,6 +601,10 @@ func procPressureCpuQuestions(si SystemInfo, c CapturedCommand) []Question {
 		return nil
 	}
 	avg10, avg60, avg300, total := m[1], m[2], m[3], m[4]
+	fullStem := "Why might `/proc/pressure/cpu` omit a `full` row on some kernels, or show it as zero on newer kernels?"
+	if psiFullRe.MatchString(c.Output) {
+		fullStem = "Your `/proc/pressure/cpu` output includes a `full` row. How should you interpret system-wide CPU `full` PSI?"
+	}
 	return []Question{
 		{
 			Stem: fmt.Sprintf(
@@ -714,12 +619,12 @@ func procPressureCpuQuestions(si SystemInfo, c CapturedCommand) []Question {
 			},
 		},
 		{
-			Stem:    "Why does `/proc/pressure/cpu` show only a `some` row, with no `full` row, unlike memory and I/O PSI?",
-			Correct: "A CPU stall means at least one task is waiting; if every task were stalled there would be nothing running, which is indistinguishable from idle — `full` isn't meaningful for CPU",
+			Stem:    fullStem,
+			Correct: "At the system-wide CPU level, `full` is undefined and reported as zero for compatibility; use `some` to judge CPU pressure",
 			Distractors: []string{
-				"The `full` row is hidden unless the system has been under load for 60 seconds or more",
-				"Kernel limitation — the `full` row is planned for a future release",
-				"It's only shown to processes with CAP_SYS_ADMIN, so it's hidden for normal users",
+				"The `full` row is the primary CPU saturation signal and should replace `some` when present",
+				"`full` is the percentage of logical CPUs running user-space work at 100%",
+				"`full` is hidden unless the system has been under load for at least 60 seconds",
 			},
 		},
 		{
@@ -736,22 +641,35 @@ func procPressureCpuQuestions(si SystemInfo, c CapturedCommand) []Question {
 	}
 }
 
+func extractPSICPU(which string) func(SystemInfo, []CapturedCommand) (Value, bool) {
+	return func(si SystemInfo, caps []CapturedCommand) (Value, bool) {
+		for i := len(caps) - 1; i >= 0; i-- {
+			c := caps[i]
+			if baseCmd(c.Cmd) != "cat" || !strings.Contains(c.Cmd, "/proc/pressure/cpu") {
+				continue
+			}
+			for _, line := range strings.Split(c.Output, "\n") {
+				m := psiCPULineRe.FindStringSubmatch(line)
+				if m == nil || m[1] != which {
+					continue
+				}
+				n, err := strconv.ParseFloat(m[2], 64)
+				if err != nil {
+					continue
+				}
+				return Value{Number: n, Unit: "%"}, true
+			}
+		}
+		return Value{}, false
+	}
+}
+
 // sarUHeaderRe is the column-header line printed by `sar -u`.
 var sarUHeaderRe = regexp.MustCompile(`%user\s+%nice\s+%system\s+%iowait\s+%steal\s+%idle`)
 
 // sarUQuestions returns one random column question. Used by the extractor
 // (free-form practice mode) where the user may run sar -u alongside other
 // commands and only needs one comprehension check.
-func sarUQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if !sarUHeaderRe.MatchString(c.Output) {
-		return nil
-	}
-	return randomColumnQuestions(
-		availableColumnQuestionPicks(c.Output, sarUQuestionPicks),
-		1,
-		sarUStemFor,
-	)
-}
 
 // sarUColumnQuestions returns the full pool of column questions. Used by
 // the guide step (QuestionCount=3) so the shuffler picks several different
@@ -831,25 +749,17 @@ var sarUQuestionPicks = []columnQuestionPick{
 // /proc file's question handler recognises the captured output. Returns
 // nil if neither matches, which is the right answer for an unrelated
 // `cat` invocation.
-func catCpuProcQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if qs := procLoadavgQuestions(si, c); len(qs) > 0 {
-		return qs
-	}
-	if qs := procPressureCpuQuestions(si, c); len(qs) > 0 {
-		return qs
-	}
-	return nil
-}
 
 // ----- Observations (cross-command, feed snapshot + recall + synthesis) -----
 
 var cpuObservations = []Observation{
 	{
-		Name:    "loadavg_1min",
-		Title:   "1-min load average",
-		Section: "Utilization",
-		Extract: extractLoadavgN(0),
-		Recall:  loadavgRecall("1-minute"),
+		Name:      "loadavg_1min",
+		Title:     "1-min load average",
+		Section:   "Utilization",
+		Extract:   extractLoadavgN(0),
+		Verdict:   verdictLoad1min,
+		Heuristic: "load average ÷ NumCPU near 1 = fully committed; above 1 = more runnable demand than CPUs",
 	},
 	{
 		Name:    "loadavg_5min",
@@ -864,44 +774,149 @@ var cpuObservations = []Observation{
 		Extract: extractLoadavgN(2),
 	},
 	{
-		Name:    "mpstat_idle_mean",
-		Title:   "Mean %idle (mpstat)",
-		Section: "Utilization",
-		Extract: extractMpstatIdleMean,
+		Name:      "mpstat_idle_mean",
+		Title:     "Mean %idle (mpstat)",
+		Section:   "Utilization",
+		Extract:   extractMpstatIdleMean,
+		Verdict:   verdictIdleMean,
+		Heuristic: "utilization ≈ 100 − %idle: low idle = high utilization",
 	},
 	{
 		Name:    "mpstat_idle_range",
 		Title:   "Per-CPU %idle range",
 		Section: "Utilization",
 		Extract: extractMpstatIdleRange,
-		Recall:  mpstatIdleRangeRecall,
 	},
 	{
-		Name:    "vmstat_r",
-		Title:   "vmstat r (run-queue)",
-		Section: "Saturation",
-		Extract: extractVmstatColumn("r"),
-		Recall:  vmstatRRecall,
+		Name:      "vmstat_r",
+		Title:     "vmstat r (run-queue)",
+		Section:   "Saturation",
+		Extract:   extractVmstatColumn("r"),
+		Verdict:   verdictRunQueue,
+		Heuristic: "vmstat r above NumCPU = runnable threads waiting for a CPU = saturation (the tool drops vmstat's since-boot first row, so the verdict reflects interval samples only)",
 	},
 	{
-		Name:    "vmstat_wa",
-		Title:   "vmstat wa (cpu I/O wait)",
-		Section: "Saturation",
-		Extract: extractVmstatColumn("wa"),
+		Name:      "vmstat_wa",
+		Title:     "vmstat wa (cpu I/O wait)",
+		Section:   "Saturation",
+		Extract:   extractVmstatColumn("wa"),
+		Verdict:   verdictIOWait,
+		Heuristic: "high vmstat wa = CPU is waiting on I/O, not actively saturated — if disk PSI / aqu-sz are also elevated, the saturation belongs to the disk, not the CPU (run iostat -xz to corroborate)",
 	},
 	{
-		Name:    "vmstat_st",
-		Title:   "vmstat st (hypervisor steal)",
-		Section: "Saturation",
-		Extract: extractVmstatColumn("st"),
-		Recall:  vmstatStealRecall,
+		Name:      "vmstat_st",
+		Title:     "vmstat st (hypervisor steal)",
+		Section:   "Saturation",
+		Extract:   extractVmstatColumn("st"),
+		Verdict:   verdictSteal,
+		Heuristic: "vmstat st above 0 = CPU cycles stolen by the hypervisor = contention for the physical CPU (the tool drops vmstat's since-boot first row)",
 	},
 	{
-		Name:    "dmesg_cpu_keywords",
-		Title:   "dmesg CPU/thermal/MCE",
-		Section: "Errors",
-		Extract: extractDmesgCpuKeywords,
+		Name:      "psi_cpu_some_avg10",
+		Title:     "CPU PSI some (avg10)",
+		Section:   "Saturation",
+		Extract:   extractPSICPU("some"),
+		Verdict:   verdictPSISome,
+		Heuristic: "CPU PSI 'some' avg10 = percent of the last 10s window with at least one task stalled waiting for CPU; >10% sustained = run-queue contention",
 	},
+	{
+		Name:      "dmesg_cpu_keywords",
+		Title:     "dmesg CPU/thermal/MCE",
+		Section:   "Errors",
+		Extract:   extractDmesgCpuKeywords,
+		Verdict:   verdictDmesgErrors,
+		Heuristic: "MCE / thermal / throttle messages in the kernel log = CPU hardware errors",
+	},
+}
+
+// ----- Diagnosis verdicts -----
+// Each maps an observed value to the Signal it contributes to its USE
+// dimension. Saturation/Errors collapse to Low (absent) or High (present);
+// Utilization uses all three levels. These encode the cheatsheet heuristics in
+// machine-readable form so `diagnose` can grade a learner's claim against what
+// they actually observed, without ever asserting an absolute system state.
+
+func verdictLoad1min(si SystemInfo, v Value, _ Snapshot) Signal {
+	if si.NumCPU <= 0 {
+		return SignalNone
+	}
+	ratio := v.Number / float64(si.NumCPU)
+	switch {
+	case ratio >= 1.0:
+		return SignalHigh
+	case ratio >= 0.7:
+		return SignalModerate
+	default:
+		return SignalLow
+	}
+}
+
+func verdictIdleMean(_ SystemInfo, v Value, _ Snapshot) Signal {
+	switch {
+	case v.Number < 20:
+		return SignalHigh
+	case v.Number < 70:
+		return SignalModerate
+	default:
+		return SignalLow
+	}
+}
+
+func verdictRunQueue(si SystemInfo, v Value, _ Snapshot) Signal {
+	max := v.Max()
+	if math.IsNaN(max) {
+		return SignalNone
+	}
+	if si.NumCPU > 0 && max > float64(si.NumCPU) {
+		return SignalHigh
+	}
+	return SignalLow
+}
+
+func verdictSteal(_ SystemInfo, v Value, _ Snapshot) Signal {
+	if v.Max() > 0 {
+		return SignalHigh
+	}
+	return SignalLow
+}
+
+func verdictDmesgErrors(_ SystemInfo, v Value, _ Snapshot) Signal {
+	if v.Number > 0 {
+		return SignalHigh
+	}
+	return SignalLow
+}
+
+// verdictIOWait is the canonical cross-resource verdict: high iowait on the
+// CPU side often means the CPU is *waiting* on disk, not that the CPU itself
+// is saturated. The verdict consults the snapshot for disk saturation signals
+// — if disk is the bottleneck, this observation reads Low for CPU saturation
+// (with the static Heuristic explaining the secondary-cause inference). If
+// iowait is elevated but disk shows no saturation (or no disk data was
+// captured), it reads Moderate, prompting the learner to investigate disk
+// next.
+func verdictIOWait(_ SystemInfo, v Value, snap Snapshot) Signal {
+	wa := v.Max()
+	if math.IsNaN(wa) || wa < 10 {
+		return SignalLow
+	}
+	if diskShowsSaturation(snap) {
+		return SignalLow
+	}
+	return SignalModerate
+}
+
+func diskShowsSaturation(snap Snapshot) bool {
+	if v, ok := snap.Values["iostat_max_aqu_sz"]; ok && v.Number > 1 {
+		return true
+	}
+	if v, ok := snap.Values["psi_io_some_avg10"]; ok && v.Number > 10 {
+		return true
+	}
+	if v, ok := snap.Values["psi_io_full_avg10"]; ok && v.Number > 0 {
+		return true
+	}
+	return false
 }
 
 func extractLoadavgN(pos int) func(SystemInfo, []CapturedCommand) (Value, bool) {
@@ -1009,6 +1024,7 @@ func extractVmstatColumn(col string) func(SystemInfo, []CapturedCommand) (Value,
 		}
 		var samples []float64
 		for _, c := range caps {
+			var perCmd []float64
 			lines := strings.Split(c.Output, "\n")
 			seen := false
 			for _, line := range lines {
@@ -1026,8 +1042,17 @@ func extractVmstatColumn(col string) func(SystemInfo, []CapturedCommand) (Value,
 				if err != nil {
 					continue
 				}
-				samples = append(samples, n)
+				perCmd = append(perCmd, n)
 			}
+			// vmstat's first interval row is "since boot" stats, not an
+			// interval sample. Drop it per captured command so verdicts and
+			// recall reflect only genuine interval data. A bare `vmstat`
+			// (one row, since-boot) therefore yields no captured samples,
+			// which correctly tells the learner to use `vmstat 1 N`.
+			if len(perCmd) > 0 {
+				perCmd = perCmd[1:]
+			}
+			samples = append(samples, perCmd...)
 		}
 		if len(samples) == 0 {
 			return Value{}, false
@@ -1071,93 +1096,12 @@ func extractDmesgCpuKeywords(si SystemInfo, caps []CapturedCommand) (Value, bool
 		return Value{}, false
 	}
 	return Value{
-		Text: fmt.Sprintf("%d/%d lines mention CPU/thermal/MCE keywords", matched, totalLines),
+		Number: float64(matched),
+		Text:   fmt.Sprintf("%d/%d lines mention CPU/thermal/MCE keywords", matched, totalLines),
 	}, true
 }
 
 // ----- Recall question generators -----
-
-func loadavgRecall(label string) func(Value) []Question {
-	return func(v Value) []Question {
-		correct := fmt.Sprintf("%.2f", v.Number)
-		pool := []string{
-			fmt.Sprintf("%.2f", v.Number+0.5),
-			fmt.Sprintf("%.2f", v.Number+1.5),
-			fmt.Sprintf("%.2f", v.Number*2+1),
-			fmt.Sprintf("%.2f", v.Number*0.5+0.25),
-			"0.00", "1.00", "2.50", "5.00",
-		}
-		return makeRecallQuestion(
-			fmt.Sprintf("What %s load average did you observe?", label),
-			correct, pool)
-	}
-}
-
-func mpstatIdleRangeRecall(v Value) []Question {
-	if len(v.Samples) == 0 {
-		return nil
-	}
-	max := v.Samples[0]
-	for _, x := range v.Samples {
-		if x > max {
-			max = x
-		}
-	}
-	correct := fmt.Sprintf("%.1f%%", max)
-	pool := []string{
-		fmt.Sprintf("%.1f%%", clamp(max-15, 0, 100)),
-		fmt.Sprintf("%.1f%%", clamp(max-30, 0, 100)),
-		fmt.Sprintf("%.1f%%", clamp(max-50, 0, 100)),
-		"0.0%", "25.0%", "50.0%", "75.0%", "99.0%",
-	}
-	return makeRecallQuestion(
-		"Across all per-CPU samples in your `mpstat` output, what was the highest %idle value?",
-		correct, pool)
-}
-
-func vmstatRRecall(v Value) []Question {
-	if len(v.Samples) == 0 {
-		return nil
-	}
-	max := v.Samples[0]
-	for _, x := range v.Samples {
-		if x > max {
-			max = x
-		}
-	}
-	correct := fmt.Sprintf("%.0f", max)
-	pool := []string{
-		fmt.Sprintf("%.0f", max+2),
-		fmt.Sprintf("%.0f", max+5),
-		fmt.Sprintf("%.0f", max*3+1),
-		"0", "1", "5", "100",
-	}
-	return makeRecallQuestion(
-		"What was the highest run-queue length (`r`) you observed in your `vmstat` samples?",
-		correct, pool)
-}
-
-func vmstatStealRecall(v Value) []Question {
-	if len(v.Samples) == 0 {
-		return nil
-	}
-	max := v.Samples[0]
-	for _, x := range v.Samples {
-		if x > max {
-			max = x
-		}
-	}
-	correct := fmt.Sprintf("%.0f%%", max)
-	pool := []string{
-		fmt.Sprintf("%.0f%%", clamp(max+15, 0, 100)),
-		fmt.Sprintf("%.0f%%", clamp(max+5, 0, 100)),
-		fmt.Sprintf("%.0f%%", clamp(max+30, 0, 100)),
-		"0%", "5%", "25%", "50%", "100%",
-	}
-	return makeRecallQuestion(
-		"What was the highest `st` (steal-time) sample you observed in vmstat?",
-		correct, pool)
-}
 
 func clamp(x, lo, hi float64) float64 {
 	if x < lo {
@@ -1171,124 +1115,33 @@ func clamp(x, lo, hi float64) float64 {
 
 // ----- Synthesis rules -----
 
-var cpuSynthesisRules = []SynthesisRule{
-	loadavgIdleConsistency,
-	stealVsIowaitDistinction,
+func dmesgQuestions(si SystemInfo, c CapturedCommand) []Question {
+	low := strings.ToLower(c.Output)
+	tool := kernelLogQuestionTool(c.Cmd)
+	if strings.Contains(low, "machine check") || strings.Contains(low, "mce:") {
+		return []Question{{
+			Stem:    fmt.Sprintf("Your `%s` output mentions a machine-check (MCE) event. What does this typically indicate?", tool),
+			Correct: "A hardware-level CPU or memory error reported by the processor",
+			Distractors: []string{
+				"A scheduling decision made by the kernel",
+				"A user-space program crashing",
+				"A successful firmware update",
+			},
+		}}
+	}
+	if strings.Contains(low, "thermal") || strings.Contains(low, "throttl") {
+		return []Question{{
+			Stem:    fmt.Sprintf("Your `%s` output mentions thermal throttling. What is the immediate effect on the CPU?", tool),
+			Correct: "The CPU clocks down to reduce heat, lowering effective performance",
+			Distractors: []string{
+				"The CPU is taken offline until it cools down",
+				"Workloads are migrated to other physical sockets",
+				"The kernel kills the highest-CPU processes",
+			},
+		}}
+	}
+	return nil
 }
-
-var loadavgIdleConsistency = SynthesisRule{
-	Requires: []string{"loadavg_1min", "mpstat_idle_mean"},
-	Generate: func(si SystemInfo, vs map[string]Value) (Question, bool) {
-		loadavg := vs["loadavg_1min"].Number
-		idle := vs["mpstat_idle_mean"].Number
-		ratio := loadavg / float64(si.NumCPU)
-
-		var correct string
-		switch {
-		case ratio < 0.5 && idle > 60:
-			correct = "Consistent — a small loadavg-to-NumCPU ratio matches a high mean %idle; the system is lightly loaded."
-		case ratio > 1.0 && idle < 25:
-			correct = "Consistent — a loadavg ratio above 1 matches low %idle; the system is saturated."
-		case ratio < 0.3 && idle < 30:
-			correct = "Inconsistent — low load average should not coexist with low %idle; one of the readings may be stale (loadavg lags by minutes)."
-		case ratio > 1.0 && idle > 60:
-			correct = "Inconsistent — high load average alongside high %idle is unusual; one reading may be stale."
-		default:
-			return Question{}, false
-		}
-
-		pool := []string{
-			"Consistent — a small loadavg-to-NumCPU ratio matches a high mean %idle; the system is lightly loaded.",
-			"Consistent — a loadavg ratio above 1 matches low %idle; the system is saturated.",
-			"Inconsistent — low load average should not coexist with low %idle; one of the readings may be stale (loadavg lags by minutes).",
-			"Inconsistent — high load average alongside high %idle is unusual; one reading may be stale.",
-			"Cannot be compared — these metrics measure entirely unrelated things.",
-		}
-		var distractors []string
-		for _, p := range pool {
-			if p != correct {
-				distractors = append(distractors, p)
-			}
-		}
-		if len(distractors) > 3 {
-			distractors = distractors[:3]
-		}
-
-		return Question{
-			Stem: fmt.Sprintf(
-				"Your 1-min load average was %.2f (NumCPU=%d, ratio %.2f).\n"+
-					"Mean %%idle observed was %.1f%%.\n"+
-					"Which best describes the relationship between these two numbers?",
-				loadavg, si.NumCPU, ratio, idle),
-			Correct:     correct,
-			Distractors: distractors,
-		}, true
-	},
-}
-
-// stealVsIowaitDistinction teaches the cloud-VM diagnostic point: high `wa`
-// is often misread as "disk problem" but on a virtualised host it can also
-// reflect time stolen by the hypervisor. Comparing `st` and `wa` directly
-// disambiguates the two.
-var stealVsIowaitDistinction = SynthesisRule{
-	Requires: []string{"vmstat_wa", "vmstat_st"},
-	Generate: func(si SystemInfo, vs map[string]Value) (Question, bool) {
-		waMax := 0.0
-		for _, x := range vs["vmstat_wa"].Samples {
-			if x > waMax {
-				waMax = x
-			}
-		}
-		stMax := 0.0
-		for _, x := range vs["vmstat_st"].Samples {
-			if x > stMax {
-				stMax = x
-			}
-		}
-
-		var correct string
-		switch {
-		case stMax >= 5 && waMax < 5:
-			correct = "Steal exceeds I/O wait — the bottleneck is hypervisor contention (a noisy neighbour on the same host), not local disk. This isn't fixable from inside the VM."
-		case stMax < 1 && waMax >= 10:
-			correct = "Steal is negligible; the cpu-stall signal is genuine I/O wait. Investigate disk performance."
-		case stMax >= 5 && waMax >= 10:
-			correct = "Both are elevated — hypervisor contention and I/O wait coexist. The disk may itself be a contended resource at the hypervisor layer."
-		case stMax < 1 && waMax < 5:
-			correct = "Both are low — neither hypervisor contention nor I/O wait is significant. Look elsewhere for the bottleneck."
-		default:
-			return Question{}, false
-		}
-
-		pool := []string{
-			"Steal exceeds I/O wait — the bottleneck is hypervisor contention (a noisy neighbour on the same host), not local disk. This isn't fixable from inside the VM.",
-			"Steal is negligible; the cpu-stall signal is genuine I/O wait. Investigate disk performance.",
-			"Both are elevated — hypervisor contention and I/O wait coexist. The disk may itself be a contended resource at the hypervisor layer.",
-			"Both are low — neither hypervisor contention nor I/O wait is significant. Look elsewhere for the bottleneck.",
-			"Cannot be compared — `wa` and `st` measure entirely unrelated subsystems.",
-		}
-		var distractors []string
-		for _, p := range pool {
-			if p != correct {
-				distractors = append(distractors, p)
-			}
-		}
-		if len(distractors) > 3 {
-			distractors = distractors[:3]
-		}
-
-		return Question{
-			Stem: fmt.Sprintf(
-				"Highest `wa` (cpu I/O wait) sample was %.1f%%; highest `st` (hypervisor steal) sample was %.1f%%.\n"+
-					"Which best describes what these two numbers tell you?",
-				waMax, stMax),
-			Correct:     correct,
-			Distractors: distractors,
-		}, true
-	},
-}
-
-// ----- Command reference (semi-verbose help) -----
 
 var cpuCommands = []CommandRef{
 	{

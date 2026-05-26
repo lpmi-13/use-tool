@@ -24,8 +24,7 @@ func cmdPractice(args []string) {
 	fmt.Printf("\nDetected system: %d logical CPU%s.\n", si.NumCPU, plural(si.NumCPU))
 	fmt.Println("Shell commands run on this live system.")
 	fmt.Println("Builtins: `report` (snapshot of what you've gathered), `commands` (cheatsheet),")
-	fmt.Println("          `evaluate` (comprehension check), `help`, `exit`.")
-	fmt.Println("During a check, answer with a number; use `$ <command>` to inspect more data first.")
+	fmt.Println("          `diagnose` (assess the system's USE state from what you observed), `help`, `exit`.")
 	fmt.Println()
 
 	practiceLoop(s)
@@ -51,13 +50,13 @@ func practiceLoop(s *Session) {
 		case "exit", "quit":
 			return
 		case "help":
-			fmt.Println("Run any shell command on this live system. Builtins: report, commands, evaluate, help, exit.")
+			fmt.Println("Run any shell command on this live system. Builtins: report, commands, diagnose, help, exit.")
 		case "report":
 			s.Snapshot().Print()
 		case "commands":
 			printCommands(s.Investigation, s.System)
-		case "evaluate":
-			if practiceEvaluate(s) {
+		case "diagnose":
+			if practiceDiagnose(s) {
 				return
 			}
 		default:
@@ -66,41 +65,3 @@ func practiceLoop(s *Session) {
 	}
 }
 
-func practiceEvaluate(s *Session) bool {
-	snap := s.Snapshot()
-
-	var qs []Question
-	for _, c := range s.Captured {
-		qs = append(qs, extractQuestions(s.Investigation, s.System, c)...)
-	}
-	qs = append(qs, recallQuestions(s.Investigation, snap)...)
-	qs = append(qs, synthesisQuestions(s.Investigation, s.System, snap)...)
-
-	if len(qs) == 0 {
-		fmt.Println("\nNo questions could be generated from your captured commands.")
-		fmt.Println("Try `commands` for a cheatsheet, or run `uptime`, `vmstat 1 3`, `mpstat -P ALL 1 3`.")
-		return false
-	}
-
-	appRand.Shuffle(len(qs), func(i, j int) { qs[i], qs[j] = qs[j], qs[i] })
-	n := 4
-	if len(qs) < n {
-		n = len(qs)
-	}
-	score, asked := 0, 0
-	for i := 0; i < n; i++ {
-		result := askQuestionWithCommandRunner(qs[i], s.runAndCapture)
-		if result.Quit {
-			return true
-		}
-		if result.Skipped {
-			continue
-		}
-		asked++
-		if result.Correct {
-			score++
-		}
-	}
-	fmt.Printf("\n=== Result: %d / %d ===\n", score, asked)
-	return true
-}

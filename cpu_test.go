@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 )
@@ -86,7 +85,10 @@ func TestExtractVmstatColumnRunQueue(t *testing.T) {
 	if !ok {
 		t.Fatal("expected vmstat r extraction to succeed")
 	}
-	want := []float64{2, 3, 1}
+	// vmstat's first interval row is since-boot stats; the extractor drops
+	// it, so only the two interval samples [3, 1] remain from the three-row
+	// fixture.
+	want := []float64{3, 1}
 	if len(v.Samples) != len(want) {
 		t.Fatalf("expected %d samples, got %d", len(want), len(v.Samples))
 	}
@@ -107,49 +109,11 @@ func TestExtractVmstatColumnIOWait(t *testing.T) {
 	if v.Unit != "%" {
 		t.Errorf("expected %% unit, got %q", v.Unit)
 	}
-	want := []float64{1, 10, 1}
+	// First row dropped as since-boot; only interval samples remain.
+	want := []float64{10, 1}
 	for i, w := range want {
 		if v.Samples[i] != w {
 			t.Errorf("sample[%d]: expected %v, got %v", i, w, v.Samples[i])
-		}
-	}
-}
-
-func TestVmstatQuestionsCoversCPUColumns(t *testing.T) {
-	c := CapturedCommand{Cmd: "vmstat 1 3", Output: sampleVmstat}
-	wantCorrect := map[string]string{
-		"r":  "The number of runnable processes (in the run-queue, including those running)",
-		"b":  "The number of processes blocked in uninterruptible sleep, usually waiting on I/O",
-		"us": "Percent of CPU time spent running user-space code",
-		"sy": "Percent of CPU time spent running kernel code",
-		"id": "Percent of CPU time spent idle",
-		"wa": "Percent of CPU time spent idle while waiting on outstanding I/O",
-		"st": "Percent of CPU time stolen by the hypervisor for other virtual machines",
-	}
-	seen := map[string]bool{}
-	for i := 0; i < 500; i++ {
-		qs := vmstatQuestions(SystemInfo{}, c)
-		if len(qs) != 1 {
-			t.Fatalf("iteration %d: expected 1 question, got %d", i, len(qs))
-		}
-		column := ""
-		for candidate := range wantCorrect {
-			if strings.Contains(qs[0].Stem, fmt.Sprintf("`%s`", candidate)) {
-				column = candidate
-				break
-			}
-		}
-		if column == "" {
-			t.Fatalf("iteration %d: stem does not ask about a known vmstat CPU column: %q", i, qs[0].Stem)
-		}
-		if qs[0].Correct != wantCorrect[column] {
-			t.Fatalf("iteration %d: column %q had correct answer %q, want %q", i, column, qs[0].Correct, wantCorrect[column])
-		}
-		seen[column] = true
-	}
-	for column := range wantCorrect {
-		if !seen[column] {
-			t.Errorf("column %q never appeared across 500 iterations; saw %v", column, seen)
 		}
 	}
 }
@@ -165,55 +129,6 @@ func TestExtractMpstatIdleSamples(t *testing.T) {
 	for _, s := range samples {
 		if !wantSet[s] {
 			t.Errorf("unexpected sample: %v", s)
-		}
-	}
-}
-
-func TestMpstatQuestionsCoversAllColumns(t *testing.T) {
-	c := CapturedCommand{Cmd: "mpstat -P ALL 1 1", Output: sampleMpstat}
-	wantCorrect := map[string]string{
-		"CPU":     "The logical CPU identifier for the row; `all` is the aggregate across CPUs",
-		"%usr":    "Percent of CPU time spent running user-space code",
-		"%nice":   "Percent of CPU time spent running niced user-space processes",
-		"%sys":    "Percent of CPU time spent running kernel code",
-		"%iowait": "Percent of time the CPU was idle while there was an outstanding disk I/O request",
-		"%irq":    "Percent of CPU time spent servicing hardware interrupts",
-		"%soft":   "Percent of CPU time spent servicing software interrupts",
-		"%steal":  "Percent of time stolen by the hypervisor for other virtual machines",
-		"%guest":  "Percent of CPU time spent running a guest virtual CPU",
-		"%gnice":  "Percent of CPU time spent running a niced guest virtual CPU",
-		"%idle":   "Percent of CPU time spent idle with no outstanding disk I/O wait",
-	}
-
-	available := availableMpstatQuestionPicks(c.Output)
-	if len(available) != len(wantCorrect) {
-		t.Fatalf("expected %d available mpstat columns, got %d (%v)", len(wantCorrect), len(available), available)
-	}
-
-	seen := map[string]bool{}
-	for i := 0; i < 1000; i++ {
-		qs := mpstatQuestions(SystemInfo{}, c)
-		if len(qs) != 1 {
-			t.Fatalf("iteration %d: expected 1 question, got %d", i, len(qs))
-		}
-		column := ""
-		for candidate := range wantCorrect {
-			if strings.Contains(qs[0].Stem, fmt.Sprintf("`%s`", candidate)) {
-				column = candidate
-				break
-			}
-		}
-		if column == "" {
-			t.Fatalf("iteration %d: stem does not ask about a known mpstat column: %q", i, qs[0].Stem)
-		}
-		if qs[0].Correct != wantCorrect[column] {
-			t.Fatalf("iteration %d: column %q had correct answer %q, want %q", i, column, qs[0].Correct, wantCorrect[column])
-		}
-		seen[column] = true
-	}
-	for column := range wantCorrect {
-		if !seen[column] {
-			t.Errorf("column %q never appeared across 1000 iterations; saw %v", column, seen)
 		}
 	}
 }
@@ -271,24 +186,7 @@ func TestExtractDmesgCpuKeywordsAcceptsSudoAndPipelines(t *testing.T) {
 	}
 }
 
-func TestCPUExtractQuestionsAcceptsJournalctl(t *testing.T) {
-	cmd := "journalctl -k -b -p warning --no-pager -n 30"
-	qs := extractQuestions(cpuInvestigation, SystemInfo{}, CapturedCommand{
-		Cmd:    cmd,
-		Output: sampleDmesgWithMCE,
-	})
-	if len(qs) == 0 {
-		t.Fatal("expected journalctl kernel log output to generate CPU dmesg questions")
-	}
-	if !strings.Contains(qs[0].Stem, "`"+cmd+"` output") {
-		t.Fatalf("expected question to mention the actual captured command, got %q", qs[0].Stem)
-	}
-	if strings.Contains(qs[0].Stem, "`dmesg` output") {
-		t.Fatalf("question should not mention dmesg when journalctl was captured: %q", qs[0].Stem)
-	}
-}
-
-func TestBaseCmd(t *testing.T) {
+func TestBaseCmdStripsSudoAndArgs(t *testing.T) {
 	cases := []struct {
 		in, want string
 	}{
@@ -359,7 +257,8 @@ func TestExtractVmstatColumnSteal(t *testing.T) {
 	if v.Unit != "%" {
 		t.Errorf("expected %% unit, got %q", v.Unit)
 	}
-	want := []float64{0, 0, 0}
+	// First row dropped as since-boot; only interval samples remain.
+	want := []float64{0, 0}
 	for i, w := range want {
 		if v.Samples[i] != w {
 			t.Errorf("sample[%d]: expected %v, got %v", i, w, v.Samples[i])
@@ -367,164 +266,7 @@ func TestExtractVmstatColumnSteal(t *testing.T) {
 	}
 }
 
-func TestVmstatStealRecallEmpty(t *testing.T) {
-	if qs := vmstatStealRecall(Value{}); qs != nil {
-		t.Errorf("expected nil for empty samples, got %d questions", len(qs))
-	}
-}
-
-func TestStealVsIowaitNoisyNeighbour(t *testing.T) {
-	si := SystemInfo{}
-	vs := map[string]Value{
-		"vmstat_wa": {Samples: []float64{1, 2, 1}},
-		"vmstat_st": {Samples: []float64{8, 10, 9}},
-	}
-	q, ok := stealVsIowaitDistinction.Generate(si, vs)
-	if !ok {
-		t.Fatal("expected synthesis to fire")
-	}
-	if !strings.Contains(q.Correct, "hypervisor contention") || !strings.Contains(q.Correct, "noisy neighbour") {
-		t.Errorf("wrong branch: %q", q.Correct)
-	}
-}
-
-func TestStealVsIowaitGenuineIO(t *testing.T) {
-	si := SystemInfo{}
-	vs := map[string]Value{
-		"vmstat_wa": {Samples: []float64{12, 18, 15}},
-		"vmstat_st": {Samples: []float64{0, 0, 0}},
-	}
-	q, ok := stealVsIowaitDistinction.Generate(si, vs)
-	if !ok {
-		t.Fatal("expected synthesis to fire")
-	}
-	if !strings.Contains(q.Correct, "genuine I/O wait") {
-		t.Errorf("wrong branch: %q", q.Correct)
-	}
-}
-
-func TestStealVsIowaitBothElevated(t *testing.T) {
-	si := SystemInfo{}
-	vs := map[string]Value{
-		"vmstat_wa": {Samples: []float64{15, 18, 12}},
-		"vmstat_st": {Samples: []float64{6, 8, 7}},
-	}
-	q, ok := stealVsIowaitDistinction.Generate(si, vs)
-	if !ok {
-		t.Fatal("expected synthesis to fire")
-	}
-	if !strings.Contains(q.Correct, "Both are elevated") {
-		t.Errorf("wrong branch: %q", q.Correct)
-	}
-}
-
-func TestStealVsIowaitBothLow(t *testing.T) {
-	si := SystemInfo{}
-	vs := map[string]Value{
-		"vmstat_wa": {Samples: []float64{1, 2, 0}},
-		"vmstat_st": {Samples: []float64{0, 0, 0}},
-	}
-	q, ok := stealVsIowaitDistinction.Generate(si, vs)
-	if !ok {
-		t.Fatal("expected synthesis to fire")
-	}
-	if !strings.Contains(q.Correct, "Both are low") {
-		t.Errorf("wrong branch: %q", q.Correct)
-	}
-}
-
-func TestStealVsIowaitAmbiguousReturnsFalse(t *testing.T) {
-	si := SystemInfo{}
-	vs := map[string]Value{
-		"vmstat_wa": {Samples: []float64{6, 7, 5}},
-		"vmstat_st": {Samples: []float64{2, 3, 2}},
-	}
-	if _, ok := stealVsIowaitDistinction.Generate(si, vs); ok {
-		t.Error("expected synthesis to skip the ambiguous middle case")
-	}
-}
-
-func TestLoadavgIdleSynthesisLightLoad(t *testing.T) {
-	si := SystemInfo{NumCPU: 8}
-	vs := map[string]Value{
-		"loadavg_1min":     {Number: 1.0},
-		"mpstat_idle_mean": {Number: 85},
-	}
-	q, ok := loadavgIdleConsistency.Generate(si, vs)
-	if !ok {
-		t.Fatal("expected synthesis to fire for light load")
-	}
-	if !strings.Contains(q.Correct, "lightly loaded") {
-		t.Errorf("wrong branch chosen: %q", q.Correct)
-	}
-}
-
-func TestLoadavgIdleSynthesisSaturated(t *testing.T) {
-	si := SystemInfo{NumCPU: 4}
-	vs := map[string]Value{
-		"loadavg_1min":     {Number: 6.0},
-		"mpstat_idle_mean": {Number: 10},
-	}
-	q, ok := loadavgIdleConsistency.Generate(si, vs)
-	if !ok {
-		t.Fatal("expected synthesis to fire for saturation")
-	}
-	if !strings.Contains(q.Correct, "saturated") {
-		t.Errorf("wrong branch: %q", q.Correct)
-	}
-}
-
-func TestLoadavgIdleSynthesisInconsistent(t *testing.T) {
-	si := SystemInfo{NumCPU: 4}
-	vs := map[string]Value{
-		"loadavg_1min":     {Number: 5.0},
-		"mpstat_idle_mean": {Number: 90},
-	}
-	q, ok := loadavgIdleConsistency.Generate(si, vs)
-	if !ok {
-		t.Fatal("expected synthesis to fire when readings disagree")
-	}
-	if !strings.Contains(q.Correct, "Inconsistent") {
-		t.Errorf("wrong branch: %q", q.Correct)
-	}
-}
-
-func TestLoadavgIdleSynthesisAmbiguousReturnsFalse(t *testing.T) {
-	si := SystemInfo{NumCPU: 4}
-	vs := map[string]Value{
-		"loadavg_1min":     {Number: 2.0},
-		"mpstat_idle_mean": {Number: 50},
-	}
-	if _, ok := loadavgIdleConsistency.Generate(si, vs); ok {
-		t.Error("expected synthesis to skip the ambiguous middle case")
-	}
-}
-
 // ----- recall edge cases -----
-
-func TestLoadavgRecallAtZero(t *testing.T) {
-	// Just-booted system: load average is 0.00. Recall question must still
-	// produce three distinct distractors (none of which equal "0.00").
-	v := Value{Number: 0}
-	qs := loadavgRecall("1-minute")(v)
-	if len(qs) != 1 {
-		t.Fatalf("expected 1 question even at zero, got %d", len(qs))
-	}
-	q := qs[0]
-	if q.Correct != "0.00" {
-		t.Errorf("correct: got %q, want 0.00", q.Correct)
-	}
-	if len(q.Distractors) != 3 {
-		t.Fatalf("expected 3 distractors, got %d (%v)", len(q.Distractors), q.Distractors)
-	}
-	seen := map[string]bool{q.Correct: true}
-	for _, d := range q.Distractors {
-		if seen[d] {
-			t.Errorf("duplicate option in question: distractor %q matches correct or another distractor", d)
-		}
-		seen[d] = true
-	}
-}
 
 func TestUptimeQuestionsAnswerableWhenAllLoadavgsEqual(t *testing.T) {
 	// All three loadavgs are 0.00 — historically this made the question
@@ -552,59 +294,6 @@ func TestUptimeQuestionsAnswerableWhenAllLoadavgsEqual(t *testing.T) {
 	}
 	if !valid[qs[0].Correct] {
 		t.Errorf("correct answer not in expected set: %q", qs[0].Correct)
-	}
-}
-
-func TestVmstatStealRecallAtMaxPercent(t *testing.T) {
-	// st = 100% (degenerate hypervisor scenario). clamp(100+15, 0, 100) == 100,
-	// which would have collided with correct. Helper must dedupe.
-	v := Value{Samples: []float64{100, 100}}
-	qs := vmstatStealRecall(v)
-	if len(qs) != 1 {
-		t.Fatalf("expected 1 question, got %d", len(qs))
-	}
-	q := qs[0]
-	seen := map[string]bool{q.Correct: true}
-	for _, d := range q.Distractors {
-		if seen[d] {
-			t.Errorf("duplicate option in question at 100%%: %q in %v", d, q.Distractors)
-		}
-		seen[d] = true
-	}
-}
-
-func TestVmstatRRecallAtZero(t *testing.T) {
-	v := Value{Samples: []float64{0, 0, 0}}
-	qs := vmstatRRecall(v)
-	if len(qs) != 1 {
-		t.Fatalf("expected 1 question, got %d", len(qs))
-	}
-	q := qs[0]
-	if q.Correct != "0" {
-		t.Errorf("correct: got %q, want 0", q.Correct)
-	}
-	for _, d := range q.Distractors {
-		if d == q.Correct {
-			t.Errorf("distractor matches correct (0): %v", q.Distractors)
-		}
-	}
-}
-
-func TestMpstatIdleRangeRecallAtMax(t *testing.T) {
-	// max = 100%; clamp(100-15, 0, 100) = 85, clamp(100-50, 0, 100) = 50, etc.
-	// All distinct; correct is "100.0%" and constants pool guarantees fallback.
-	v := Value{Samples: []float64{100.0, 100.0, 100.0}}
-	qs := mpstatIdleRangeRecall(v)
-	if len(qs) != 1 {
-		t.Fatalf("expected 1 question, got %d", len(qs))
-	}
-	q := qs[0]
-	seen := map[string]bool{q.Correct: true}
-	for _, d := range q.Distractors {
-		if seen[d] {
-			t.Errorf("duplicate at 100%%: %v", q.Distractors)
-		}
-		seen[d] = true
 	}
 }
 
@@ -655,7 +344,8 @@ root     pts/1    192.168.1.5      08:55   12:01   0:02   0.00s -bash`
 
 const sampleProcLoadavg = `0.42 0.31 0.28 1/234 5678`
 
-const sampleProcPressureCpu = `some avg10=0.12 avg60=0.05 avg300=0.01 total=12345678`
+const sampleProcPressureCpu = `some avg10=0.12 avg60=0.05 avg300=0.01 total=12345678
+full avg10=0.00 avg60=0.00 avg300=0.00 total=0`
 
 const sampleSarU = `Linux 6.1.0 (host)  10/05/2024  _x86_64_  (4 CPU)
 
@@ -774,6 +464,45 @@ func TestProcPressureCpuQuestionsReturnsAllThree(t *testing.T) {
 			t.Errorf("expected exactly 1 question containing %q; got %d. Pool: %v", frag, found, stems(qs))
 		}
 	}
+	for _, q := range qs {
+		if strings.Contains(q.Stem, "show only a `some` row") {
+			t.Errorf("CPU PSI question still assumes the full row is absent: %q", q.Stem)
+		}
+	}
+}
+
+func TestProcPressureCpuQuestionsHandlesSomeOnlyOutput(t *testing.T) {
+	c := CapturedCommand{
+		Cmd:    "cat /proc/pressure/cpu",
+		Output: "some avg10=0.12 avg60=0.05 avg300=0.01 total=12345678",
+	}
+	qs := procPressureCpuQuestions(SystemInfo{}, c)
+	if len(qs) != 3 {
+		t.Fatalf("expected 3 questions for some-only CPU PSI output, got %d", len(qs))
+	}
+	foundCompatQuestion := false
+	for _, q := range qs {
+		if strings.Contains(q.Stem, "omit a `full` row") {
+			foundCompatQuestion = true
+		}
+	}
+	if !foundCompatQuestion {
+		t.Fatalf("expected compatibility wording for some-only output; got %v", stems(qs))
+	}
+}
+
+func TestExtractPSICPUSomeAvg10(t *testing.T) {
+	caps := []CapturedCommand{{Cmd: "cat /proc/pressure/cpu", Output: sampleProcPressureCpu}}
+	v, ok := extractPSICPU("some")(SystemInfo{}, caps)
+	if !ok {
+		t.Fatal("expected CPU PSI extraction to succeed")
+	}
+	if v.Number != 0.12 || v.Unit != "%" {
+		t.Fatalf("CPU PSI value = %+v, want 0.12%%", v)
+	}
+	if got := verdictPSISome(SystemInfo{}, v, Snapshot{}); got != SignalModerate {
+		t.Fatalf("CPU PSI verdict = %v, want SignalModerate", got)
+	}
 }
 
 func TestProcPressureCpuQuestionsRejectsUnrelatedOutput(t *testing.T) {
@@ -805,47 +534,34 @@ func TestSarUColumnQuestionsCoversAllColumns(t *testing.T) {
 	}
 }
 
-func TestSarUQuestionsRejectsUnrelatedOutput(t *testing.T) {
-	c := CapturedCommand{Cmd: "sar -B 1 3", Output: "page-faults output without %user header"}
-	if qs := sarUQuestions(SystemInfo{}, c); qs != nil {
-		t.Errorf("expected nil for non-sar-u output, got %d questions", len(qs))
+func TestMpstatColumnQuestionsFocusesUSEColumns(t *testing.T) {
+	si := SystemInfo{NumCPU: 4}
+	c := CapturedCommand{Cmd: "mpstat -P ALL 1 3", Output: sampleMpstat}
+	qs := mpstatColumnQuestions(si, c)
+	wantColumns := []string{"%usr", "%sys", "%iowait", "%irq", "%soft", "%steal", "%idle"}
+	if len(qs) != len(wantColumns) {
+		t.Fatalf("expected %d questions, got %d: %v", len(wantColumns), len(qs), stems(qs))
 	}
-}
+	for _, col := range wantColumns {
+		found := false
+		for _, q := range qs {
+			if strings.Contains(q.Stem, col) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected a question for column %q; got %v", col, stems(qs))
+		}
+	}
 
-func TestCatCpuProcQuestionsDispatches(t *testing.T) {
-	cases := []struct {
-		name        string
-		output      string
-		wantFragment string
-	}{
-		{"loadavg", sampleProcLoadavg, "1/234"},
-		{"pressure_cpu", sampleProcPressureCpu, "avg10"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			c := CapturedCommand{Cmd: "cat /proc/something", Output: tc.output}
-			qs := catCpuProcQuestions(SystemInfo{}, c)
-			if len(qs) == 0 {
-				t.Fatalf("expected dispatch to return questions for %q", tc.name)
+	skippedColumns := []string{"CPU", "%nice", "%guest", "%gnice"}
+	for _, col := range skippedColumns {
+		for _, q := range qs {
+			if strings.Contains(q.Stem, col) {
+				t.Errorf("did not expect a question for column %q; got %q", col, q.Stem)
 			}
-			found := false
-			for _, q := range qs {
-				if strings.Contains(q.Stem, tc.wantFragment) {
-					found = true
-					break
-				}
-			}
-			if !found {
-				t.Errorf("expected a question mentioning %q; got %v", tc.wantFragment, stems(qs))
-			}
-		})
-	}
-}
-
-func TestCatCpuProcQuestionsReturnsNilForUnknownCat(t *testing.T) {
-	c := CapturedCommand{Cmd: "cat /etc/hostname", Output: "hostname"}
-	if qs := catCpuProcQuestions(SystemInfo{}, c); qs != nil {
-		t.Errorf("expected nil for unrelated cat output, got %d questions", len(qs))
+		}
 	}
 }
 
@@ -933,38 +649,6 @@ func TestCombineVariantQuestionsDispatchesByOutputFormat(t *testing.T) {
 	}
 	if !strings.Contains(qs[0].Stem, "1/234") {
 		t.Errorf("expected /proc/loadavg-specific question; got %q", qs[0].Stem)
-	}
-}
-
-func TestCPUExtractorsRouteVariantCommands(t *testing.T) {
-	si := SystemInfo{NumCPU: 4}
-	cases := []struct {
-		cmd     string
-		output  string
-		wantSub string
-	}{
-		{"w", sampleW, "JCPU"},
-		{"cat /proc/loadavg", sampleProcLoadavg, "1/234"},
-		{"cat /proc/pressure/cpu", sampleProcPressureCpu, "avg10"},
-		{"sar -u 1 3", sampleSarU, "sar -u"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.cmd, func(t *testing.T) {
-			qs := extractQuestions(cpuInvestigation, si, CapturedCommand{Cmd: tc.cmd, Output: tc.output})
-			if len(qs) == 0 {
-				t.Fatalf("expected questions for %q via cpuExtractors", tc.cmd)
-			}
-			found := false
-			for _, q := range qs {
-				if strings.Contains(q.Stem, tc.wantSub) {
-					found = true
-					break
-				}
-			}
-			if !found {
-				t.Errorf("expected a question containing %q for %q; got %v", tc.wantSub, tc.cmd, stems(qs))
-			}
-		})
 	}
 }
 

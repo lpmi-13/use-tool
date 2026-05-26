@@ -145,6 +145,58 @@ func TestRunAndCaptureSkipsFailedCommand(t *testing.T) {
 	}
 }
 
+func TestRunAndCaptureTreatsGrepNoMatchesAsEmptySuccess(t *testing.T) {
+	s := &Session{}
+	var c CapturedCommand
+	stderr := captureStderr(func() {
+		c = s.runAndCapture("printf 'healthy\\n' | grep -iE 'killed process|out of memory|oom-killer'")
+	})
+
+	if c.Failed {
+		t.Fatalf("grep no-match should be a successful empty diagnostic result, got %+v", c)
+	}
+	if c.ExitCode != 1 {
+		t.Fatalf("exit code = %d, want original grep status 1", c.ExitCode)
+	}
+	if strings.TrimSpace(c.Output) != "" {
+		t.Fatalf("output = %q, want empty", c.Output)
+	}
+	if len(s.Captured) != 1 {
+		t.Fatalf("captured count = %d, want 1", len(s.Captured))
+	}
+	if !strings.Contains(stderr, "[no matching lines]") {
+		t.Fatalf("expected no-match hint in stderr, got:\n%s", stderr)
+	}
+	if strings.Contains(stderr, "command exited with status 1") {
+		t.Fatalf("stderr still reports no-match grep as command failure:\n%s", stderr)
+	}
+}
+
+func TestRunAndCaptureKeepsRealGrepErrorsFailed(t *testing.T) {
+	s := &Session{}
+	var c CapturedCommand
+	stderr := captureStderr(func() {
+		c = s.runAndCapture("grep -E '['")
+	})
+
+	if !c.Failed {
+		t.Fatalf("invalid grep syntax should fail, got %+v", c)
+	}
+	if len(s.Captured) != 0 {
+		t.Fatalf("captured failed grep command: %+v", s.Captured)
+	}
+	if !strings.Contains(stderr, "[command exited with status 2]") {
+		t.Fatalf("expected real grep error status in stderr, got:\n%s", stderr)
+	}
+}
+
+func TestLastPipelineCommandBaseIgnoresQuotedRegexPipes(t *testing.T) {
+	cmd := "journalctl -k -b --no-pager | grep -iE 'killed process|out of memory|oom-killer'"
+	if got := lastPipelineCommandBase(cmd); got != "grep" {
+		t.Fatalf("lastPipelineCommandBase() = %q, want grep", got)
+	}
+}
+
 func TestRunAndCaptureTreatsDmesgPermissionErrorInPipelineAsFailed(t *testing.T) {
 	s := &Session{}
 	var c CapturedCommand

@@ -26,6 +26,26 @@ const (
 )
 
 var stdin = bufio.NewReader(os.Stdin)
+var rawInputEnabled = stdinIsTerminal
+
+type terminalKey int
+
+const (
+	keyUnknown terminalKey = iota
+	keyEnter
+	keyUp
+	keyDown
+	keySpace
+	keyQuit
+	keyDigit
+	keyClear
+	keySeparator
+)
+
+type keyEvent struct {
+	Key   terminalKey
+	Digit int
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -118,8 +138,8 @@ type Session struct {
 	// permission-blocked dmesg or journalctl call. After the second strike
 	// we emit a one-shot note that the host is hiding kernel logs across
 	// the board, so the learner stops chasing the other tool.
-	kernelLogBlocks      int
-	kernelLogBlockNoted  bool
+	kernelLogBlocks     int
+	kernelLogBlockNoted bool
 }
 
 type SystemInfo struct {
@@ -176,7 +196,12 @@ func runCommandStreaming(cmdStr string, liveOut io.Writer) CapturedCommand {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() >= 0 {
 			exitCode = exitErr.ExitCode()
-			fmt.Fprintf(os.Stderr, "[command exited with status %d]\n", exitCode)
+			if isNoMatchGrepExit(cmdStr, exitCode, buf.String()) {
+				failed = false
+				fmt.Fprintln(os.Stderr, "[no matching lines]")
+			} else {
+				fmt.Fprintf(os.Stderr, "[command exited with status %d]\n", exitCode)
+			}
 		} else {
 			exitCode = -1
 			fmt.Fprintf(os.Stderr, "[command failed: %v]\n", err)
@@ -203,6 +228,53 @@ func runCommandStreaming(cmdStr string, liveOut io.Writer) CapturedCommand {
 		fmt.Fprintln(os.Stderr, "[command failed: journalctl could not read the kernel log; try dmesg or sudo dmesg]")
 	}
 	return CapturedCommand{Cmd: cmdStr, Output: buf.String(), Failed: failed, ExitCode: exitCode}
+}
+
+func isNoMatchGrepExit(cmdStr string, exitCode int, output string) bool {
+	return exitCode == 1 && lastPipelineCommandBase(cmdStr) == "grep" && strings.TrimSpace(output) == ""
+}
+
+func lastPipelineCommandBase(cmdStr string) string {
+	fields := strings.Fields(lastPipelineSegment(cmdStr))
+	if len(fields) == 0 {
+		return ""
+	}
+	if fields[0] == "sudo" && len(fields) > 1 {
+		return fields[1]
+	}
+	return fields[0]
+}
+
+func lastPipelineSegment(cmdStr string) string {
+	start := 0
+	inSingle := false
+	inDouble := false
+	escaped := false
+	for i, r := range cmdStr {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if r == '\\' && !inSingle {
+			escaped = true
+			continue
+		}
+		switch r {
+		case '\'':
+			if !inDouble {
+				inSingle = !inSingle
+			}
+		case '"':
+			if !inSingle {
+				inDouble = !inDouble
+			}
+		case '|':
+			if !inSingle && !inDouble {
+				start = i + len("|")
+			}
+		}
+	}
+	return strings.TrimSpace(cmdStr[start:])
 }
 
 func (s *Session) runAndCapture(cmdStr string) CapturedCommand {
@@ -330,6 +402,84 @@ func readLine() (string, bool) {
 		return "", false
 	}
 	return strings.TrimSpace(line), true
+}
+
+func enterRawInput() (restore func(), ok bool) {
+	if !rawInputEnabled() {
+		return nil, false
+	}
+	var old syscall.Termios
+	_, _, errno := syscall.Syscall(
+		syscall.SYS_IOCTL,
+		os.Stdin.Fd(),
+		uintptr(syscall.TCGETS),
+		uintptr(unsafe.Pointer(&old)),
+	)
+	if errno != 0 {
+		return nil, false
+	}
+	raw := old
+	raw.Iflag &^= syscall.ICRNL | syscall.IXON
+	raw.Lflag &^= syscall.ECHO | syscall.ICANON | syscall.ISIG
+	raw.Cc[syscall.VMIN] = 1
+	raw.Cc[syscall.VTIME] = 0
+	_, _, errno = syscall.Syscall(
+		syscall.SYS_IOCTL,
+		os.Stdin.Fd(),
+		uintptr(syscall.TCSETS),
+		uintptr(unsafe.Pointer(&raw)),
+	)
+	if errno != 0 {
+		return nil, false
+	}
+	return func() {
+		syscall.Syscall(
+			syscall.SYS_IOCTL,
+			os.Stdin.Fd(),
+			uintptr(syscall.TCSETS),
+			uintptr(unsafe.Pointer(&old)),
+		)
+	}, true
+}
+
+func readTerminalKey() (keyEvent, error) {
+	b, err := stdin.ReadByte()
+	if err != nil {
+		return keyEvent{}, err
+	}
+	switch {
+	case b == '\r' || b == '\n':
+		return keyEvent{Key: keyEnter}, nil
+	case b == ' ':
+		return keyEvent{Key: keySpace}, nil
+	case b == 'q' || b == 'Q' || b == 3 || b == 4:
+		return keyEvent{Key: keyQuit}, nil
+	case b == 'n' || b == 'N':
+		return keyEvent{Key: keyClear}, nil
+	case b == ',':
+		return keyEvent{Key: keySeparator}, nil
+	case b >= '1' && b <= '9':
+		return keyEvent{Key: keyDigit, Digit: int(b - '0')}, nil
+	case b == 0x1b:
+		second, err := stdin.ReadByte()
+		if err != nil {
+			return keyEvent{Key: keyQuit}, nil
+		}
+		if second != '[' {
+			return keyEvent{Key: keyUnknown}, nil
+		}
+		third, err := stdin.ReadByte()
+		if err != nil {
+			return keyEvent{Key: keyUnknown}, nil
+		}
+		switch third {
+		case 'A':
+			return keyEvent{Key: keyUp}, nil
+		case 'B':
+			return keyEvent{Key: keyDown}, nil
+		}
+	}
+	return keyEvent{Key: keyUnknown}, nil
 }
 
 func stripCopiedShellPrompt(line string) (string, bool) {

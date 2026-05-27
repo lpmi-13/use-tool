@@ -12,7 +12,7 @@ var memoryInvestigation = &Investigation{
 	Title: "Memory — Utilization, Saturation, Errors",
 	Description: "Investigate memory using Brendan Gregg's USE method.\n" +
 		"Run commands at the prompt; the harness captures their output\n" +
-		"and asks targeted questions about what you observed.",
+		"and asks specific questions about what you saw.",
 	StepsFn:      memorySteps,
 	Observations: memoryObservations,
 	Commands:     memoryCommands,
@@ -46,7 +46,7 @@ func memorySteps(si SystemInfo) []GuideStep {
 		{
 			Name: "swap-activity",
 			Intro: "Step 2: look at paging rates. Non-zero swap-in / swap-out activity\n" +
-				"means the working set exceeds RAM.",
+				"means the working set is bigger than RAM.",
 			Suggested:     swapPick.Cmd,
 			QuestionsFn:   combineVariantQuestions(swapVariants),
 			QuestionCount: 3,
@@ -111,8 +111,8 @@ func memorySwapVariants(si SystemInfo) []stepVariant {
 		{
 			Cmd:         "vmstat 1 5",
 			QuestionsFn: vmstatColumnQuestions,
-			Teaching: "Sustained `si`/`so` > 0 in vmstat means working set exceeds physical\n" +
-				"memory. On its own this is suggestive; pair with PSI or latency\n" +
+			Teaching: "Steady `si`/`so` > 0 in vmstat means the working set is bigger than\n" +
+				"physical memory. On its own this is a hint; combine with PSI or latency\n" +
 				"observations to confirm tasks are actually being slowed down.",
 		},
 		{
@@ -145,7 +145,7 @@ func memoryTopConsumerVariants() []stepVariant {
 		{
 			Cmd:         "top -bn1 -o %MEM | head -20",
 			QuestionsFn: topMemColumnQuestions,
-			Teaching: "`top -o %MEM` ranks by percentage of physical memory. The crucial\n" +
+			Teaching: "`top -o %MEM` ranks by percentage of physical memory. The key\n" +
 				"three columns: VIRT (entire virtual address space, often huge and\n" +
 				"misleading), RES (resident in RAM — top's name for RSS), and SHR\n" +
 				"(memory shared with other processes). RES − SHR is a rough proxy\n" +
@@ -199,7 +199,7 @@ func meminfoQuestions(si SystemInfo, c CapturedCommand) []Question {
 		qs = append(qs, makeRecallQuestion(
 			fmt.Sprintf(
 				"This run reported `MemTotal` as %s and `MemAvailable` as %s.\n"+
-					"About what memory-used percentage does that imply when reclaimable cache is treated as available?",
+					"About what memory-used percentage does that work out to when reclaimable cache is treated as available?",
 				formatKiBGiB(total), formatKiBGiB(avail)),
 			correct, pool)...)
 	}
@@ -264,7 +264,7 @@ var meminfoQuestionPicks = []columnQuestionPick{
 	},
 	{
 		Column:  "MemFree",
-		Correct: "Completely unused RAM, excluding reclaimable page cache and buffers",
+		Correct: "Completely unused RAM, not counting reclaimable page cache and buffers",
 		Distractors: []string{
 			"Memory available for new allocations without swapping",
 			"Memory used by filesystem cache",
@@ -476,8 +476,8 @@ func psiMemoryQuestions(si SystemInfo, c CapturedCommand) []Question {
 		metric, correct, sibling string
 	}
 	pick := pickRandom([]psiPick{
-		{"some", "The percentage of time during which at least one task was stalled on memory", "The percentage of time during which all non-idle tasks were simultaneously stalled on memory"},
-		{"full", "The percentage of time during which all non-idle tasks were simultaneously stalled on memory", "The percentage of time during which at least one task was stalled on memory"},
+		{"some", "The percentage of time when at least one task was stalled on memory", "The percentage of time when all non-idle tasks were stalled on memory at the same time"},
+		{"full", "The percentage of time when all non-idle tasks were stalled on memory at the same time", "The percentage of time when at least one task was stalled on memory"},
 	})
 	qs := []Question{
 		{
@@ -490,7 +490,7 @@ func psiMemoryQuestions(si SystemInfo, c CapturedCommand) []Question {
 			},
 		},
 		{
-			Stem:    "Which is the strongest signal that memory saturation is harming throughput?",
+			Stem:    "Which is the strongest signal that memory saturation is hurting throughput?",
 			Correct: "`full avg10` consistently above zero",
 			Distractors: []string{
 				"`some avg10` near 100% with `full` at zero",
@@ -507,7 +507,7 @@ func psiMemoryQuestions(si SystemInfo, c CapturedCommand) []Question {
 				"This PSI sample reported `some avg10=%.2f` and `full avg10=%.2f`.\n"+
 					"Which reading is the stronger saturation signal for throughput?",
 				someV.Number, fullV.Number),
-			Correct: fmt.Sprintf("`full avg10=%.2f` — it means all non-idle tasks were simultaneously stalled during that time-share", fullV.Number),
+			Correct: fmt.Sprintf("`full avg10=%.2f` — it means all non-idle tasks were stalled at the same time during that time-share", fullV.Number),
 			Distractors: []string{
 				fmt.Sprintf("`some avg10=%.2f` — it is always stronger because it is usually larger", someV.Number),
 				"`MemFree` — PSI does not describe stalls",
@@ -565,12 +565,12 @@ func availablePSIQuestionPicks(output, resource string) []columnQuestionPick {
 			Distractors: []string{
 				fmt.Sprintf("The pressure line for time when all non-idle tasks were stalled on %s", resource),
 				fmt.Sprintf("The percentage of %s capacity currently in use", resource),
-				"The cumulative number of stalled tasks since boot",
+				"The total number of stalled tasks since boot",
 			},
 		},
 		{
 			Column:  "full",
-			Correct: fmt.Sprintf("The pressure line for time when all non-idle tasks were simultaneously stalled on %s", resource),
+			Correct: fmt.Sprintf("The pressure line for time when all non-idle tasks were stalled on %s at the same time", resource),
 			Distractors: []string{
 				fmt.Sprintf("The pressure line for time when at least one task was stalled on %s", resource),
 				fmt.Sprintf("The percentage of %s capacity currently free", resource),
@@ -606,7 +606,7 @@ func availablePSIQuestionPicks(output, resource string) []columnQuestionPick {
 		},
 		{
 			Column:  "total",
-			Correct: "Cumulative stall time in microseconds for that PSI line",
+			Correct: "Total stall time in microseconds for that PSI line",
 			Distractors: []string{
 				"Total bytes read or written by stalled tasks",
 				"Total resource capacity available to the host",
@@ -771,7 +771,7 @@ var topMemQuestionPicks = []columnQuestionPick{
 		Correct: "Recent CPU usage as a percentage of one CPU's capacity (so values above 100% are possible on multi-threaded processes)",
 		Distractors: []string{
 			"Percentage of total CPU capacity across all logical CPUs",
-			"Cumulative CPU time since the process started, expressed as a percent of uptime",
+			"Total CPU time since the process started, as a percent of uptime",
 			"Percentage of the user's allotted CPU quota",
 		},
 	},
@@ -791,7 +791,7 @@ var psRSSQuestionPicks = []columnQuestionPick{
 		Column:  "RSS",
 		Correct: "Memory currently resident in RAM for the process, reported in kilobytes by this ps format",
 		Distractors: []string{
-			"Private memory only, excluding shared libraries",
+			"Private memory only, not counting shared libraries",
 			"Total virtual address space reserved by the process",
 			"Swap space currently used by the process",
 		},
@@ -833,7 +833,7 @@ var memoryObservations = []Observation{
 		// Deliberately no Verdict: on Linux 'used' includes reclaimable
 		// page cache, so high used% is routine on healthy systems. The
 		// Heuristic explains this if the learner tries to cite it.
-		Heuristic: "On Linux 'used' includes reclaimable page cache, so a high used% is not pressure. The honest utilization signal is available memory (and saturation = swap activity / PSI).",
+		Heuristic: "On Linux 'used' includes reclaimable page cache, so a high used% is not pressure. The real utilization signal is available memory (and saturation = swap activity / PSI).",
 	},
 	{
 		Name:      "mem_available_gib",
@@ -841,14 +841,14 @@ var memoryObservations = []Observation{
 		Section:   "Utilization",
 		Extract:   extractMemAvailableGiB,
 		Verdict:   verdictMemAvailable,
-		Heuristic: "available memory in the low-GiB range indicates real pressure (Linux already counts reclaimable cache toward available)",
+		Heuristic: "available memory in the low-GiB range means real pressure (Linux already counts reclaimable cache toward available)",
 	},
 	{
 		Name:      "cache_buffers_gib",
 		Title:     "Cache + buffers",
 		Section:   "Utilization",
 		Extract:   extractCacheBuffersGiB,
-		Heuristic: "cache + buffers is reclaimable memory the kernel hands back under pressure — informational, not a verdict on its own",
+		Heuristic: "cache + buffers is reclaimable memory the kernel hands back under pressure — context only, not a verdict on its own",
 	},
 	{
 		Name:      "swap_used_pct",
@@ -856,7 +856,7 @@ var memoryObservations = []Observation{
 		Section:   "Utilization",
 		Extract:   extractSwapUsedPct,
 		Verdict:   verdictSwapUsed,
-		Heuristic: "sustained swap use indicates memory pressure: the kernel is pushing anonymous pages out of RAM",
+		Heuristic: "steady swap use means memory pressure: the kernel is pushing anonymous pages out of RAM",
 	},
 	{
 		Name:      "vmstat_si",
@@ -880,7 +880,7 @@ var memoryObservations = []Observation{
 		Section:   "Saturation",
 		Extract:   extractPSIMemory("some"),
 		Verdict:   verdictPSISome,
-		Heuristic: "PSI memory 'some' avg10 = percent of the last 10s window with at least one task stalled on memory; >10% sustained = saturation",
+		Heuristic: "PSI memory 'some' avg10 = percent of the last 10s window with at least one task stalled on memory; >10% steady = saturation",
 	},
 	{
 		Name:      "psi_mem_full_avg10",
@@ -888,7 +888,7 @@ var memoryObservations = []Observation{
 		Section:   "Saturation",
 		Extract:   extractPSIMemory("full"),
 		Verdict:   verdictPSIFull,
-		Heuristic: "PSI memory 'full' avg10 = percent of the window where ALL non-idle tasks stalled on memory; any sustained non-zero = severe saturation",
+		Heuristic: "PSI memory 'full' avg10 = percent of the window where ALL non-idle tasks stalled on memory; any steady non-zero = severe saturation",
 	},
 	{
 		Name:      "dmesg_oom_count",
@@ -896,7 +896,7 @@ var memoryObservations = []Observation{
 		Section:   "Errors",
 		Extract:   extractDmesgOOM,
 		Verdict:   verdictDmesgOOM,
-		Heuristic: "OOM-killer entries in the kernel log = memory has already been exhausted; the kernel killed processes to reclaim",
+		Heuristic: "OOM-killer entries in the kernel log = memory has already been used up; the kernel killed processes to reclaim",
 	},
 }
 
@@ -1180,7 +1180,7 @@ func extractMemUsedPct(si SystemInfo, caps []CapturedCommand) (Value, bool) {
 
 func memUsedPctValue(totalKB, availKB float64, rounded bool) Value {
 	used := (totalKB - availKB) / totalKB * 100
-	note := fmt.Sprintf("%.1f / %.1f GiB used (excluding reclaimable cache)", (totalKB-availKB)/1024/1024, totalKB/1024/1024)
+	note := fmt.Sprintf("%.1f / %.1f GiB used (not counting reclaimable cache)", (totalKB-availKB)/1024/1024, totalKB/1024/1024)
 	if rounded {
 		note += " — from rounded `free -h`"
 	}
@@ -1359,12 +1359,12 @@ var memoryCommands = []CommandRef{
 	{
 		Cmd:     "smem -tk",
 		Section: "Utilization",
-		Summary: "Per-process memory with PSS (proportional set size).\nMore accurate attribution than RSS. (smem package.)",
+		Summary: "Per-process memory with PSS (proportional set size).\nMore accurate per-process numbers than RSS. (smem package.)",
 	},
 	{
 		Cmd:     "vmstat 1 N",
 		Section: "Saturation",
-		Summary: "Watch the `si` and `so` columns. Sustained non-zero\nvalues mean the working set exceeds physical memory.",
+		Summary: "Watch the `si` and `so` columns. Steady non-zero\nvalues mean the working set is bigger than physical memory.",
 	},
 	{
 		Cmd:      "cat /proc/pressure/memory",

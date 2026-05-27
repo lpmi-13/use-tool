@@ -173,7 +173,7 @@ func init() {
 		Name:  "system",
 		Title: "System — whole-system USE diagnosis",
 		Description: "Practice across the full system: capture any commands across CPU,\n" +
-			"memory, disk, and network, then run `diagnose` to assess each resource\n" +
+			"memory, disk, and network, then run `diagnose` to check each resource\n" +
 			"by USE (Utilization, Saturation, Errors).",
 		StepsFn:      func(SystemInfo) []GuideStep { return nil },
 		Observations: sysObs,

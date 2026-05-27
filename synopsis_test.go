@@ -96,7 +96,7 @@ func TestMemorySynopsisIdentifiesHighSwapAllocation(t *testing.T) {
 	}}
 	issues := memorySynopsis(snap)
 
-	if !hasSynopsis(issues, "Utilization", "substantial swap allocation") {
+	if !hasSynopsis(issues, "Utilization", "large swap use") {
 		t.Fatalf("expected swap utilization issue, got %#v", issues)
 	}
 	if hasSynopsis(issues, "Saturation", "") {

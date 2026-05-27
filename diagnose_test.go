@@ -332,7 +332,7 @@ func TestNetworkInvestigationCarriesUtilizationNote(t *testing.T) {
 	// and (b) why — the link-speed gap. It's read in two contexts: at the
 	// verdict prompt when there are captured signals, and embedded in the
 	// auto-skip line when there aren't.
-	for _, want := range []string{"link speed", "informational"} {
+	for _, want := range []string{"link speed", "for context"} {
 		if !strings.Contains(note, want) {
 			t.Errorf("network utilization note missing %q: %q", want, note)
 		}
@@ -601,7 +601,7 @@ func TestPrintDiagnoseFeedbackSuggestsNextCommands(t *testing.T) {
 		printDiagnoseFeedback(grades, false)
 	})
 	for _, want := range []string{
-		"  To gather more corroborating evidence:\n",
+		"  To gather more supporting evidence:\n",
 		"    • cat /proc/pressure/cpu\n",
 		"      PSI: time-share of tasks stalled on CPU.\n",
 	} {

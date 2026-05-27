@@ -24,7 +24,7 @@ func cmdPractice(args []string) {
 	fmt.Printf("\nDetected system: %d logical CPU%s.\n", si.NumCPU, plural(si.NumCPU))
 	fmt.Println("Shell commands run on this live system.")
 	fmt.Println("Builtins: `report` (snapshot of what you've gathered), `commands` (cheatsheet),")
-	fmt.Println("          `diagnose` (assess the system's USE state from what you observed), `help`, `exit`.")
+	fmt.Println("          `diagnose` (check the system's USE state from what you saw), `help`, `exit`.")
 	fmt.Println()
 
 	practiceLoop(s)

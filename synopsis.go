@@ -13,12 +13,12 @@ type SynopsisIssue struct {
 }
 
 func printSynopsis(inv *Investigation, si SystemInfo, snap Snapshot) {
-	fmt.Println("--- USE synopsis ---")
+	fmt.Println("--- USE summary ---")
 	issues := synopsisIssues(inv, si, snap)
 	if len(issues) == 0 {
-		fmt.Printf("No high-level USE issues identified from captured %s observations.\n", inv.Name)
+		fmt.Printf("No high-level USE issues found from captured %s observations.\n", inv.Name)
 		if len(snap.NotCaptured) > 0 {
-			fmt.Println("Uncaptured checks are omitted from this synopsis.")
+			fmt.Println("Uncaptured checks are left out of this summary.")
 		}
 		fmt.Println()
 		return
@@ -27,7 +27,7 @@ func printSynopsis(inv *Investigation, si SystemInfo, snap Snapshot) {
 		fmt.Printf("%s: %s. Evidence: %s.\n", issue.Section, issue.Summary, issue.Evidence)
 	}
 	if len(snap.NotCaptured) > 0 {
-		fmt.Println("Uncaptured checks are omitted from this synopsis.")
+		fmt.Println("Uncaptured checks are left out of this summary.")
 	}
 	fmt.Println()
 }
@@ -91,7 +91,7 @@ func cpuSynopsis(si SystemInfo, snap Snapshot) []SynopsisIssue {
 	if v, ok := snap.Values["dmesg_cpu_keywords"]; ok && textCountPositive(v.Text) {
 		issues = append(issues, SynopsisIssue{
 			Section:  "Errors",
-			Summary:  "kernel CPU, thermal, or machine-check messages were observed",
+			Summary:  "kernel CPU, thermal, or machine-check messages were seen",
 			Evidence: v.Text,
 		})
 	}
@@ -122,14 +122,14 @@ func memorySynopsis(snap Snapshot) []SynopsisIssue {
 		issues = append(issues, SynopsisIssue{
 			Section:  "Utilization",
 			Summary:  "high memory utilization",
-			Evidence: fmt.Sprintf("memory used was %s using MemAvailable as reclaimable headroom", formatNumber(v.Number, "%")),
+			Evidence: fmt.Sprintf("memory used was %s using MemAvailable as the reclaimable buffer", formatNumber(v.Number, "%")),
 		})
 	}
 	if v, ok := snap.Values["swap_used_pct"]; ok && v.Text == "" && v.Number >= 50 {
 		issues = append(issues, SynopsisIssue{
 			Section:  "Utilization",
-			Summary:  "substantial swap allocation",
-			Evidence: fmt.Sprintf("swap used was %s; use vmstat si/so and PSI to distinguish old swapped pages from active pressure", formatNumber(v.Number, "%")),
+			Summary:  "large swap use",
+			Evidence: fmt.Sprintf("swap used was %s; use vmstat si/so and PSI to tell old swapped pages apart from active pressure", formatNumber(v.Number, "%")),
 		})
 	}
 	siMax, siOK := sampleMax(snap, "vmstat_si")
@@ -157,7 +157,7 @@ func memorySynopsis(snap Snapshot) []SynopsisIssue {
 	if v, ok := snap.Values["dmesg_oom_count"]; ok && textCountPositive(v.Text) {
 		issues = append(issues, SynopsisIssue{
 			Section:  "Errors",
-			Summary:  "OOM-related kernel messages were observed",
+			Summary:  "OOM-related kernel messages were seen",
 			Evidence: v.Text,
 		})
 	}
@@ -183,7 +183,7 @@ func diskSynopsis(snap Snapshot) []SynopsisIssue {
 	if v, ok := snap.Values["iostat_max_await_ms"]; ok && v.Number >= 20 {
 		issues = append(issues, SynopsisIssue{
 			Section:  "Saturation",
-			Summary:  "disk request latency was elevated",
+			Summary:  "disk request latency was high",
 			Evidence: fmt.Sprintf("iostat await max was %s", formatNumber(v.Number, " ms")),
 		})
 	}
@@ -203,7 +203,7 @@ func diskSynopsis(snap Snapshot) []SynopsisIssue {
 	if v, ok := snap.Values["dmesg_io_errors"]; ok && textCountPositive(v.Text) {
 		issues = append(issues, SynopsisIssue{
 			Section:  "Errors",
-			Summary:  "kernel I/O error messages were observed",
+			Summary:  "kernel I/O error messages were seen",
 			Evidence: v.Text,
 		})
 	}
@@ -215,14 +215,14 @@ func networkSynopsis(snap Snapshot) []SynopsisIssue {
 	if v, ok := snap.Values["net_rx_drops_per_sec_max"]; ok && v.Number > 0 {
 		issues = append(issues, SynopsisIssue{
 			Section:  "Saturation",
-			Summary:  "receive drops were observed",
+			Summary:  "receive drops were seen",
 			Evidence: fmt.Sprintf("sar -n EDEV rxdrop/s max was %s", formatNumber(v.Number, "")),
 		})
 	}
 	if v, ok := snap.Values["tcp_retransmit_ratio_pct"]; ok && v.Number >= 1 {
 		issues = append(issues, SynopsisIssue{
 			Section:  "Saturation",
-			Summary:  "TCP retransmits were elevated",
+			Summary:  "TCP retransmits were high",
 			Evidence: fmt.Sprintf("TCP retransmit ratio was %s", formatNumber(v.Number, "%")),
 		})
 	}
@@ -236,14 +236,14 @@ func networkSynopsis(snap Snapshot) []SynopsisIssue {
 	if v, ok := snap.Values["net_iface_errors_total"]; ok && v.Number > 0 {
 		issues = append(issues, SynopsisIssue{
 			Section:  "Errors",
-			Summary:  "interface RX/TX errors were observed",
+			Summary:  "interface RX/TX errors were seen",
 			Evidence: fmt.Sprintf("interface error total was %s", formatNumber(v.Number, "")),
 		})
 	}
 	if v, ok := snap.Values["dmesg_net_keywords"]; ok && textCountPositive(v.Text) {
 		issues = append(issues, SynopsisIssue{
 			Section:  "Errors",
-			Summary:  "kernel link or NIC messages were observed",
+			Summary:  "kernel link or NIC messages were seen",
 			Evidence: v.Text,
 		})
 	}

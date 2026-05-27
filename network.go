@@ -12,12 +12,12 @@ var networkInvestigation = &Investigation{
 	Title: "Network — Utilization, Saturation, Errors",
 	Description: "Investigate network using Brendan Gregg's USE method.\n" +
 		"Run commands at the prompt; the harness captures their output\n" +
-		"and asks targeted questions about what you observed.",
+		"and asks specific questions about what you saw.",
 	StepsFn:      networkSteps,
 	Observations: networkObservations,
 	Commands:     networkCommands,
 	DiagnoseNotes: map[string]string{
-		"Utilization": "network utilization can't be inferred without per-interface link speed, which the tool doesn't know — throughput numbers in the snapshot are informational only.",
+		"Utilization": "network utilization can't be worked out without per-interface link speed, which the tool doesn't know — throughput numbers in the snapshot are for context only.",
 	},
 }
 
@@ -33,7 +33,7 @@ func networkSteps(si SystemInfo) []GuideStep {
 	return []GuideStep{
 		{
 			Name:          "interfaces",
-			Intro:         "Step 1: orient yourself to the interfaces and their cumulative counters.",
+			Intro:         "Step 1: get familiar with the interfaces and their since-boot counters.",
 			Suggested:     interfacePick.Cmd,
 			QuestionsFn:   combineVariantQuestions(interfaceVariants),
 			QuestionCount: 3,
@@ -54,7 +54,7 @@ func networkSteps(si SystemInfo) []GuideStep {
 				"'Speed: Unknown!' — graceful degradation matters here.\n\n" +
 				"About those `veth*` rows: each is one end of a virtual ethernet pair\n" +
 				"that connects a container's network namespace to the host bridge\n" +
-				"(`docker0` or similar). The opaque hex suffix is the host-side end —\n" +
+				"(`docker0` or similar). The unclear hex suffix is the host-side end —\n" +
 				"the matching container-side end lives inside the container. To tie a\n" +
 				"`veth` back to a service name, `docker stats --format '{{.Name}} {{.NetIO}}'`\n" +
 				"shows per-container net I/O directly; or `ip -n <container-pid> link`\n" +
@@ -67,7 +67,7 @@ func networkSteps(si SystemInfo) []GuideStep {
 			QuestionsFn:   sarEdevColumnQuestions,
 			QuestionCount: 3,
 			Filter:        filterNoiseInterfaces,
-			Teaching: "rxdrop/s > 0 means the kernel discarded incoming packets, usually\n" +
+			Teaching: "rxdrop/s > 0 means the kernel dropped incoming packets, usually\n" +
 				"because the NIC ring buffer or kernel queue was full. txdrop/s on the\n" +
 				"send side means the qdisc dropped packets. Either is real saturation\n" +
 				"that the bandwidth headline will not show you.",
@@ -115,7 +115,7 @@ func networkInterfaceVariants() []stepVariant {
 			Cmd:         "ip -s link",
 			QuestionsFn: ipLinkColumnQuestions,
 			Teaching: "Each interface lists RX and TX byte/packet/error/dropped counters.\n" +
-				"These are cumulative since boot — useful for 'has anything ever been\n" +
+				"These are running totals since boot — useful for 'has anything ever been\n" +
 				"wrong here' but not for 'is it happening now'. Use sar -n EDEV for rates.",
 		},
 		{
@@ -125,7 +125,7 @@ func networkInterfaceVariants() []stepVariant {
 				"reads under the hood. Format is positional, not labelled: after the\n" +
 				"interface name, 8 RX fields (bytes, packets, errs, drop, fifo, frame,\n" +
 				"compressed, multicast) followed by 8 TX fields in the same shape.\n" +
-				"Cumulative since boot — diff two reads with a known interval for a\n" +
+				"Running totals since boot — diff two reads with a known interval for a\n" +
 				"rate, or just use `sar -n DEV`.",
 		},
 	}
@@ -313,7 +313,7 @@ func ipLinkColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 	return []Question{
 		{
 			Stem:    "In `ip -s link` RX counters, what does `bytes` represent?",
-			Correct: "Cumulative bytes received by the interface since the counter was reset",
+			Correct: "Running total of bytes received by the interface since the counter was reset",
 			Distractors: []string{
 				"Current receive throughput in bytes per second",
 				"Bytes waiting in the receive queue right now",
@@ -322,7 +322,7 @@ func ipLinkColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 		},
 		{
 			Stem:    "In `ip -s link` RX counters, what does `packets` represent?",
-			Correct: "Cumulative packets received by the interface since the counter was reset",
+			Correct: "Running total of packets received by the interface since the counter was reset",
 			Distractors: []string{
 				"Current receive packets per second",
 				"Packets currently queued for userspace",
@@ -331,7 +331,7 @@ func ipLinkColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 		},
 		{
 			Stem:    "In `ip -s link` RX counters, what does `errors` represent?",
-			Correct: "Cumulative receive-side packet errors reported by the interface",
+			Correct: "Running total of receive-side packet errors reported by the interface",
 			Distractors: []string{
 				"Application-level socket errors",
 				"Packets intentionally dropped by firewall rules only",
@@ -340,7 +340,7 @@ func ipLinkColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 		},
 		{
 			Stem:    "In `ip -s link` RX counters, what does `dropped` represent?",
-			Correct: "Cumulative received packets discarded before delivery up the stack",
+			Correct: "Running total of received packets dropped before delivery up the stack",
 			Distractors: []string{
 				"Packets dropped by remote peers",
 				"Packets retransmitted after loss",
@@ -349,7 +349,7 @@ func ipLinkColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 		},
 		{
 			Stem:    "In `ip -s link` RX counters, what does `overrun` represent?",
-			Correct: "Cumulative receive FIFO overruns where packets arrived faster than the NIC or driver could drain them",
+			Correct: "Running total of receive FIFO overruns where packets arrived faster than the NIC or driver could drain them",
 			Distractors: []string{
 				"Packets larger than the interface MTU",
 				"Packets dropped by the transmit queue",
@@ -358,7 +358,7 @@ func ipLinkColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 		},
 		{
 			Stem:    "In `ip -s link` RX counters, what does `mcast` represent?",
-			Correct: "Cumulative multicast packets received by the interface",
+			Correct: "Running total of multicast packets received by the interface",
 			Distractors: []string{
 				"Packets sent to the interface's MAC address only",
 				"Packets dropped because of checksum errors",
@@ -367,7 +367,7 @@ func ipLinkColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 		},
 		{
 			Stem:    "In `ip -s link` TX counters, what does `bytes` represent?",
-			Correct: "Cumulative bytes transmitted by the interface since the counter was reset",
+			Correct: "Running total of bytes transmitted by the interface since the counter was reset",
 			Distractors: []string{
 				"Current transmit throughput in bytes per second",
 				"Bytes currently waiting in the transmit queue",
@@ -376,7 +376,7 @@ func ipLinkColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 		},
 		{
 			Stem:    "In `ip -s link` TX counters, what does `packets` represent?",
-			Correct: "Cumulative packets transmitted by the interface since the counter was reset",
+			Correct: "Running total of packets transmitted by the interface since the counter was reset",
 			Distractors: []string{
 				"Current transmit packets per second",
 				"Packets currently queued in TCP send buffers",
@@ -385,7 +385,7 @@ func ipLinkColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 		},
 		{
 			Stem:    "In `ip -s link` TX counters, what does `dropped` represent?",
-			Correct: "Cumulative outgoing packets discarded before transmission",
+			Correct: "Running total of outgoing packets dropped before transmission",
 			Distractors: []string{
 				"Incoming packets dropped by the peer",
 				"TCP segments retransmitted after timeout",
@@ -394,7 +394,7 @@ func ipLinkColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 		},
 		{
 			Stem:    "In `ip -s link` TX counters, what does `carrier` represent?",
-			Correct: "Cumulative transmit carrier errors reported by the interface",
+			Correct: "Running total of transmit carrier errors reported by the interface",
 			Distractors: []string{
 				"The current negotiated carrier speed",
 				"The number of carrier-grade NAT translations",
@@ -434,16 +434,16 @@ func sarDevQuestions(si SystemInfo, c CapturedCommand) []Question {
 			Distractors: []string{
 				pick.packetDistractor,
 				pick.totalDistractor,
-				"Maximum link-capacity headroom currently free, in kilobytes per second",
+				"Maximum spare link capacity currently free, in kilobytes per second",
 			},
 		},
 		{
 			Stem:    "If `rxkB/s` is well below the interface's link speed but the application reports network slowness, what's the right next step?",
-			Correct: "Check sar -n EDEV for drops and `cat /proc/net/snmp` for retransmits; bandwidth headroom does not rule out loss",
+			Correct: "Check sar -n EDEV for drops and `cat /proc/net/snmp` for retransmits; spare bandwidth doesn't mean there's no loss",
 			Distractors: []string{
 				"Conclude the network is fine and look at CPU instead",
 				"Run sar -n DEV with a longer interval until rxkB/s climbs",
-				"Restart the network interface — sustained low utilization indicates a misconfigured driver",
+				"Restart the network interface — steady low utilization means a badly set-up driver",
 			},
 		},
 	}
@@ -565,7 +565,7 @@ func sarEdevQuestions(si SystemInfo, c CapturedCommand) []Question {
 		},
 	})
 	return []Question{{
-		Stem:    fmt.Sprintf("Sustained `%s` > 0 on a physical interface most commonly indicates:", pick.col),
+		Stem:    fmt.Sprintf("Steady `%s` > 0 on a physical interface most commonly means:", pick.col),
 		Correct: pick.correct,
 		Distractors: []string{
 			"The peer is sending malformed frames that the NIC rejects",
@@ -795,7 +795,7 @@ func snmpQuestions(si SystemInfo, c CapturedCommand) []Question {
 	return []Question{
 		{
 			Stem:    "`/proc/net/snmp` reports TCP `OutSegs` and `RetransSegs`. What does the ratio RetransSegs / OutSegs tell you?",
-			Correct: "The fraction of TCP segments that had to be retransmitted — a proxy for end-to-end packet loss; healthy is well under 1%",
+			Correct: "The fraction of TCP segments that had to be retransmitted — a stand-in for end-to-end packet loss; healthy is well under 1%",
 			Distractors: []string{
 				"The fraction of segments that took longer than RTO to acknowledge",
 				"The fraction of bandwidth wasted on TCP control packets",
@@ -804,7 +804,7 @@ func snmpQuestions(si SystemInfo, c CapturedCommand) []Question {
 		},
 		{
 			Stem:    "If the retransmit ratio is high but `ip -s link` shows zero RX/TX errors and zero drops, where is loss most likely happening?",
-			Correct: "Downstream of this host — an intermediate switch, the peer, or somewhere along the path",
+			Correct: "Downstream of this host — an in-between switch, the peer, or somewhere along the path",
 			Distractors: []string{
 				"In the local TCP stack — usually a kernel bug",
 				"In the application — it's failing to read fast enough",
@@ -836,10 +836,10 @@ func procNetDevQuestions(si SystemInfo, c CapturedCommand) []Question {
 		return nil
 	}
 	return []Question{{
-		Stem:    "/proc/net/dev gives cumulative per-interface counters. To get a *rate*, what should you do?",
-		Correct: "Sample twice with a known time delta and compute the difference, or use a rate-aware tool like sar -n DEV",
+		Stem:    "/proc/net/dev gives since-boot per-interface counters. To get a *rate*, what should you do?",
+		Correct: "Sample twice with a known time gap and work out the difference, or use a rate-aware tool like sar -n DEV",
 		Distractors: []string{
-			"Multiply the cumulative value by the system tick rate",
+			"Multiply the running total by the system tick rate",
 			"Divide by the interface's link speed",
 			"Read /proc/net/dev_rate, which exposes the same data already differentiated",
 		},
@@ -853,7 +853,7 @@ func procNetDevColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 	return []Question{
 		{
 			Stem:    "In `/proc/net/dev`, what does receive `bytes` represent?",
-			Correct: "Cumulative bytes received by the interface",
+			Correct: "Running total of bytes received by the interface",
 			Distractors: []string{
 				"Current receive throughput in bytes per second",
 				"Bytes currently queued in socket buffers",
@@ -862,7 +862,7 @@ func procNetDevColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 		},
 		{
 			Stem:    "In `/proc/net/dev`, what does receive `errs` represent?",
-			Correct: "Cumulative receive errors for the interface",
+			Correct: "Running total of receive errors for the interface",
 			Distractors: []string{
 				"TCP errors reported by applications",
 				"Receive packets dropped by firewall rules only",
@@ -871,7 +871,7 @@ func procNetDevColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 		},
 		{
 			Stem:    "In `/proc/net/dev`, what does receive `drop` represent?",
-			Correct: "Cumulative received packets dropped before delivery",
+			Correct: "Running total of received packets dropped before delivery",
 			Distractors: []string{
 				"TCP retransmitted packets",
 				"Packets dropped by the remote peer",
@@ -880,7 +880,7 @@ func procNetDevColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 		},
 		{
 			Stem:    "In `/proc/net/dev`, what does transmit `bytes` represent?",
-			Correct: "Cumulative bytes transmitted by the interface",
+			Correct: "Running total of bytes transmitted by the interface",
 			Distractors: []string{
 				"Current transmit throughput in bytes per second",
 				"Bytes waiting in the qdisc",
@@ -889,7 +889,7 @@ func procNetDevColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 		},
 		{
 			Stem:    "In `/proc/net/dev`, what does transmit `drop` represent?",
-			Correct: "Cumulative outgoing packets dropped before transmission",
+			Correct: "Running total of outgoing packets dropped before transmission",
 			Distractors: []string{
 				"Incoming packets dropped by the peer",
 				"TCP connections dropped by applications",
@@ -932,18 +932,18 @@ type phraseQuestionPick struct {
 var netstatSPicks = []phraseQuestionPick{
 	{
 		MarkerLower: "segments retransmitted",
-		Stem:        "In `netstat -s` output, a high count of `segments retransmitted` relative to `segments sent` indicates:",
+		Stem:        "In `netstat -s` output, a high count of `segments retransmitted` relative to `segments sent` means:",
 		Correct:     "End-to-end packet loss — somewhere between this host and the peer, segments are being dropped",
 		Distractors: []string{
 			"The local TCP stack is misconfigured",
-			"Excessive retransmit timeout firing due to a clock drift",
+			"Too-frequent retransmit timeout firing caused by clock drift",
 			"The application is closing connections without a FIN",
 		},
 	},
 	{
 		MarkerLower: "active connection openings",
 		Stem:        "In `netstat -s`, what does the Tcp section's `active connection openings` count?",
-		Correct:     "TCP connections initiated outward from this host (i.e. local `connect()` calls that completed the handshake)",
+		Correct:     "TCP connections started from this host (that is, local `connect()` calls that completed the handshake)",
 		Distractors: []string{
 			"TCP listeners currently bound on this host",
 			"Inbound TCP connections accepted by local servers",
@@ -963,7 +963,7 @@ var netstatSPicks = []phraseQuestionPick{
 	{
 		MarkerLower: "failed connection attempts",
 		Stem:        "In `netstat -s`, what does the Tcp section's `failed connection attempts` count?",
-		Correct:     "TCP connection attempts that aborted before reaching ESTABLISHED — e.g. SYN with no SYN-ACK, or RST during handshake",
+		Correct:     "TCP connection attempts that failed before reaching ESTABLISHED — for example, SYN with no SYN-ACK, or RST during handshake",
 		Distractors: []string{
 			"Connections that succeeded but failed authentication at the application layer",
 			"Connections closed by the peer immediately after handshake",
@@ -973,7 +973,7 @@ var netstatSPicks = []phraseQuestionPick{
 	{
 		MarkerLower: "connection resets received",
 		Stem:        "In `netstat -s`, what does the Tcp section's `connection resets received` count?",
-		Correct:     "TCP connections this host received an RST for, i.e. the peer aborted the connection",
+		Correct:     "TCP connections this host received an RST for — that is, the peer ended the connection",
 		Distractors: []string{
 			"RSTs this host sent because the peer was unreachable",
 			"Connections this host reset because the application crashed",
@@ -1010,21 +1010,21 @@ var networkObservations = []Observation{
 		Title:     "Peak RX rate (across non-lo ifaces)",
 		Section:   "Utilization",
 		Extract:   extractSarNetPeak("rxkB/s"),
-		Heuristic: "absolute RX throughput is informational — utilization depends on the interface link speed, which the tool doesn't know",
+		Heuristic: "absolute RX throughput is context only — utilization depends on the interface link speed, which the tool doesn't know",
 	},
 	{
 		Name:      "net_peak_tx_kbps",
 		Title:     "Peak TX rate (across non-lo ifaces)",
 		Section:   "Utilization",
 		Extract:   extractSarNetPeak("txkB/s"),
-		Heuristic: "absolute TX throughput is informational — utilization depends on the interface link speed, which the tool doesn't know",
+		Heuristic: "absolute TX throughput is context only — utilization depends on the interface link speed, which the tool doesn't know",
 	},
 	{
 		Name:      "tcp_estab_connections",
 		Title:     "Established TCP connections",
 		Section:   "Utilization",
 		Extract:   extractTCPEstab,
-		Heuristic: "connection count alone is informational — what counts as 'high' depends entirely on the workload",
+		Heuristic: "connection count alone is context only — what counts as 'high' depends on the workload",
 	},
 	{
 		Name:      "net_rx_drops_per_sec_max",
@@ -1040,23 +1040,23 @@ var networkObservations = []Observation{
 		Section:   "Saturation",
 		Extract:   extractTCPRetransmitRatio,
 		Verdict:   verdictRetransRatio,
-		Heuristic: "retransmit ratio > ~0.5% sustained = end-to-end packet loss somewhere between this host and its peers",
+		Heuristic: "retransmit ratio > ~0.5% steady = end-to-end packet loss somewhere between this host and its peers",
 	},
 	{
 		Name:      "tcp_listen_overflows",
-		Title:     "Listen overflows (cumulative)",
+		Title:     "Listen overflows (since boot)",
 		Section:   "Saturation",
 		Extract:   extractListenOverflows,
 		Verdict:   verdictListenOverflows,
-		Heuristic: "ListenOverflows > 0 = SYNs the kernel dropped because the app's accept queue was full = application-side saturation (counter is cumulative since boot — context matters)",
+		Heuristic: "ListenOverflows > 0 = SYNs the kernel dropped because the app's accept queue was full = application-side saturation (counter is a running total since boot — context matters)",
 	},
 	{
 		Name:      "net_iface_errors_total",
-		Title:     "Cumulative interface errors",
+		Title:     "Interface errors (since boot)",
 		Section:   "Errors",
 		Extract:   extractInterfaceErrors,
 		Verdict:   verdictNetIfaceErrors,
-		Heuristic: "RX/TX errors on a NIC = link- or driver-level failures (counter is cumulative since boot — a single old value isn't necessarily live)",
+		Heuristic: "RX/TX errors on a NIC = link- or driver-level failures (counter is a running total since boot — a single old value isn't necessarily current)",
 	},
 	{
 		Name:      "dmesg_net_keywords",
@@ -1425,7 +1425,7 @@ func extractInterfaceErrors(si SystemInfo, caps []CapturedCommand) (Value, bool)
 			total += txErr
 		}
 	}
-	return Value{Number: total, Note: "RX+TX errors, cumulative since boot"}, true
+	return Value{Number: total, Note: "RX+TX errors, running total since boot"}, true
 }
 
 func extractDmesgNetKeywords(si SystemInfo, caps []CapturedCommand) (Value, bool) {
@@ -1473,7 +1473,7 @@ func networkDmesgQuestions(si SystemInfo, c CapturedCommand) []Question {
 	tool := kernelLogQuestionTool(c.Cmd)
 	return []Question{{
 		Stem:    fmt.Sprintf("Repeated `Link is Down` followed by `Link is Up` for the same interface in `%s` output suggests:", tool),
-		Correct: "A flapping cable, transceiver, or peer port — the physical layer is intermittently disconnecting",
+		Correct: "A flapping cable, transceiver, or peer port — the physical layer is disconnecting off and on",
 		Distractors: []string{
 			"The kernel is rotating IP addresses for that interface",
 			"DHCP is renewing the lease and briefly losing the link",
@@ -1486,7 +1486,7 @@ var networkCommands = []CommandRef{
 	{
 		Cmd:     "ip -s link",
 		Section: "Utilization",
-		Summary: "Per-interface RX/TX counters (cumulative since boot).\nFastest orientation; useful for 'has anything ever gone wrong here'.",
+		Summary: "Per-interface RX/TX counters (running totals since boot).\nFastest first look; useful for 'has anything ever gone wrong here'.",
 	},
 	{
 		Cmd:      "sar -n DEV 1 N",
@@ -1518,17 +1518,17 @@ var networkCommands = []CommandRef{
 	{
 		Cmd:     "netstat -s",
 		Section: "Saturation",
-		Summary: "Human-readable summary of /proc/net/snmp + /proc/net/netstat.\nUbiquitous but being deprecated in favour of `ss`.",
+		Summary: "Human-readable summary of /proc/net/snmp + /proc/net/netstat.\nFound almost everywhere but being phased out in favour of `ss`.",
 	},
 	{
 		Cmd:     "cat /proc/net/dev",
 		Section: "Errors",
-		Summary: "Cumulative per-interface counters (bytes, packets, errs, drop, ...).\nField order is stable; raw source for many other tools.",
+		Summary: "Per-interface counters since boot (bytes, packets, errs, drop, ...).\nField order is stable; raw source for many other tools.",
 	},
 	{
 		Cmd:     "dmesg -T | grep -iE 'link is|carrier|nic|ethernet'",
 		Section: "Errors",
-		Summary: "Kernel link-state changes and NIC driver errors.\nRepeated up/down sequences indicate a flapping cable or peer port.\n" + dmesgPermissionNote,
+		Summary: "Kernel link-state changes and NIC driver errors.\nRepeated up/down sequences mean a flapping cable or peer port.\n" + dmesgPermissionNote,
 	},
 	{
 		Cmd:                 "journalctl -k -b --no-pager | grep -iE 'link is|carrier|nic|ethernet'",

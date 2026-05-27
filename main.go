@@ -93,7 +93,7 @@ New here? Run: use-tool guide cpu
 
 Usage:
   use-tool guide <resource>     Walk through the USE method as a guided checklist
-  use-tool practice <resource>  Free-form investigation, then comprehension assessment
+  use-tool practice <resource>  Free-form investigation, then understanding check
   use-tool commands <resource>  Print a reference of relevant commands and what they show
   use-tool list                 Show available resources
   use-tool version              Print version
@@ -298,9 +298,9 @@ func (s *Session) runAndCaptureFiltered(cmdStr string, filter func(CapturedComma
 			if s.kernelLogBlocks >= 2 && !s.kernelLogBlockNoted {
 				s.kernelLogBlockNoted = true
 				fmt.Fprintln(os.Stderr, "[note: both dmesg and journalctl -k are blocked for this user on this host")
-				fmt.Fprintln(os.Stderr, "       (typically kernel.dmesg_restrict=1). The 'Errors' leg of USE is")
-				fmt.Fprintln(os.Stderr, "       unverifiable without privileges here — `skip` and move on, or rerun")
-				fmt.Fprintln(os.Stderr, "       with sudo if you need the kernel log.]")
+				fmt.Fprintln(os.Stderr, "       (usually kernel.dmesg_restrict=1). The 'Errors' leg of USE")
+				fmt.Fprintln(os.Stderr, "       can't be checked without permissions here — `skip` and move on,")
+				fmt.Fprintln(os.Stderr, "       or run it again with sudo if you need the kernel log.]")
 			}
 		}
 		return c
@@ -324,9 +324,9 @@ func isDmesgPermissionFailure(output string) bool {
 
 func dmesgPermissionFailureMessage(hasJournalctl bool) string {
 	if hasJournalctl {
-		return "dmesg could not read the kernel buffer; retry with sudo or journalctl -k"
+		return "dmesg could not read the kernel buffer; try again with sudo or journalctl -k"
 	}
-	return "dmesg could not read the kernel buffer; retry with sudo"
+	return "dmesg could not read the kernel buffer; try again with sudo"
 }
 
 func isJournalctlFailure(cmdStr, output string) bool {

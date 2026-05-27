@@ -539,8 +539,8 @@ func TestPSIMemoryQuestionsCoversBothMetrics(t *testing.T) {
 	c := CapturedCommand{Cmd: "cat /proc/pressure/memory", Output: samplePSIMemory}
 	seen := map[string]bool{}
 	wantCorrect := map[string]string{
-		"`some`": "The percentage of time during which at least one task was stalled on memory",
-		"`full`": "The percentage of time during which all non-idle tasks were simultaneously stalled on memory",
+		"`some`": "The percentage of time when at least one task was stalled on memory",
+		"`full`": "The percentage of time when all non-idle tasks were stalled on memory at the same time",
 	}
 	for i := 0; i < 100; i++ {
 		qs := psiMemoryQuestions(SystemInfo{}, c)

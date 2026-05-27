@@ -4,8 +4,8 @@
 
 A learning harness for practicing Brendan Gregg's USE method on a live Linux
 system. The tool captures the commands you run, parses their output into a
-structured snapshot, and asks targeted questions about what you observed —
-without making assumptions about what state the system is "supposed" to be in.
+structured snapshot, and asks specific questions about what you saw —
+without making guesses about what state the system is "supposed" to be in.
 
 Currently covers **CPU**, **memory**, **disk I/O**, and **network**.
 
@@ -15,20 +15,20 @@ Three modes plus a reference cheatsheet:
 
 - **`guide`** — a step-by-step walkthrough of the USE method. At each step,
   you run a suggested command on your live system; the harness asks an inline
-  comprehension question and shows teaching commentary, then advances. Ends
-  with a snapshot of everything observed.
+  comprehension question and shows teaching notes, then advances. Ends
+  with a snapshot of everything you saw.
 - **`practice`** — a free-form REPL. Run any commands you want; type
   `report` to print the current snapshot, `evaluate` to be asked a sample of
   comprehension, recall, and synthesis questions, `commands` for the
   cheatsheet, `exit` to quit.
-- **`commands`** — a semi-verbose reference of CPU-related commands grouped
+- **`commands`** — a short-to-medium reference of CPU-related commands grouped
   by Utilization / Saturation / Errors, with one or two lines on what each
   shows and when to use it.
 
 The snapshot reports raw observations (load averages with NumCPU ratio, mean
 and per-CPU range of `%idle`, vmstat run-queue and `wa` samples, dmesg keyword
 counts) without labelling the system as "saturated" or "healthy". The learner
-forms that judgement; the tool only checks they read the data correctly.
+makes that call; the tool only checks they read the data correctly.
 
 ## Question types
 
@@ -36,17 +36,17 @@ forms that judgement; the tool only checks they read the data correctly.
 |---|---|---|
 | Comprehension | "Can you read this output?" | Fixed (e.g. what does `%iowait` mean) |
 | Recall | "Did you actually look at it?" | The learner's captured data |
-| Synthesis | "Do these numbers cohere?" | Logical rules over observed values |
+| Synthesis | "Do these numbers fit together?" | Logical rules over observed values |
 
 No question asks "what state is this system in" — that classification was
-removed deliberately so the tool stays system-agnostic.
+removed on purpose so the tool stays system-agnostic.
 
 ## Requirements
 
 - Linux (uses `/proc`, kernel-specific commands).
 - Go 1.21+ to build.
 - Optional but recommended: `sysstat` for `mpstat`, `pidstat`, `sar`. The tool
-  detects what's installed and adapts (e.g. the guided walkthrough skips the
+  detects what's installed and adjusts (for example, the guided walkthrough skips the
   per-CPU step if `mpstat` is missing).
 
 ## Install
@@ -114,8 +114,8 @@ SynthesisRules / Commands) and register it in `investigations` in
   not (and will not) try to put the system into a known state. Pair it with a
   stress tool of your choice (`stress-ng`, `yes >/dev/null &`, etc.) in
   another terminal if you want to see non-idle states.
-- **No "what state is this system in" classification.** That construct
-  hardcodes scenarios. Synthesis questions check relationships between
+- **No "what state is this system in" labelling.** That approach bakes in
+  specific test cases. Synthesis questions check relationships between
   observations instead.
 - **No PTY.** Capture is via stdout/stderr tee. For commands that need a real
   terminal, use batch flags (`top -bn1`, `mpstat -P ALL 1 3`).

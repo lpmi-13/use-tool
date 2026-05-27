@@ -174,7 +174,7 @@ func TestIostatQuestionsCoversOlderColumns(t *testing.T) {
 		"r_await":  "Average read request latency in milliseconds, including queueing and service time",
 		"w_await":  "Average write request latency in milliseconds, including queueing and service time",
 		"avgqu-sz": "Average number of I/O requests outstanding to the device (queued plus in service)",
-		"%util":    "The fraction of wall-clock time during which at least one I/O request was in flight",
+		"%util":    "The fraction of wall-clock time when at least one I/O request was in flight",
 	}
 	available := availableIostatQuestionPicks(c.Output)
 	if len(available) != len(wantCorrect) {
@@ -293,8 +293,8 @@ func TestPSIIOQuestionsCoversBothMetrics(t *testing.T) {
 	c := CapturedCommand{Cmd: "cat /proc/pressure/io", Output: samplePSIIO}
 	seen := map[string]bool{}
 	wantCorrect := map[string]string{
-		"`some`": "The percentage of time during which at least one task was stalled on I/O",
-		"`full`": "The percentage of time during which all non-idle tasks were simultaneously stalled on I/O",
+		"`some`": "The percentage of time when at least one task was stalled on I/O",
+		"`full`": "The percentage of time when all non-idle tasks were stalled on I/O at the same time",
 	}
 	for i := 0; i < 100; i++ {
 		qs := psiIOQuestions(SystemInfo{}, c)

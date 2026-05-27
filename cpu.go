@@ -13,7 +13,7 @@ var cpuInvestigation = &Investigation{
 	Title: "CPU — Utilization, Saturation, Errors",
 	Description: "Investigate CPU using Brendan Gregg's USE method.\n" +
 		"Run commands at the prompt; the harness captures their output\n" +
-		"and asks targeted questions about what you observed.",
+		"and asks specific questions about what you saw.",
 	StepsFn:      cpuSteps,
 	Observations: cpuObservations,
 	Commands:     cpuCommands,
@@ -33,8 +33,8 @@ func cpuSteps(si SystemInfo) []GuideStep {
 			QuestionsFn: combineVariantQuestions(loadavgVariants),
 			Teaching: fmt.Sprintf(
 				"Rule of thumb: a 1-minute load average above %d (= number of logical CPUs on this machine)\n"+
-					"indicates more runnable processes than CPUs — the run-queue is saturated.\n"+
-					"The 5- and 15-minute values show whether that's a transient spike or sustained.",
+					"means more runnable processes than CPUs — the run-queue is saturated.\n"+
+					"The 5- and 15-minute values show whether that's a brief spike or steady.",
 				si.NumCPU),
 		},
 	}
@@ -42,7 +42,7 @@ func cpuSteps(si SystemInfo) []GuideStep {
 	if si.HasMpstat {
 		steps = append(steps, GuideStep{
 			Name:          "per-cpu",
-			Intro:         "Step 2: mpstat breaks down utilization per logical CPU.\nThis distinguishes \"all cores busy\" from \"one core pegged.\"",
+			Intro:         "Step 2: mpstat breaks down utilization per logical CPU.\nThis tells \"all cores busy\" apart from \"one core pegged.\"",
 			Suggested:     "mpstat -P ALL 1 3",
 			QuestionsFn:   mpstatColumnQuestions,
 			QuestionCount: 3,
@@ -72,9 +72,9 @@ func cpuSteps(si SystemInfo) []GuideStep {
 		QuestionsFn:        dmesgQuestions,
 		AcceptAny:          true,
 		EmptyOutputMessage: "No CPU, thermal, or machine-check errors found.",
-		Teaching: "Recent MCE (machine-check exception) or thermal throttling messages indicate\n" +
+		Teaching: "Recent MCE (machine-check exception) or thermal throttling messages mean\n" +
 			"physical CPU problems; absence is the healthy case. On idle laptops you'll\n" +
-			"typically see nothing here — that's fine.",
+			"usually see nothing here — that's fine.",
 	})
 
 	return steps
@@ -103,10 +103,10 @@ func cpuRunqueueVariants(si SystemInfo) []stepVariant {
 			Cmd:         "vmstat 1 3",
 			QuestionsFn: vmstatColumnQuestions,
 			Teaching: fmt.Sprintf(
-				"If `r` consistently exceeds %d (= NumCPU on this system), the run-queue is\n"+
+				"If `r` keeps going above %d (= NumCPU on this system), the run-queue is\n"+
 					"saturated. High `wa` means CPUs are idle waiting on I/O — the bottleneck is\n"+
 					"storage, not CPU. Non-zero `st` means the hypervisor is giving cycles to\n"+
-					"another tenant; on cloud VMs, sustained `st` is contention you can't fix\n"+
+					"another tenant; on cloud VMs, steady `st` is contention you can't fix\n"+
 					"from inside the guest.",
 				si.NumCPU),
 		},
@@ -114,8 +114,8 @@ func cpuRunqueueVariants(si SystemInfo) []stepVariant {
 			Cmd:         "cat /proc/pressure/cpu",
 			QuestionsFn: procPressureCpuQuestions,
 			Teaching: "PSI's `some avg10/avg60/avg300` values are the share of time at least one\n" +
-				"task was stalled waiting for CPU over those windows. Sustained values above\n" +
-				"~10% indicate run-queue contention even when loadavg looks moderate. For\n" +
+				"task was stalled waiting for CPU over those windows. Steady values above\n" +
+				"~10% mean run-queue contention even when loadavg looks moderate. For\n" +
 				"system-wide CPU PSI, `some` is the useful pressure signal; a `full` row may\n" +
 				"appear, but CPU `full` is undefined at system level and is reported as zero\n" +
 				"for compatibility.",
@@ -519,7 +519,7 @@ func wQuestions(si SystemInfo, c CapturedCommand) []Question {
 	qs := []Question{
 		{
 			Stem:    "In `w`'s session table, what does the `JCPU` column measure?",
-			Correct: "Cumulative CPU time of all processes attached to that TTY since the user logged in",
+			Correct: "Total CPU time of all processes attached to that TTY since the user logged in",
 			Distractors: []string{
 				"CPU time used by the process shown in the `WHAT` column",
 				"Just-in-time CPU usage averaged over the last minute",
@@ -530,7 +530,7 @@ func wQuestions(si SystemInfo, c CapturedCommand) []Question {
 			Stem:    "In `w`'s session table, what does the `PCPU` column measure?",
 			Correct: "CPU time used by the process named in the `WHAT` column",
 			Distractors: []string{
-				"Aggregate CPU usage across all the user's TTYs",
+				"Combined CPU usage across all the user's TTYs",
 				"Percentage of CPU capacity allocated to that user's process group",
 				"The pinned CPU index for that process",
 			},
@@ -631,11 +631,11 @@ func procPressureCpuQuestions(si SystemInfo, c CapturedCommand) []Question {
 			Stem: fmt.Sprintf(
 				"Your PSI output ended with `total=%s`. What does that counter represent?",
 				total),
-			Correct: "Cumulative microseconds since boot during which at least one task was stalled on CPU",
+			Correct: "Total microseconds since boot when at least one task was stalled on CPU",
 			Distractors: []string{
 				"Number of distinct tasks that have ever stalled on CPU since boot",
 				"Number of CPU-steal events recorded by the hypervisor",
-				"Cumulative milliseconds the run-queue has been non-empty",
+				"Total milliseconds the run-queue has been non-empty",
 			},
 		},
 	}
@@ -801,7 +801,7 @@ var cpuObservations = []Observation{
 		Section:   "Saturation",
 		Extract:   extractVmstatColumn("wa"),
 		Verdict:   verdictIOWait,
-		Heuristic: "high vmstat wa = CPU is waiting on I/O, not actively saturated — if disk PSI / aqu-sz are also elevated, the saturation belongs to the disk, not the CPU (run iostat -xz to corroborate)",
+		Heuristic: "high vmstat wa = CPU is waiting on I/O, not actively saturated — if disk PSI / aqu-sz are also high, the saturation belongs to the disk, not the CPU (run iostat -xz to confirm)",
 	},
 	{
 		Name:      "vmstat_st",
@@ -817,7 +817,7 @@ var cpuObservations = []Observation{
 		Section:   "Saturation",
 		Extract:   extractPSICPU("some"),
 		Verdict:   verdictPSISome,
-		Heuristic: "CPU PSI 'some' avg10 = percent of the last 10s window with at least one task stalled waiting for CPU; >10% sustained = run-queue contention",
+		Heuristic: "CPU PSI 'some' avg10 = percent of the last 10s window with at least one task stalled waiting for CPU; >10% steady = run-queue contention",
 	},
 	{
 		Name:      "dmesg_cpu_keywords",
@@ -1120,7 +1120,7 @@ func dmesgQuestions(si SystemInfo, c CapturedCommand) []Question {
 	tool := kernelLogQuestionTool(c.Cmd)
 	if strings.Contains(low, "machine check") || strings.Contains(low, "mce:") {
 		return []Question{{
-			Stem:    fmt.Sprintf("Your `%s` output mentions a machine-check (MCE) event. What does this typically indicate?", tool),
+			Stem:    fmt.Sprintf("Your `%s` output mentions a machine-check (MCE) event. What does this usually mean?", tool),
 			Correct: "A hardware-level CPU or memory error reported by the processor",
 			Distractors: []string{
 				"A scheduling decision made by the kernel",
@@ -1135,7 +1135,7 @@ func dmesgQuestions(si SystemInfo, c CapturedCommand) []Question {
 			Correct: "The CPU clocks down to reduce heat, lowering effective performance",
 			Distractors: []string{
 				"The CPU is taken offline until it cools down",
-				"Workloads are migrated to other physical sockets",
+				"Workloads are moved to other physical sockets",
 				"The kernel kills the highest-CPU processes",
 			},
 		}}
@@ -1157,7 +1157,7 @@ var cpuCommands = []CommandRef{
 	{
 		Cmd:      "mpstat -P ALL 1 N",
 		Section:  "Utilization",
-		Summary:  "Per-CPU breakdown (%usr, %sys, %iowait, %idle, ...)\nover N one-second intervals. Distinguishes\nall-cores-busy from one-core-pegged. (sysstat package.)",
+		Summary:  "Per-CPU breakdown (%usr, %sys, %iowait, %idle, ...)\nover N one-second intervals. Tells all-cores-busy\napart from one-core-pegged. (sysstat package.)",
 		Requires: []string{"mpstat"},
 	},
 	{
@@ -1168,7 +1168,7 @@ var cpuCommands = []CommandRef{
 	{
 		Cmd:      "pidstat 1 N",
 		Section:  "Utilization",
-		Summary:  "Per-process CPU usage over N intervals.\nFinds which process is consuming time. (sysstat package.)\nNote: shows host PID namespace. Processes inside Docker/containerd\ncontainers appear as their runtime (`runc`, `containerd-shim`) or\nare absent; pivot to `docker stats` for service-level attribution.",
+		Summary:  "Per-process CPU usage over N intervals.\nFinds which process is using time. (sysstat package.)\nNote: shows host PID namespace. Processes inside Docker/containerd\ncontainers appear as their runtime (`runc`, `containerd-shim`) or\nare absent; switch to `docker stats` to see which service.",
 		Requires: []string{"pidstat"},
 	},
 	{
@@ -1201,7 +1201,7 @@ var cpuCommands = []CommandRef{
 	{
 		Cmd:     "dmesg --level=err,warn | tail -30",
 		Section: "Errors",
-		Summary: "Recent kernel errors and warnings.\nLook for MCE, thermal throttling, hardware faults.\nUses severity filtering rather than keyword grep so unusual CPU/hardware warnings remain visible.\n" + dmesgPermissionNote,
+		Summary: "Recent kernel errors and warnings.\nLook for MCE, thermal throttling, hardware faults.\nUses severity filtering instead of keyword grep so unusual CPU/hardware warnings stay visible.\n" + dmesgPermissionNote,
 	},
 	{
 		Cmd:                 "journalctl -k -b -p warning --no-pager -n 30",

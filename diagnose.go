@@ -237,7 +237,7 @@ func practiceDiagnose(s *Session) bool {
 	byResource := candidatesByResource(s.Investigation, snap)
 	resources := resourcesWithSignals(byResource)
 	if len(resources) == 0 {
-		fmt.Println("\nNo diagnosable signals captured yet. Run some commands first")
+		fmt.Println("\nNo USE-relevant signals captured yet. Run some commands first")
 		fmt.Println("(try `commands` for the cheatsheet), then `diagnose` again.")
 		return false
 	}
@@ -668,7 +668,7 @@ func printDiagnoseFeedback(grades []dimensionGrade, multiResource bool) {
 			if g.HasData {
 				printWrappedFeedback("    ", "Actually, you did capture a signal here. Re-run `report` and look again.")
 			} else {
-				printWrappedFeedback("    ", "Correct. No command this session surfaced this dimension.")
+				printWrappedFeedback("    ", "Correct. No command this session produced data for this dimension.")
 			}
 			continue
 		}
@@ -750,7 +750,7 @@ func printUncitedEvidenceHints(g dimensionGrade) bool {
 
 func printNextCommandHints(cmds []CommandRef) {
 	fmt.Println()
-	fmt.Println("  To gather more corroborating evidence:")
+	fmt.Println("  To gather more supporting evidence:")
 	for _, c := range cmds {
 		fmt.Printf("    • %s\n", c.Cmd)
 		if summary := firstSummaryLine(c.Summary); summary != "" {

@@ -213,7 +213,7 @@ func TestRunAndCaptureTreatsDmesgPermissionErrorInPipelineAsFailed(t *testing.T)
 	if len(s.Captured) != 0 {
 		t.Fatalf("captured failed command: %+v", s.Captured)
 	}
-	if !strings.Contains(stderr, "retry with sudo") {
+	if !strings.Contains(stderr, "try again with sudo") {
 		t.Fatalf("expected retry hint in stderr, got:\n%s", stderr)
 	}
 }

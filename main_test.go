@@ -464,6 +464,226 @@ func TestWideColumnGuideStepsAskThreeHeaderQuestions(t *testing.T) {
 	}
 }
 
+func TestGuideQuestionAnswersAvoidPromptTermGiveaways(t *testing.T) {
+	pidstatDOutput := `Linux 6.1.0  10/05/2024
+14:00:00       UID       PID   kB_rd/s   kB_wr/s kB_ccwr/s iodelay  Command
+14:00:01      1000      1234     12.50    400.00      0.00       2  postgres
+`
+	psRSSOutput := `    PID   RSS COMMAND
+   1234 204800 postgres
+   5678 102400 worker
+`
+
+	cases := []struct {
+		name         string
+		questions    []Question
+		stemFragment string
+		forbidden    []string
+	}{
+		{
+			name:         "cpu vmstat user",
+			questions:    vmstatColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "vmstat 1 3", Output: sampleVmstat}),
+			stemFragment: "`us`",
+			forbidden:    []string{"user"},
+		},
+		{
+			name:         "cpu mpstat user",
+			questions:    mpstatColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "mpstat -P ALL 1 3", Output: sampleMpstat}),
+			stemFragment: "`%usr`",
+			forbidden:    []string{"user"},
+		},
+		{
+			name:         "cpu sar user",
+			questions:    sarUColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "sar -u 1 3", Output: sampleSarU}),
+			stemFragment: "`%user`",
+			forbidden:    []string{"user"},
+		},
+		{
+			name:         "cpu sar nice",
+			questions:    sarUColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "sar -u 1 3", Output: sampleSarU}),
+			stemFragment: "`%nice`",
+			forbidden:    []string{"nice"},
+		},
+		{
+			name:         "cpu mpstat iowait",
+			questions:    mpstatColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "mpstat -P ALL 1 3", Output: sampleMpstat}),
+			stemFragment: "`%iowait`",
+			forbidden:    []string{"wait"},
+		},
+		{
+			name:         "cpu sar iowait",
+			questions:    sarUColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "sar -u 1 3", Output: sampleSarU}),
+			stemFragment: "`%iowait`",
+			forbidden:    []string{"wait"},
+		},
+		{
+			name:         "cpu mpstat soft",
+			questions:    mpstatColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "mpstat -P ALL 1 3", Output: sampleMpstat}),
+			stemFragment: "`%soft`",
+			forbidden:    []string{"software", "soft"},
+		},
+		{
+			name:         "cpu sar steal",
+			questions:    sarUColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "sar -u 1 3", Output: sampleSarU}),
+			stemFragment: "`%steal`",
+			forbidden:    []string{"steal", "stolen"},
+		},
+		{
+			name:         "cpu mpstat steal",
+			questions:    mpstatColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "mpstat -P ALL 1 3", Output: sampleMpstat}),
+			stemFragment: "`%steal`",
+			forbidden:    []string{"steal", "stolen"},
+		},
+		{
+			name:         "cpu sar idle",
+			questions:    sarUColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "sar -u 1 3", Output: sampleSarU}),
+			stemFragment: "`%idle`",
+			forbidden:    []string{"idle"},
+		},
+		{
+			name:         "memory memavailable",
+			questions:    meminfoColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "cat /proc/meminfo", Output: sampleMeminfo}),
+			stemFragment: "`MemAvailable`",
+			forbidden:    []string{"available"},
+		},
+		{
+			name:         "memory meminfo buffers",
+			questions:    meminfoColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "cat /proc/meminfo", Output: sampleMeminfo}),
+			stemFragment: "`Buffers`",
+			forbidden:    []string{"buffer"},
+		},
+		{
+			name:         "memory meminfo cached",
+			questions:    meminfoColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "cat /proc/meminfo", Output: sampleMeminfo}),
+			stemFragment: "`Cached`",
+			forbidden:    []string{"cache"},
+		},
+		{
+			name:         "memory free shared",
+			questions:    freeColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "free -h", Output: sampleFreeH}),
+			stemFragment: "`shared`",
+			forbidden:    []string{"shared"},
+		},
+		{
+			name:         "memory free buff cache",
+			questions:    freeColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "free -h", Output: sampleFreeH}),
+			stemFragment: "`buff/cache`",
+			forbidden:    []string{"buffer", "cache"},
+		},
+		{
+			name:         "memory sar swap-in",
+			questions:    sarWColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "sar -W 1 5", Output: sampleSarW}),
+			stemFragment: "`pswpin/s`",
+			forbidden:    []string{"swapped in"},
+		},
+		{
+			name:         "memory sar swap-out",
+			questions:    sarWColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "sar -W 1 5", Output: sampleSarW}),
+			stemFragment: "`pswpout/s`",
+			forbidden:    []string{"swapped out"},
+		},
+		{
+			name:         "memory top virt",
+			questions:    topMemColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "top -bn1 -o %MEM", Output: sampleTopMem}),
+			stemFragment: "`VIRT`",
+			forbidden:    []string{"virtual"},
+		},
+		{
+			name:         "memory top res",
+			questions:    topMemColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "top -bn1 -o %MEM", Output: sampleTopMem}),
+			stemFragment: "`RES`",
+			forbidden:    []string{"resident"},
+		},
+		{
+			name:         "memory top shr",
+			questions:    topMemColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "top -bn1 -o %MEM", Output: sampleTopMem}),
+			stemFragment: "`SHR`",
+			forbidden:    []string{"shared"},
+		},
+		{
+			name:         "memory ps rss",
+			questions:    psRssColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "ps -eo pid,rss,comm", Output: psRSSOutput}),
+			stemFragment: "`RSS`",
+			forbidden:    []string{"resident"},
+		},
+		{
+			name:         "disk partitions blocks",
+			questions:    procPartitionsColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "cat /proc/partitions", Output: sampleProcPartitions}),
+			stemFragment: "`#blocks`",
+			forbidden:    []string{"blocks"},
+		},
+		{
+			name:         "disk lsblk size",
+			questions:    lsblkColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "lsblk", Output: sampleLsblk}),
+			stemFragment: "`SIZE`",
+			forbidden:    []string{"size"},
+		},
+		{
+			name:         "disk lsblk type",
+			questions:    lsblkColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "lsblk", Output: sampleLsblk}),
+			stemFragment: "`TYPE`",
+			forbidden:    []string{"type"},
+		},
+		{
+			name:         "disk pidstat iodelay",
+			questions:    pidstatDColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "pidstat -d 1 1", Output: pidstatDOutput}),
+			stemFragment: "`iodelay`",
+			forbidden:    []string{"delay"},
+		},
+		{
+			name:         "disk pidstat command",
+			questions:    pidstatDColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "pidstat -d 1 1", Output: pidstatDOutput}),
+			stemFragment: "`Command`",
+			forbidden:    []string{"command"},
+		},
+		{
+			name:         "network sar dev iface",
+			questions:    sarDevColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "sar -n DEV 1 2", Output: sampleSarDev}),
+			stemFragment: "`IFACE`",
+			forbidden:    []string{"interface"},
+		},
+		{
+			name:         "network sar dev ifutil",
+			questions:    sarDevColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "sar -n DEV 1 2", Output: sampleSarDev}),
+			stemFragment: "`%ifutil`",
+			forbidden:    []string{"interface", "utilization", "util"},
+		},
+		{
+			name:         "network ss estab",
+			questions:    ssSummaryColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "ss -s", Output: sampleSsSummary}),
+			stemFragment: "`estab`",
+			forbidden:    []string{"established"},
+		},
+		{
+			name:         "network ss closed",
+			questions:    ssSummaryColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "ss -s", Output: sampleSsSummary}),
+			stemFragment: "`closed`",
+			forbidden:    []string{"closed"},
+		},
+		{
+			name:         "network ss timewait",
+			questions:    ssSummaryColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "ss -s", Output: sampleSsSummary}),
+			stemFragment: "`timewait`",
+			forbidden:    []string{"time_wait", "time wait"},
+		},
+	}
+
+	for _, tc := range cases {
+		q, ok := findQuestionByStemFragment(tc.questions, tc.stemFragment)
+		if !ok {
+			t.Fatalf("%s: no question contained %q; got %v", tc.name, tc.stemFragment, stems(tc.questions))
+		}
+		for _, answer := range questionAnswerTexts(q) {
+			normalized := strings.ToLower(answer)
+			for _, term := range tc.forbidden {
+				if strings.Contains(normalized, term) {
+					t.Fatalf("%s: answer option %q still echoes prompt term %q", tc.name, answer, term)
+				}
+			}
+		}
+	}
+}
+
 func TestDiskDeviceStepHasLsblkQuestions(t *testing.T) {
 	steps := diskSteps(SystemInfo{})
 	if len(steps) == 0 {
@@ -606,6 +826,21 @@ func findGuideStep(steps []GuideStep, name string) (GuideStep, bool) {
 		}
 	}
 	return GuideStep{}, false
+}
+
+func findQuestionByStemFragment(qs []Question, fragment string) (Question, bool) {
+	for _, q := range qs {
+		if strings.Contains(q.Stem, fragment) {
+			return q, true
+		}
+	}
+	return Question{}, false
+}
+
+func questionAnswerTexts(q Question) []string {
+	answers := []string{q.Correct}
+	answers = append(answers, q.Distractors...)
+	return answers
 }
 
 func mustFindGuideStep(t *testing.T, steps []GuideStep, name string) GuideStep {

@@ -273,7 +273,7 @@ var meminfoQuestionPicks = []columnQuestionPick{
 	},
 	{
 		Column:  "MemAvailable",
-		Correct: "The kernel's estimate of memory available for new allocations without swapping",
+		Correct: "The kernel's estimate of RAM usable for new allocations without swapping",
 		Distractors: []string{
 			"Completely unused RAM only",
 			"Free swap space plus free RAM",
@@ -282,19 +282,19 @@ var meminfoQuestionPicks = []columnQuestionPick{
 	},
 	{
 		Column:  "Buffers",
-		Correct: "Memory used for block-device buffers and filesystem metadata",
+		Correct: "Memory used for block-device I/O staging and filesystem metadata",
 		Distractors: []string{
 			"Memory used for executable code pages",
-			"Memory used by TCP socket buffers only",
+			"Memory used by TCP socket queues only",
 			"Pages swapped out to disk",
 		},
 	},
 	{
 		Column:  "Cached",
-		Correct: "File-backed page cache that is mostly reclaimable under memory pressure",
+		Correct: "File-backed pages that are mostly reclaimable under memory pressure",
 		Distractors: []string{
 			"Private anonymous memory owned by processes",
-			"Swap space used as a cache for disk blocks",
+			"Swap space used to store disk blocks",
 			"Kernel memory that can never be reclaimed",
 		},
 	},
@@ -414,25 +414,25 @@ var freeQuestionPicks = []columnQuestionPick{
 		Distractors: []string{
 			"Memory the kernel estimates is available for new allocations without swapping",
 			"Memory that has never been touched by any process",
-			"Free swap space plus free RAM",
+			"Unused swap space plus unused RAM",
 		},
 	},
 	{
 		Column:  "shared",
-		Correct: "Memory used by tmpfs filesystems and shared anonymous mappings",
+		Correct: "Memory used by tmpfs filesystems and anonymous mappings visible in more than one process",
 		Distractors: []string{
-			"Memory shared between user and kernel space",
+			"Memory visible to both application code and the kernel",
 			"Memory used by multiple CPUs for IPC",
-			"Memory shared between containers and the host",
+			"Memory visible both inside containers and on the host",
 		},
 	},
 	{
 		Column:  "buff/cache",
-		Correct: "Memory used by kernel buffers and page cache, most of which is reclaimable under pressure",
+		Correct: "Kernel I/O staging plus file-backed pages, most of which is reclaimable under pressure",
 		Distractors: []string{
-			"Memory permanently reserved by the kernel for I/O buffers",
-			"Memory used as a write-back cache for swap",
-			"Memory used by user-space processes for their own caches",
+			"Memory permanently reserved by the kernel for I/O staging",
+			"Memory used as write-back storage for swap",
+			"Memory used by application processes for their own in-process stores",
 		},
 	},
 	{
@@ -683,18 +683,18 @@ func sarWStemFor(column string) string {
 var sarWQuestionPicks = []columnQuestionPick{
 	{
 		Column:  "pswpin/s",
-		Correct: "Pages swapped in from swap to RAM per second during the sample interval",
+		Correct: "Pages moved from the swap area back to RAM per second during the sample interval",
 		Distractors: []string{
-			"Total pages swapped in since boot",
+			"Total pages moved back to RAM since boot",
 			"Pages of page cache reclaimed per second",
 			"Page faults serviced from swap per second",
 		},
 	},
 	{
 		Column:  "pswpout/s",
-		Correct: "Pages swapped out from RAM to swap per second during the sample interval",
+		Correct: "Pages moved from RAM to the swap area per second during the sample interval",
 		Distractors: []string{
-			"Total pages swapped out since boot",
+			"Total pages moved from RAM to backing storage since boot",
 			"Pages of page cache evicted per second",
 			"Pages written by the page cache writeback thread per second",
 		},
@@ -732,7 +732,7 @@ func topMemStemFor(column string) string {
 var topMemQuestionPicks = []columnQuestionPick{
 	{
 		Column:  "VIRT",
-		Correct: "Total virtual memory the process has reserved, including code, data, shared libraries, and mmap'd files — much of which may not be resident",
+		Correct: "Total address space the process has reserved, including code, data, shared libraries, and mmap'd files; much of it may not be backed by RAM",
 		Distractors: []string{
 			"Memory currently in RAM for the process",
 			"Memory shared with other processes",
@@ -741,7 +741,7 @@ var topMemQuestionPicks = []columnQuestionPick{
 	},
 	{
 		Column:  "RES",
-		Correct: "Resident memory: the portion of VIRT currently in RAM (top's name for RSS)",
+		Correct: "The portion of the process's address space currently backed by RAM (top's name for RSS)",
 		Distractors: []string{
 			"Memory reserved by the process but never touched",
 			"The process's private anonymous memory only",
@@ -750,11 +750,11 @@ var topMemQuestionPicks = []columnQuestionPick{
 	},
 	{
 		Column:  "SHR",
-		Correct: "Resident memory that is shared with at least one other process (libc, mmaped binaries, shared anonymous mappings)",
+		Correct: "RAM-backed mappings visible in more than one process, such as libc and mmaped binaries",
 		Distractors: []string{
-			"Total memory the process has allocated for shared-memory IPC",
-			"Swap shared between processes",
-			"Memory shared with the kernel",
+			"Total memory the process has allocated for IPC segments",
+			"Swap space mapped by more than one process",
+			"Memory visible to the kernel only",
 		},
 	},
 	{
@@ -789,7 +789,7 @@ var psRSSQuestionPicks = []columnQuestionPick{
 	},
 	{
 		Column:  "RSS",
-		Correct: "Memory currently resident in RAM for the process, reported in kilobytes by this ps format",
+		Correct: "Memory currently backed by RAM for the process, reported in kilobytes by this ps format",
 		Distractors: []string{
 			"Private memory only, not counting shared libraries",
 			"Total virtual address space reserved by the process",

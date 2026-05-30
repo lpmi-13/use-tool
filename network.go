@@ -464,11 +464,11 @@ func sarDevColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 var sarDevQuestionPicks = []columnQuestionPick{
 	{
 		Column:  "IFACE",
-		Correct: "The network interface name for the row",
+		Correct: "The NIC or virtual link name for the row",
 		Distractors: []string{
 			"The peer host name for the traffic",
 			"The socket protocol family",
-			"The interface's configured IP address",
+			"The configured IP address on that link",
 		},
 	},
 	{
@@ -536,10 +536,10 @@ var sarDevQuestionPicks = []columnQuestionPick{
 	},
 	{
 		Column:  "%ifutil",
-		Correct: "Estimated interface utilization as a percentage of link capacity",
+		Correct: "Estimated percentage of link capacity in use",
 		Distractors: []string{
 			"Percent of packets that were dropped",
-			"Percent of CPU time spent handling this interface",
+			"Percent of CPU time spent handling this link",
 			"Percent of socket buffers currently allocated",
 		},
 	},
@@ -590,7 +590,7 @@ func sarEdevColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 var sarEdevQuestionPicks = []columnQuestionPick{
 	{
 		Column:  "IFACE",
-		Correct: "The network interface name for the row",
+		Correct: "The NIC or virtual link name for the row",
 		Distractors: []string{
 			"The remote endpoint for the errors",
 			"The IP protocol being reported",
@@ -695,7 +695,7 @@ func ssSummaryColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 var ssSummaryQuestionPicks = []columnQuestionPick{
 	{
 		Column:  "estab",
-		Correct: "TCP connections currently in the ESTABLISHED state",
+		Correct: "TCP connections currently fully open after completing the handshake",
 		Distractors: []string{
 			"TCP connections opened since boot",
 			"TCP listen sockets waiting for accept",
@@ -704,11 +704,11 @@ var ssSummaryQuestionPicks = []columnQuestionPick{
 	},
 	{
 		Column:  "closed",
-		Correct: "TCP sockets currently counted as closed in the summary",
+		Correct: "TCP sockets currently in the terminal state category for the summary",
 		Distractors: []string{
-			"Connections closed since boot",
-			"Listen sockets with closed queues",
-			"Connections closed by firewall policy",
+			"Connections ended since boot",
+			"Listen sockets with empty queues",
+			"Connections blocked by firewall policy",
 		},
 	},
 	{
@@ -722,11 +722,11 @@ var ssSummaryQuestionPicks = []columnQuestionPick{
 	},
 	{
 		Column:  "timewait",
-		Correct: "TCP connections currently in TIME_WAIT",
+		Correct: "TCP connections in the post-close timeout state before the socket can be fully removed",
 		Distractors: []string{
-			"Connections waiting for the application to call accept",
-			"Connections waiting for DNS resolution",
-			"Total time spent waiting on TCP sends",
+			"Connections queued until the application calls accept",
+			"Connections blocked on DNS resolution",
+			"Total duration of TCP send stalls",
 		},
 	},
 	{

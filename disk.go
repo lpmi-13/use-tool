@@ -206,10 +206,10 @@ var procPartitionsQuestionPicks = []columnQuestionPick{
 	},
 	{
 		Column:  "#blocks",
-		Correct: "The size of the device or partition counted in 1024-byte blocks",
+		Correct: "The capacity of the device or partition counted in 1024-byte units",
 		Distractors: []string{
 			"The number of 512-byte sectors in the device",
-			"The current number of allocated filesystem blocks",
+			"The current number of allocated filesystem allocation units",
 			"The number of I/O requests outstanding to the device",
 		},
 	},
@@ -483,7 +483,7 @@ var lsblkQuestionPicks = []columnQuestionPick{
 	},
 	{
 		Column:  "SIZE",
-		Correct: "The apparent size of the block device or partition",
+		Correct: "The apparent capacity of the block device or partition",
 		Distractors: []string{
 			"The filesystem space currently used",
 			"The amount of dirty writeback data",
@@ -501,10 +501,10 @@ var lsblkQuestionPicks = []columnQuestionPick{
 	},
 	{
 		Column:  "TYPE",
-		Correct: "The block-device type, such as disk, partition, loop device, or LVM volume",
+		Correct: "The block-device category, such as disk, partition, loop device, or LVM volume",
 		Distractors: []string{
-			"The filesystem type, such as ext4 or xfs",
-			"The bus type, such as PCIe or SATA",
+			"The filesystem format, such as ext4 or xfs",
+			"The bus category, such as PCIe or SATA",
 			"The current I/O scheduler",
 		},
 	},
@@ -579,18 +579,18 @@ var pidstatDQuestionPicks = []columnQuestionPick{
 	},
 	{
 		Column:  "iodelay",
-		Correct: "Block I/O delay accumulated by the task, reported in clock ticks",
+		Correct: "Clock ticks the task spent blocked on block I/O",
 		Distractors: []string{
 			"Average device latency in milliseconds",
 			"Current number of queued I/O requests",
-			"Delay before the process starts after fork",
+			"Pause before the process starts after fork",
 		},
 	},
 	{
 		Column:  "Command",
-		Correct: "The command name for the process",
+		Correct: "The process name shown for the task",
 		Distractors: []string{
-			"The full command line including arguments",
+			"The full argument vector including flags",
 			"The cgroup path for the process",
 			"The block device name being accessed",
 		},

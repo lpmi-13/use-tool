@@ -354,7 +354,7 @@ var vmstatQuestionPicks = []columnQuestionPick{
 	},
 	{
 		Column:  "us",
-		Correct: "Percent of CPU time spent running user-space code",
+		Correct: "Percent of CPU time spent running application code outside the kernel",
 		Distractors: []string{
 			"Percent of CPU time spent running kernel code",
 			"Percent of CPU time spent idle",
@@ -367,12 +367,12 @@ var vmstatQuestionPicks = []columnQuestionPick{
 		Distractors: []string{
 			"Percent of CPU time spent running user-space code",
 			"Percent of CPU time spent idle while waiting on I/O",
-			"Percent of CPU time spent by niced processes",
+			"Percent of CPU time spent by lower-priority processes",
 		},
 	},
 	{
 		Column:  "id",
-		Correct: "Percent of CPU time spent idle",
+		Correct: "Percent of CPU time with no runnable work",
 		Distractors: []string{
 			"Percent of CPU time spent waiting on I/O",
 			"Percent of CPU time spent in the kernel",
@@ -390,7 +390,7 @@ var vmstatQuestionPicks = []columnQuestionPick{
 	},
 	{
 		Column:  "st",
-		Correct: "Percent of CPU time stolen by the hypervisor for other virtual machines",
+		Correct: "Percent of CPU time unavailable to this guest because the hypervisor was running other virtual machines",
 		Distractors: []string{
 			"Percent of CPU time spent waiting on local disk I/O",
 			"Percent of CPU time spent servicing software interrupts",
@@ -418,7 +418,7 @@ func mpstatColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 var mpstatQuestionPicks = []columnQuestionPick{
 	{
 		Column:  "%usr",
-		Correct: "Percent of CPU time spent running user-space code",
+		Correct: "Percent of CPU time spent running application code outside the kernel",
 		Distractors: []string{
 			"Percent of CPU time spent in the kernel",
 			"Percent of CPU time spent idle",
@@ -436,11 +436,11 @@ var mpstatQuestionPicks = []columnQuestionPick{
 	},
 	{
 		Column:  "%iowait",
-		Correct: "Percent of time the CPU was idle while there was an outstanding disk I/O request",
+		Correct: "Percent of CPU time with no runnable work while a disk I/O request was outstanding",
 		Distractors: []string{
 			"Percent of CPU time spent processing I/O interrupts",
 			"Percent of time disks were saturated",
-			"Wait time in milliseconds before each I/O completes",
+			"Latency in milliseconds before each I/O completes",
 		},
 	},
 	{
@@ -454,16 +454,16 @@ var mpstatQuestionPicks = []columnQuestionPick{
 	},
 	{
 		Column:  "%soft",
-		Correct: "Percent of CPU time spent servicing software interrupts",
+		Correct: "Percent of CPU time spent servicing deferred kernel interrupt handlers",
 		Distractors: []string{
 			"Percent of CPU time spent servicing hardware interrupts",
-			"Percent of CPU time spent running niced processes",
+			"Percent of CPU time spent running lower-priority processes",
 			"Percent of CPU time stolen by the hypervisor",
 		},
 	},
 	{
 		Column:  "%steal",
-		Correct: "Percent of time stolen by the hypervisor for other virtual machines",
+		Correct: "Percent of CPU time unavailable to this guest because the hypervisor was running other virtual machines",
 		Distractors: []string{
 			"Percent of CPU time spent in software interrupts",
 			"Percent of CPU time spent waiting for local disk I/O",
@@ -472,9 +472,9 @@ var mpstatQuestionPicks = []columnQuestionPick{
 	},
 	{
 		Column:  "%idle",
-		Correct: "Percent of CPU time spent idle with no outstanding disk I/O wait",
+		Correct: "Percent of CPU time with no runnable work and no outstanding disk I/O request",
 		Distractors: []string{
-			"Percent of CPU time spent idle while waiting for disk I/O",
+			"Percent of CPU time with no runnable work because disk I/O was outstanding",
 			"Percent of CPU time available after subtracting user-space time only",
 			"Percent of disk capacity currently unused",
 		},
@@ -691,16 +691,16 @@ func sarUStemFor(column string) string {
 var sarUQuestionPicks = []columnQuestionPick{
 	{
 		Column:  "%user",
-		Correct: "Percent of CPU time spent running user-space code, excluding niced processes",
+		Correct: "Percent of CPU time spent running regular-priority application code outside the kernel",
 		Distractors: []string{
-			"Percent of CPU time spent in kernel code on behalf of user processes",
-			"Percent of CPU time available to non-root users",
-			"Percent of total CPUs occupied by user processes",
+			"Percent of CPU time spent in kernel code on behalf of applications",
+			"Percent of CPU time available to non-root accounts",
+			"Percent of total CPUs occupied by application processes",
 		},
 	},
 	{
 		Column:  "%nice",
-		Correct: "Percent of CPU time spent running user-space processes with a positive nice value",
+		Correct: "Percent of CPU time spent running lower-priority user-space processes",
 		Distractors: []string{
 			"Percent of CPU time spent on cgroup-throttled processes",
 			"Percent of CPU time spent on systemd-managed services only",
@@ -718,28 +718,28 @@ var sarUQuestionPicks = []columnQuestionPick{
 	},
 	{
 		Column:  "%iowait",
-		Correct: "Percent of time the CPU was idle while there was an outstanding disk I/O request",
+		Correct: "Percent of CPU time with no runnable work while a disk I/O request was outstanding",
 		Distractors: []string{
 			"Percent of CPU time spent actively handling I/O interrupts",
-			"Wait time in seconds before each I/O operation completes",
+			"Latency in seconds before each I/O operation completes",
 			"Percent of disk capacity currently in use",
 		},
 	},
 	{
 		Column:  "%steal",
-		Correct: "Percent of CPU time stolen by the hypervisor for other virtual machines",
+		Correct: "Percent of CPU time unavailable to this guest because the hypervisor was running other virtual machines",
 		Distractors: []string{
-			"Percent of CPU time stolen by higher-priority local processes",
+			"Percent of CPU time taken by higher-priority local processes",
 			"Percent of CPU time spent servicing software interrupts",
 			"Percent of CPU time the guest could not access due to a NUMA penalty",
 		},
 	},
 	{
 		Column:  "%idle",
-		Correct: "Percent of CPU time spent idle with no outstanding disk I/O wait",
+		Correct: "Percent of CPU time with no runnable work and no outstanding disk I/O request",
 		Distractors: []string{
 			"Percent of CPU cores currently powered down",
-			"Percent of CPU time spent idle while waiting for disk I/O",
+			"Percent of CPU time with no runnable work because disk I/O was outstanding",
 			"Percent of total CPU capacity that's currently free",
 		},
 	},

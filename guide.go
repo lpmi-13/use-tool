@@ -142,10 +142,13 @@ func pauseGuide() bool {
 
 func guideStepCommand(s *Session, step GuideStep) *CapturedCommand {
 	for {
-		fmt.Print("[guide] $ ")
-		line, ok := readLine()
-		if !ok {
+		line, status := readPrompt("[guide] $ ")
+		if status == lineReadClosed {
 			return nil
+		}
+		if status == lineReadInterrupted {
+			fmt.Println("Exiting.")
+			os.Exit(0)
 		}
 		if line == "" {
 			continue

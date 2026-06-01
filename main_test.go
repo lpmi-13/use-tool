@@ -111,6 +111,49 @@ func TestStripCopiedShellPrompt(t *testing.T) {
 	}
 }
 
+func TestReadRawLineCtrlCClearsNonEmptyLine(t *testing.T) {
+	reader := bufio.NewReader(strings.NewReader("vmstat 1 3\x03mpstat\n"))
+	var out bytes.Buffer
+
+	line, status := readRawLine("[practice] $ ", &out, reader.ReadByte)
+	if status != lineReadOK || line != "mpstat" {
+		t.Fatalf("readRawLine() = %q, %v; want mpstat, lineReadOK", line, status)
+	}
+	got := out.String()
+	if !strings.Contains(got, "\r\x1b[K[practice] $ ") {
+		t.Fatalf("expected ctrl-c to clear and redraw the prompt, got %q", got)
+	}
+	if !strings.HasSuffix(got, "mpstat\n") {
+		t.Fatalf("expected replacement command to be echoed, got %q", got)
+	}
+}
+
+func TestReadRawLineCtrlCOnEmptyLineInterrupts(t *testing.T) {
+	reader := bufio.NewReader(strings.NewReader("\x03"))
+	var out bytes.Buffer
+
+	line, status := readRawLine("[practice] $ ", &out, reader.ReadByte)
+	if status != lineReadInterrupted || line != "" {
+		t.Fatalf("readRawLine() = %q, %v; want empty, lineReadInterrupted", line, status)
+	}
+	if got := out.String(); got != "^C\n" {
+		t.Fatalf("ctrl-c output = %q, want %q", got, "^C\n")
+	}
+}
+
+func TestReadRawLineBackspaceEditsInput(t *testing.T) {
+	reader := bufio.NewReader(strings.NewReader("vmstatx\x7f 1\n"))
+	var out bytes.Buffer
+
+	line, status := readRawLine("[practice] $ ", &out, reader.ReadByte)
+	if status != lineReadOK || line != "vmstat 1" {
+		t.Fatalf("readRawLine() = %q, %v; want vmstat 1, lineReadOK", line, status)
+	}
+	if got := out.String(); !strings.Contains(got, "\b \b") {
+		t.Fatalf("expected backspace erase sequence, got %q", got)
+	}
+}
+
 func TestAskQuestionRunsPromptCommandThenAcceptsAnswer(t *testing.T) {
 	oldStdin := stdin
 	defer func() { stdin = oldStdin }()

@@ -32,9 +32,8 @@ func cmdPractice(args []string) {
 
 func practiceLoop(s *Session) {
 	for {
-		fmt.Print("[practice] $ ")
-		line, ok := readLine()
-		if !ok {
+		line, status := readPrompt("[practice] $ ")
+		if status != lineReadOK {
 			return
 		}
 		if line == "" {
@@ -64,4 +63,3 @@ func practiceLoop(s *Session) {
 		}
 	}
 }
-

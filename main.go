@@ -46,6 +46,14 @@ type keyEvent struct {
 	Digit int
 }
 
+type lineStatus int
+
+const (
+	lineReadOK lineStatus = iota
+	lineReadClosed
+	lineReadInterrupted
+)
+
 func main() {
 	if len(os.Args) < 2 {
 		usage(2)
@@ -401,6 +409,60 @@ func readLine() (string, bool) {
 		return "", false
 	}
 	return strings.TrimSpace(line), true
+}
+
+func readPrompt(prompt string) (string, lineStatus) {
+	fmt.Print(prompt)
+	restore, ok := enterRawInput()
+	if !ok {
+		line, ok := readLine()
+		if !ok {
+			return "", lineReadClosed
+		}
+		return line, lineReadOK
+	}
+	defer restore()
+	return readRawLine(prompt, os.Stdout, stdin.ReadByte)
+}
+
+func readRawLine(prompt string, out io.Writer, readByte func() (byte, error)) (string, lineStatus) {
+	var buf []byte
+	for {
+		b, err := readByte()
+		if err != nil {
+			return "", lineReadClosed
+		}
+		switch b {
+		case '\r', '\n':
+			fmt.Fprintln(out)
+			return strings.TrimSpace(string(buf)), lineReadOK
+		case 3:
+			if len(buf) == 0 {
+				fmt.Fprintln(out, "^C")
+				return "", lineReadInterrupted
+			}
+			buf = buf[:0]
+			fmt.Fprintf(out, "\r\x1b[K%s", prompt)
+		case 4:
+			if len(buf) == 0 {
+				fmt.Fprintln(out)
+				return "", lineReadClosed
+			}
+		case 21:
+			if len(buf) > 0 {
+				buf = buf[:0]
+				fmt.Fprintf(out, "\r\x1b[K%s", prompt)
+			}
+		case 8, 127:
+			if len(buf) > 0 {
+				buf = buf[:len(buf)-1]
+				fmt.Fprint(out, "\b \b")
+			}
+		default:
+			buf = append(buf, b)
+			_, _ = out.Write([]byte{b})
+		}
+	}
 }
 
 func enterRawInput() (restore func(), ok bool) {

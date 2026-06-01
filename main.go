@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 )
@@ -26,6 +27,7 @@ const (
 
 var stdin = bufio.NewReader(os.Stdin)
 var rawInputEnabled = stdinIsTerminal
+var sigintExitSuppressionDepth atomic.Int32
 
 type terminalKey int
 
@@ -195,7 +197,10 @@ func runCommandStreaming(cmdStr string, liveOut io.Writer) CapturedCommand {
 	cmd.Stdin = os.Stdin
 	failed := false
 	exitCode := 0
-	if err := cmd.Run(); err != nil {
+	releaseSigint := suppressSigintExit()
+	defer releaseSigint()
+	err := cmd.Run()
+	if err != nil {
 		failed = true
 		if buf.Len() > 0 && !bytes.HasSuffix(buf.Bytes(), []byte("\n")) {
 			fmt.Fprintln(os.Stderr)
@@ -412,9 +417,12 @@ func readLine() (string, bool) {
 }
 
 func readPrompt(prompt string) (string, lineStatus) {
-	fmt.Print(prompt)
+	releaseSigint := suppressSigintExit()
+	defer releaseSigint()
+
 	restore, ok := enterRawInput()
 	if !ok {
+		fmt.Print(prompt)
 		line, ok := readLine()
 		if !ok {
 			return "", lineReadClosed
@@ -422,7 +430,16 @@ func readPrompt(prompt string) (string, lineStatus) {
 		return line, lineReadOK
 	}
 	defer restore()
+	fmt.Print(prompt)
 	return readRawLine(prompt, os.Stdout, stdin.ReadByte)
+}
+
+func redrawPromptLine(out io.Writer, prompt string, buf []byte) {
+	fmt.Fprintf(out, "\r\x1b[K%s%s", prompt, string(buf))
+}
+
+func clearScreenAndRedrawPrompt(out io.Writer, prompt string, buf []byte) {
+	fmt.Fprintf(out, "\x1b[H\x1b[2J%s%s", prompt, string(buf))
 }
 
 func readRawLine(prompt string, out io.Writer, readByte func() (byte, error)) (string, lineStatus) {
@@ -442,16 +459,18 @@ func readRawLine(prompt string, out io.Writer, readByte func() (byte, error)) (s
 				return "", lineReadInterrupted
 			}
 			buf = buf[:0]
-			fmt.Fprintf(out, "\r\x1b[K%s", prompt)
+			redrawPromptLine(out, prompt, buf)
 		case 4:
 			if len(buf) == 0 {
 				fmt.Fprintln(out)
 				return "", lineReadClosed
 			}
+		case 12:
+			clearScreenAndRedrawPrompt(out, prompt, buf)
 		case 21:
 			if len(buf) > 0 {
 				buf = buf[:0]
-				fmt.Fprintf(out, "\r\x1b[K%s", prompt)
+				redrawPromptLine(out, prompt, buf)
 			}
 		case 8, 127:
 			if len(buf) > 0 {
@@ -459,6 +478,10 @@ func readRawLine(prompt string, out io.Writer, readByte func() (byte, error)) (s
 				fmt.Fprint(out, "\b \b")
 			}
 		default:
+			if b < 0x20 {
+				// Ignore other control bytes so they cannot become invisible shell input.
+				continue
+			}
 			buf = append(buf, b)
 			_, _ = out.Write([]byte{b})
 		}
@@ -559,10 +582,24 @@ func exitOnSigint() {
 	signal.Notify(ch, syscall.SIGINT)
 	go func() {
 		for range ch {
+			if sigintExitSuppressed() {
+				continue
+			}
 			fmt.Fprintln(os.Stderr, "\nInterrupted. Exiting.")
 			os.Exit(130)
 		}
 	}()
+}
+
+func suppressSigintExit() func() {
+	sigintExitSuppressionDepth.Add(1)
+	return func() {
+		sigintExitSuppressionDepth.Add(-1)
+	}
+}
+
+func sigintExitSuppressed() bool {
+	return sigintExitSuppressionDepth.Load() > 0
 }
 
 func requireInteractive(mode string) {

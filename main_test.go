@@ -154,6 +154,36 @@ func TestReadRawLineBackspaceEditsInput(t *testing.T) {
 	}
 }
 
+func TestReadRawLineCtrlLClearsScreenAndKeepsInput(t *testing.T) {
+	reader := bufio.NewReader(strings.NewReader("vm\x0cstat\n"))
+	var out bytes.Buffer
+
+	line, status := readRawLine("[practice] $ ", &out, reader.ReadByte)
+	if status != lineReadOK || line != "vmstat" {
+		t.Fatalf("readRawLine() = %q, %v; want vmstat, lineReadOK", line, status)
+	}
+	got := out.String()
+	if !strings.Contains(got, "\x1b[H\x1b[2J[practice] $ vm") {
+		t.Fatalf("expected ctrl-l to clear screen and redraw current input, got %q", got)
+	}
+	if strings.Contains(got, "\x0c") {
+		t.Fatalf("ctrl-l leaked into output: %q", got)
+	}
+}
+
+func TestReadRawLineIgnoresOtherControlBytes(t *testing.T) {
+	reader := bufio.NewReader(strings.NewReader("d\x01d\n"))
+	var out bytes.Buffer
+
+	line, status := readRawLine("[practice] $ ", &out, reader.ReadByte)
+	if status != lineReadOK || line != "dd" {
+		t.Fatalf("readRawLine() = %q, %v; want dd, lineReadOK", line, status)
+	}
+	if got := out.String(); strings.Contains(got, "\x01") {
+		t.Fatalf("control byte leaked into output: %q", got)
+	}
+}
+
 func TestAskQuestionRunsPromptCommandThenAcceptsAnswer(t *testing.T) {
 	oldStdin := stdin
 	defer func() { stdin = oldStdin }()

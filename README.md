@@ -7,7 +7,8 @@ system. The tool captures the commands you run, parses their output into a
 structured snapshot, and asks specific questions about what you saw —
 without making guesses about what state the system is "supposed" to be in.
 
-Currently covers **CPU**, **memory**, **disk I/O**, and **network**.
+Currently covers **CPU**, **memory**, **disk I/O**, and **network**, plus a
+**system** practice target that diagnoses all four together.
 
 ## What it does
 
@@ -18,28 +19,31 @@ Three modes plus a reference cheatsheet:
   comprehension question and shows teaching notes, then advances. Ends
   with a snapshot of everything you saw.
 - **`practice`** — a free-form REPL. Run any commands you want; type
-  `report` to print the current snapshot, `evaluate` to be asked a sample of
-  comprehension, recall, and synthesis questions, `commands` for the
-  cheatsheet, `exit` to quit.
-- **`commands`** — a short-to-medium reference of CPU-related commands grouped
-  by Utilization / Saturation / Errors, with one or two lines on what each
-  shows and when to use it.
+  `report` to print the current snapshot, `diagnose` to check your USE
+  verdicts against the signals you captured, `commands` for the cheatsheet,
+  `help`, or `exit` to quit. At the pseudo-shell prompt, Control-C clears a
+  partially typed line, Control-C on an empty line exits the activity, and
+  Control-L clears the screen and redraws the current input.
+- **`commands`** — a short-to-medium reference for the selected resource,
+  grouped by Utilization / Saturation / Errors, with one or two lines on what
+  each command shows and when to use it.
 
-The snapshot reports raw observations (load averages with NumCPU ratio, mean
-and per-CPU range of `%idle`, vmstat run-queue and `wa` samples, dmesg keyword
-counts) without labelling the system as "saturated" or "healthy". The learner
-makes that call; the tool only checks they read the data correctly.
+The snapshot reports observations extracted from the commands you captured:
+load and run-queue signals, memory availability and pressure, disk queueing and
+I/O errors, network drops/retransmits, and kernel-log findings. The tool keeps
+the raw observations visible so you can judge the system from the evidence.
 
-## Question types
+## Checks and diagnosis
 
-| Type | Tests | Answer source |
-|---|---|---|
-| Comprehension | "Can you read this output?" | Fixed (e.g. what does `%iowait` mean) |
-| Recall | "Did you actually look at it?" | The learner's captured data |
-| Synthesis | "Do these numbers fit together?" | Logical rules over observed values |
+Guided walkthroughs ask inline comprehension checks about the command output
+you just captured: column meanings, units, and what a signal can or cannot
+prove.
 
-No question asks "what state is this system in" — that classification was
-removed on purpose so the tool stays system-agnostic.
+In practice mode, `diagnose` asks you to state a USE verdict for each relevant
+dimension and cite the observations that support it. Grading compares your
+claim and citations with the signals captured in your session, then suggests
+useful next commands when evidence is thin. It does not assume a hidden
+"correct" host state outside the data you gathered.
 
 ## Requirements
 
@@ -76,6 +80,9 @@ use-tool guide cpu
 # Free-form practice + assessment
 use-tool practice cpu
 
+# Whole-system practice across CPU, memory, disk, and network
+use-tool practice system
+
 # Command reference (no REPL)
 use-tool commands cpu
 
@@ -83,8 +90,8 @@ use-tool commands cpu
 use-tool list
 ```
 
-Inside `practice` mode you can also run `commands` and `report` as REPL
-builtins.
+Inside `practice` mode you can also run `report`, `commands`, `diagnose`,
+`help`, and `exit` as REPL builtins.
 
 ## Project layout
 
@@ -92,21 +99,24 @@ builtins.
 main.go            entrypoint, dispatch, REPL primitives, system detection
 investigation.go   generic types (Investigation, Question, GuideStep, ...)
                    plus the registry, askQuestion, printCommands
+diagnose.go        practice-mode USE verdict and evidence checks
 snapshot.go        Value, Observation, Snapshot, formatting
-cpu.go             CPU-specific: observations, extractors, recall fns,
-                   synthesis rules, command reference, guide steps
+synopsis.go        end-of-guide synopsis from captured USE signals
+version.go         version resolution for release tags and Go module builds
+cpu.go             CPU-specific: observations, extractors, question fns,
+                   diagnosis heuristics, command reference, guide steps
 memory.go          Memory-specific: same shape as cpu.go
 disk.go            Disk I/O-specific: same shape as cpu.go
 network.go         Network-specific: same shape as cpu.go
 guide.go           guided walkthrough flow
 practice.go        free-form REPL flow
-*_test.go          unit tests for parsers, extractors, synthesis rules
+*_test.go          unit tests for parsers, extractors, diagnosis, prompts
 ```
 
 To add another resource: create a `<name>.go` file mirroring the existing
-shape (Investigation struct with StepsFn / Extractors / Observations /
-SynthesisRules / Commands) and register it in `investigations` in
-`investigation.go`. Nothing else changes.
+shape (Investigation struct with StepsFn / Observations / Commands, plus
+observation extractors and guide questions) and register it in
+`investigations` in `investigation.go`. Nothing else changes.
 
 ## Scope intentionally left out
 
@@ -114,8 +124,9 @@ SynthesisRules / Commands) and register it in `investigations` in
   not (and will not) try to put the system into a known state. Pair it with a
   stress tool of your choice (`stress-ng`, `yes >/dev/null &`, etc.) in
   another terminal if you want to see non-idle states.
-- **No "what state is this system in" labelling.** That approach bakes in
-  specific test cases. Synthesis questions check relationships between
-  observations instead.
-- **No PTY.** Capture is via stdout/stderr tee. For commands that need a real
-  terminal, use batch flags (`top -bn1`, `mpstat -P ALL 1 3`).
+- **No hidden state oracle.** `diagnose` grades your claims against the
+  observations captured in this session. If you did not capture the relevant
+  signal, the right answer is usually "not enough data".
+- **No PTY for captured commands.** Capture is via stdout/stderr tee. For
+  commands that need a real terminal, use batch flags (`top -bn1`,
+  `mpstat -P ALL 1 3`).

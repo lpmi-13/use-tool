@@ -17,7 +17,6 @@ import (
 
 const (
 	appName = "use-tool"
-	version = "0.6.0"
 )
 
 const (
@@ -63,7 +62,7 @@ func main() {
 	case "list":
 		cmdList()
 	case "version", "--version", "-v":
-		fmt.Printf("%s %s\n", appName, version)
+		fmt.Printf("%s %s\n", appName, currentVersion())
 	case "help", "--help", "-h":
 		usage(0)
 	default:
@@ -100,7 +99,7 @@ Usage:
   use-tool help                 This message
 
 Available resources: %s
-`, appName, version, strings.Join(resourceNames(), ", "))
+`, appName, currentVersion(), strings.Join(resourceNames(), ", "))
 	os.Exit(code)
 }
 

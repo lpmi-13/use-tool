@@ -106,6 +106,7 @@ type CommandRef struct {
 	Summary             string
 	Requires            []string
 	HideWhenUnavailable bool
+	DiagnoseRank        int
 }
 
 const dmesgPermissionNote = "Direct dmesg access reads the kernel buffer; on systems with kernel.dmesg_restrict=1, use sudo."
@@ -299,18 +300,29 @@ func isExitCommand(line string) bool {
 // captured commands against an extractor without false positives like
 // `vim dmesg.txt` matching dmesg.
 func baseCmd(cmd string) string {
-	fields := strings.Fields(cmd)
+	return commandBase(cmd)
+}
+
+func commandBase(cmd string) string {
+	fields := commandFields(cmd)
 	if len(fields) == 0 {
 		return ""
 	}
-	base := fields[0]
-	if base == "sudo" && len(fields) > 1 {
-		base = fields[1]
-	}
-	return base
+	return fields[0]
 }
 
-// personalizeQuestions rewrites the leading ``In `<base>...` `` reference in
+func commandFields(cmd string) []string {
+	fields := strings.Fields(strings.TrimSpace(cmd))
+	if len(fields) == 0 {
+		return nil
+	}
+	if fields[0] == "sudo" && len(fields) > 1 {
+		return fields[1:]
+	}
+	return fields
+}
+
+// personalizeQuestions rewrites the leading "In `<base>...`" reference in
 // each question stem so it shows the exact command the learner ran, rather
 // than the canonical form baked into the generator (e.g. `iostat -x`). We
 // only touch the first backticked reference and only when it begins with the

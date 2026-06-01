@@ -788,49 +788,28 @@ func suggestNextCommands(inv *Investigation, dim string, caps []CapturedCommand,
 }
 
 func commandSuggestionOrder(inv *Investigation, dim string) []CommandRef {
-	preferred := preferredDiagnoseCommands[inv.Name][dim]
-	if len(preferred) == 0 {
-		var out []CommandRef
-		for _, ref := range inv.Commands {
-			if ref.Section == dim {
-				out = append(out, ref)
-			}
-		}
-		return out
-	}
-	byCmd := map[string]CommandRef{}
+	var ranked []CommandRef
 	for _, ref := range inv.Commands {
-		byCmd[ref.Cmd] = ref
+		if ref.Section != dim {
+			continue
+		}
+		if ref.DiagnoseRank > 0 {
+			ranked = append(ranked, ref)
+		}
+	}
+	if len(ranked) > 0 {
+		sort.SliceStable(ranked, func(i, j int) bool {
+			return ranked[i].DiagnoseRank < ranked[j].DiagnoseRank
+		})
+		return ranked
 	}
 	var out []CommandRef
-	for _, cmd := range preferred {
-		if ref, ok := byCmd[cmd]; ok {
+	for _, ref := range inv.Commands {
+		if ref.Section == dim {
 			out = append(out, ref)
 		}
 	}
 	return out
-}
-
-var preferredDiagnoseCommands = map[string]map[string][]string{
-	"cpu": {
-		"Utilization": {"uptime", "mpstat -P ALL 1 N"},
-		"Saturation":  {"vmstat 1 N", "cat /proc/pressure/cpu"},
-		"Errors":      {"dmesg --level=err,warn | tail -30", "journalctl -k -b -p warning --no-pager -n 30"},
-	},
-	"memory": {
-		"Utilization": {"free -h", "cat /proc/meminfo"},
-		"Saturation":  {"vmstat 1 N", "cat /proc/pressure/memory"},
-		"Errors":      {"dmesg -T | grep -iE 'killed process|out of memory|oom-killer'", "journalctl -k -b --no-pager | grep -iE 'killed process|out of memory|oom-killer'"},
-	},
-	"disk": {
-		"Utilization": {"iostat -xz 1 N | grep -vE '^loop'"},
-		"Saturation":  {"iostat -xz 1 N | grep -vE '^loop'", "cat /proc/pressure/io"},
-		"Errors":      {"dmesg -T | grep -iE 'i/o error|EXT4-fs error|Buffer I/O error|read-only'", "journalctl -k -b --no-pager | grep -iE 'i/o error|EXT4-fs error|XFS|Buffer I/O error|read-only'"},
-	},
-	"network": {
-		"Saturation": {"sar -n EDEV 1 N", "netstat -s"},
-		"Errors":     {"cat /proc/net/dev", "dmesg -T | grep -iE 'link is|carrier|nic|ethernet'", "journalctl -k -b --no-pager | grep -iE 'link is|carrier|nic|ethernet'"},
-	},
 }
 
 func commandWasCaptured(ref CommandRef, caps []CapturedCommand) bool {
@@ -844,13 +823,7 @@ func commandWasCaptured(ref CommandRef, caps []CapturedCommand) bool {
 }
 
 func commandFamilyKey(cmd string) string {
-	fields := strings.Fields(commandBeforePipe(cmd))
-	if len(fields) == 0 {
-		return ""
-	}
-	if fields[0] == "sudo" && len(fields) > 1 {
-		fields = fields[1:]
-	}
+	fields := commandFields(commandBeforePipe(cmd))
 	if len(fields) == 0 {
 		return ""
 	}
@@ -868,10 +841,7 @@ func commandFamilyKey(cmd string) string {
 }
 
 func commandBeforePipe(cmd string) string {
-	if i := strings.Index(cmd, "|"); i >= 0 {
-		return strings.TrimSpace(cmd[:i])
-	}
-	return strings.TrimSpace(cmd)
+	return firstPipelineSegment(cmd)
 }
 
 func firstSummaryLine(summary string) string {

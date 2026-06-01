@@ -207,18 +207,6 @@ func columnQuestionsFromPicks(picks []columnQuestionPick, stemFor func(string) s
 	return qs
 }
 
-func randomColumnQuestions(picks []columnQuestionPick, count int, stemFor func(string) string) []Question {
-	if len(picks) == 0 {
-		return nil
-	}
-	if count <= 0 || count > len(picks) {
-		count = len(picks)
-	}
-	shuffled := append([]columnQuestionPick(nil), picks...)
-	appRand.Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
-	return columnQuestionsFromPicks(shuffled[:count], stemFor)
-}
-
 func availableColumnQuestionPicks(output string, picks []columnQuestionPick) []columnQuestionPick {
 	var out []columnQuestionPick
 	for _, pick := range picks {
@@ -590,7 +578,6 @@ func procLoadavgQuestions(si SystemInfo, c CapturedCommand) []Question {
 //	some avg10=0.12 avg60=0.05 avg300=0.01 total=12345678
 var psiSomeRe = regexp.MustCompile(`some\s+avg10=([0-9.]+)\s+avg60=([0-9.]+)\s+avg300=([0-9.]+)\s+total=(\d+)`)
 var psiFullRe = regexp.MustCompile(`(?m)^full\s+avg10=([0-9.]+)\s+avg60=([0-9.]+)\s+avg300=([0-9.]+)\s+total=(\d+)`)
-var psiCPULineRe = regexp.MustCompile(`^(some|full)\s+avg10=([0-9.]+)\s+avg60=([0-9.]+)\s+avg300=([0-9.]+)\s+total=(\d+)`)
 
 // procPressureCpuQuestions handles `cat /proc/pressure/cpu` (PSI). All
 // three questions are returned so the guide step (QuestionCount=3) can
@@ -638,29 +625,6 @@ func procPressureCpuQuestions(si SystemInfo, c CapturedCommand) []Question {
 				"Total milliseconds the run-queue has been non-empty",
 			},
 		},
-	}
-}
-
-func extractPSICPU(which string) func(SystemInfo, []CapturedCommand) (Value, bool) {
-	return func(si SystemInfo, caps []CapturedCommand) (Value, bool) {
-		for i := len(caps) - 1; i >= 0; i-- {
-			c := caps[i]
-			if baseCmd(c.Cmd) != "cat" || !strings.Contains(c.Cmd, "/proc/pressure/cpu") {
-				continue
-			}
-			for _, line := range strings.Split(c.Output, "\n") {
-				m := psiCPULineRe.FindStringSubmatch(line)
-				if m == nil || m[1] != which {
-					continue
-				}
-				n, err := strconv.ParseFloat(m[2], 64)
-				if err != nil {
-					continue
-				}
-				return Value{Number: n, Unit: "%"}, true
-			}
-		}
-		return Value{}, false
 	}
 }
 
@@ -815,7 +779,7 @@ var cpuObservations = []Observation{
 		Name:      "psi_cpu_some_avg10",
 		Title:     "CPU PSI some (avg10)",
 		Section:   "Saturation",
-		Extract:   extractPSICPU("some"),
+		Extract:   extractPSIAvg10("/proc/pressure/cpu", "some"),
 		Verdict:   verdictPSISome,
 		Heuristic: "CPU PSI 'some' avg10 = percent of the last 10s window with at least one task stalled waiting for CPU; >10% steady = run-queue contention",
 	},
@@ -1069,36 +1033,9 @@ func extractVmstatColumn(col string) func(SystemInfo, []CapturedCommand) (Value,
 }
 
 func extractDmesgCpuKeywords(si SystemInfo, caps []CapturedCommand) (Value, bool) {
-	seen := false
-	matched := 0
-	totalLines := 0
-	for _, c := range caps {
-		b := baseCmd(c.Cmd)
-		if b != "dmesg" && b != "journalctl" {
-			continue
-		}
-		seen = true
-		for _, line := range strings.Split(c.Output, "\n") {
-			if strings.TrimSpace(line) == "" {
-				continue
-			}
-			totalLines++
-			low := strings.ToLower(line)
-			for _, kw := range []string{"mce", "machine check", "thermal", "throttl"} {
-				if strings.Contains(low, kw) {
-					matched++
-					break
-				}
-			}
-		}
-	}
-	if !seen {
-		return Value{}, false
-	}
-	return Value{
-		Number: float64(matched),
-		Text:   fmt.Sprintf("%d/%d lines mention CPU/thermal/MCE keywords", matched, totalLines),
-	}, true
+	return extractKernelLogKeywords(caps,
+		[]string{"mce", "machine check", "thermal", "throttl"},
+		"CPU/thermal/MCE keywords")
 }
 
 // ----- Recall question generators -----
@@ -1145,9 +1082,10 @@ func dmesgQuestions(si SystemInfo, c CapturedCommand) []Question {
 
 var cpuCommands = []CommandRef{
 	{
-		Cmd:     "uptime",
-		Section: "Utilization",
-		Summary: "1, 5, and 15-minute load averages, plus uptime.\nFastest first look at run-queue pressure.",
+		Cmd:          "uptime",
+		Section:      "Utilization",
+		Summary:      "1, 5, and 15-minute load averages, plus uptime.\nFastest first look at run-queue pressure.",
+		DiagnoseRank: 1,
 	},
 	{
 		Cmd:     "w",
@@ -1155,10 +1093,11 @@ var cpuCommands = []CommandRef{
 		Summary: "Load averages plus per-user session info.\nSimilar info to uptime, with logged-in users.",
 	},
 	{
-		Cmd:      "mpstat -P ALL 1 N",
-		Section:  "Utilization",
-		Summary:  "Per-CPU breakdown (%usr, %sys, %iowait, %idle, ...)\nover N one-second intervals. Tells all-cores-busy\napart from one-core-pegged. (sysstat package.)",
-		Requires: []string{"mpstat"},
+		Cmd:          "mpstat -P ALL 1 N",
+		Section:      "Utilization",
+		Summary:      "Per-CPU breakdown (%usr, %sys, %iowait, %idle, ...)\nover N one-second intervals. Tells all-cores-busy\napart from one-core-pegged. (sysstat package.)",
+		Requires:     []string{"mpstat"},
+		DiagnoseRank: 2,
 	},
 	{
 		Cmd:     "top -bcn1 w512",
@@ -1177,9 +1116,10 @@ var cpuCommands = []CommandRef{
 		Summary: "Top CPU-consuming processes right now.\nNo external dependencies; works everywhere.",
 	},
 	{
-		Cmd:     "vmstat 1 N",
-		Section: "Saturation",
-		Summary: "System-wide stats per second: run-queue (r),\nblocked (b), swap (si/so), I/O (bi/bo),\nand CPU breakdown (us/sy/id/wa/st).",
+		Cmd:          "vmstat 1 N",
+		Section:      "Saturation",
+		Summary:      "System-wide stats per second: run-queue (r),\nblocked (b), swap (si/so), I/O (bi/bo),\nand CPU breakdown (us/sy/id/wa/st).",
+		DiagnoseRank: 1,
 	},
 	{
 		Cmd:     "cat /proc/loadavg",
@@ -1187,10 +1127,11 @@ var cpuCommands = []CommandRef{
 		Summary: "Same load averages as uptime, plus current\nrunnable/total task counts and last PID.",
 	},
 	{
-		Cmd:      "cat /proc/pressure/cpu",
-		Section:  "Saturation",
-		Summary:  "PSI: time-share of tasks stalled on CPU.\nLinux 4.20+ with PSI enabled (kernel.org/PSI).",
-		Requires: []string{"psi"},
+		Cmd:          "cat /proc/pressure/cpu",
+		Section:      "Saturation",
+		Summary:      "PSI: time-share of tasks stalled on CPU.\nLinux 4.20+ with PSI enabled (kernel.org/PSI).",
+		Requires:     []string{"psi"},
+		DiagnoseRank: 2,
 	},
 	{
 		Cmd:      "sar -u 1 N",
@@ -1199,9 +1140,10 @@ var cpuCommands = []CommandRef{
 		Requires: []string{"sar"},
 	},
 	{
-		Cmd:     "dmesg --level=err,warn | tail -30",
-		Section: "Errors",
-		Summary: "Recent kernel errors and warnings.\nLook for MCE, thermal throttling, hardware faults.\nUses severity filtering instead of keyword grep so unusual CPU/hardware warnings stay visible.\n" + dmesgPermissionNote,
+		Cmd:          "dmesg --level=err,warn | tail -30",
+		Section:      "Errors",
+		Summary:      "Recent kernel errors and warnings.\nLook for MCE, thermal throttling, hardware faults.\nUses severity filtering instead of keyword grep so unusual CPU/hardware warnings stay visible.\n" + dmesgPermissionNote,
+		DiagnoseRank: 1,
 	},
 	{
 		Cmd:                 "journalctl -k -b -p warning --no-pager -n 30",
@@ -1209,6 +1151,7 @@ var cpuCommands = []CommandRef{
 		Summary:             "Recent kernel-level warnings and errors via journald.\nAlternative to dmesg on systemd systems.",
 		Requires:            []string{"journalctl"},
 		HideWhenUnavailable: true,
+		DiagnoseRank:        2,
 	},
 	{
 		Cmd:     "grep . /sys/devices/system/cpu/*/thermal_throttle/* 2>/dev/null",

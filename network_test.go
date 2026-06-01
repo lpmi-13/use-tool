@@ -134,24 +134,6 @@ func TestExtractSarRxDropsPeak(t *testing.T) {
 	}
 }
 
-func TestSarDevQuestionsFires(t *testing.T) {
-	si := SystemInfo{}
-	c := CapturedCommand{Cmd: "sar -n DEV 1 2", Output: sampleSarDev}
-	qs := sarDevQuestions(si, c)
-	if len(qs) == 0 {
-		t.Fatal("expected questions for sar -n DEV output")
-	}
-}
-
-func TestSarEdevQuestionsFires(t *testing.T) {
-	si := SystemInfo{}
-	c := CapturedCommand{Cmd: "sar -n EDEV 1 2", Output: sampleSarEdev}
-	qs := sarEdevQuestions(si, c)
-	if len(qs) == 0 {
-		t.Fatal("expected questions for sar -n EDEV output")
-	}
-}
-
 // ----- /proc/net/snmp -----
 
 func TestParseSnmpTcp(t *testing.T) {
@@ -238,24 +220,6 @@ func TestExtractInterfaceErrors(t *testing.T) {
 		t.Errorf("got %v, want 8", v.Number)
 	}
 }
-
-// ----- comprehension extractors -----
-
-
-func TestSnmpQuestionsFires(t *testing.T) {
-	c := CapturedCommand{Cmd: "cat /proc/net/snmp", Output: sampleSnmpTcp}
-	if qs := snmpQuestions(SystemInfo{}, c); len(qs) == 0 {
-		t.Fatal("expected snmp questions")
-	}
-}
-
-func TestNetstatExtQuestionsFires(t *testing.T) {
-	c := CapturedCommand{Cmd: "cat /proc/net/netstat", Output: sampleNetstatExt}
-	if qs := netstatExtQuestions(SystemInfo{}, c); len(qs) == 0 {
-		t.Fatal("expected netstat-ext questions")
-	}
-}
-
 
 func TestNetworkDmesgQuestionsFires(t *testing.T) {
 	c := CapturedCommand{Cmd: "dmesg", Output: sampleDmesgLinkFlap}
@@ -415,13 +379,6 @@ func TestExtractDmesgNetKeywordsRequiresDmesgBaseCmd(t *testing.T) {
 
 // ----- synthesis rules -----
 
-
-
-
-
-
-
-
 func TestNetworkInvestigationRegistered(t *testing.T) {
 	inv, err := getInvestigation("network")
 	if err != nil {
@@ -432,77 +389,6 @@ func TestNetworkInvestigationRegistered(t *testing.T) {
 	}
 	if len(inv.Observations) == 0 || len(inv.Commands) == 0 {
 		t.Error("network investigation is missing observations/commands/extractors")
-	}
-}
-
-// ----- recall edge cases & randomization coverage -----
-
-
-func TestSarDevQuestionsCoversBothDirections(t *testing.T) {
-	c := CapturedCommand{Cmd: "sar -n DEV 1 2", Output: sampleSarDev}
-	seen := map[string]bool{}
-	wantCorrect := map[string]string{
-		"rxkB/s": "Receive throughput in kilobytes per second, averaged over the sample interval",
-		"txkB/s": "Transmit throughput in kilobytes per second, averaged over the sample interval",
-	}
-	for i := 0; i < 100; i++ {
-		qs := sarDevQuestions(SystemInfo{}, c)
-		if len(qs) < 1 {
-			t.Fatalf("iteration %d: expected at least 1 question", i)
-		}
-		column := ""
-		for candidate := range wantCorrect {
-			if strings.Contains(qs[0].Stem, candidate) {
-				column = candidate
-				break
-			}
-		}
-		if column == "" {
-			t.Fatalf("iteration %d: stem does not ask about rx/tx throughput: %q", i, qs[0].Stem)
-		}
-		if qs[0].Correct != wantCorrect[column] {
-			t.Fatalf("iteration %d: column %q had correct answer %q, want %q", i, column, qs[0].Correct, wantCorrect[column])
-		}
-		seen[column] = true
-	}
-	for _, want := range []string{"rxkB/s", "txkB/s"} {
-		if !seen[want] {
-			t.Errorf("column %q never appeared across 100 iterations; saw %v", want, seen)
-		}
-	}
-}
-
-func TestSarEdevQuestionsCoversBothDirections(t *testing.T) {
-	c := CapturedCommand{Cmd: "sar -n EDEV 1 2", Output: sampleSarEdev}
-	seen := map[string]bool{}
-	wantCorrect := map[string]string{
-		"rxdrop/s": "The NIC ring buffer or kernel queue is filling faster than the system can drain incoming packets (can be tuned with `ethtool -G`)",
-		"txdrop/s": "The kernel transmit queue (qdisc) is dropping outgoing packets, often because tx_queue_len is too small for offered load",
-	}
-	for i := 0; i < 100; i++ {
-		qs := sarEdevQuestions(SystemInfo{}, c)
-		if len(qs) != 1 {
-			t.Fatalf("iteration %d: expected 1 question", i)
-		}
-		column := ""
-		for candidate := range wantCorrect {
-			if strings.Contains(qs[0].Stem, candidate) {
-				column = candidate
-				break
-			}
-		}
-		if column == "" {
-			t.Fatalf("iteration %d: stem does not ask about rx/tx drops: %q", i, qs[0].Stem)
-		}
-		if qs[0].Correct != wantCorrect[column] {
-			t.Fatalf("iteration %d: column %q had correct answer %q, want %q", i, column, qs[0].Correct, wantCorrect[column])
-		}
-		seen[column] = true
-	}
-	for _, want := range []string{"rxdrop/s", "txdrop/s"} {
-		if !seen[want] {
-			t.Errorf("column %q never appeared across 100 iterations; saw %v", want, seen)
-		}
 	}
 }
 

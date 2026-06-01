@@ -162,9 +162,6 @@ func TestExtractIostatRequiresIostatCommand(t *testing.T) {
 	}
 }
 
-
-
-
 func TestIostatQuestionsCoversOlderColumns(t *testing.T) {
 	c := CapturedCommand{Cmd: "iostat -xz 1 1", Output: sampleIostatOlder}
 	wantCorrect := map[string]string{
@@ -188,14 +185,14 @@ func TestPSIIOExtractRequiresCorrectPath(t *testing.T) {
 		// disk extractor must NOT pick this up.
 		{Cmd: "cat /proc/pressure/memory", Output: samplePSIIO},
 	}
-	if _, ok := extractPSIIO("some")(SystemInfo{}, caps); ok {
+	if _, ok := extractPSIAvg10("/proc/pressure/io", "some")(SystemInfo{}, caps); ok {
 		t.Error("expected PSI io extractor to ignore /proc/pressure/memory output")
 	}
 }
 
 func TestPSIIOExtractSome(t *testing.T) {
 	caps := []CapturedCommand{{Cmd: "cat /proc/pressure/io", Output: samplePSIIO}}
-	v, ok := extractPSIIO("some")(SystemInfo{}, caps)
+	v, ok := extractPSIAvg10("/proc/pressure/io", "some")(SystemInfo{}, caps)
 	if !ok {
 		t.Fatal("expected extraction to succeed")
 	}
@@ -206,27 +203,12 @@ func TestPSIIOExtractSome(t *testing.T) {
 
 func TestPSIIOExtractFull(t *testing.T) {
 	caps := []CapturedCommand{{Cmd: "cat /proc/pressure/io", Output: samplePSIIO}}
-	v, ok := extractPSIIO("full")(SystemInfo{}, caps)
+	v, ok := extractPSIAvg10("/proc/pressure/io", "full")(SystemInfo{}, caps)
 	if !ok {
 		t.Fatal("expected extraction to succeed")
 	}
 	if v.Number != 0.30 {
 		t.Errorf("got %v, want 0.30", v.Number)
-	}
-}
-
-func TestPSIIOQuestionsRequiresPath(t *testing.T) {
-	c := CapturedCommand{Cmd: "cat /proc/pressure/memory", Output: samplePSIIO}
-	if qs := psiIOQuestions(SystemInfo{}, c); qs != nil {
-		t.Error("expected no PSI io questions for /proc/pressure/memory path")
-	}
-}
-
-func TestPSIIOQuestionsFires(t *testing.T) {
-	c := CapturedCommand{Cmd: "cat /proc/pressure/io", Output: samplePSIIO}
-	qs := psiIOQuestions(SystemInfo{}, c)
-	if len(qs) == 0 {
-		t.Fatal("expected PSI io questions")
 	}
 }
 
@@ -266,12 +248,6 @@ func TestDiskDmesgQuestionsSkipsBenign(t *testing.T) {
 	}
 }
 
-
-
-
-
-
-
 func TestDiskInvestigationRegistered(t *testing.T) {
 	inv, err := getInvestigation("disk")
 	if err != nil {
@@ -286,42 +262,6 @@ func TestDiskInvestigationRegistered(t *testing.T) {
 }
 
 // ----- recall edge cases -----
-
-
-
-func TestPSIIOQuestionsCoversBothMetrics(t *testing.T) {
-	c := CapturedCommand{Cmd: "cat /proc/pressure/io", Output: samplePSIIO}
-	seen := map[string]bool{}
-	wantCorrect := map[string]string{
-		"`some`": "The percentage of time when at least one task was stalled on I/O",
-		"`full`": "The percentage of time when all non-idle tasks were stalled on I/O at the same time",
-	}
-	for i := 0; i < 100; i++ {
-		qs := psiIOQuestions(SystemInfo{}, c)
-		if len(qs) < 1 {
-			t.Fatalf("iteration %d: expected at least 1 question", i)
-		}
-		metric := ""
-		for candidate := range wantCorrect {
-			if strings.Contains(qs[0].Stem, candidate) {
-				metric = candidate
-				break
-			}
-		}
-		if metric == "" {
-			t.Fatalf("iteration %d: stem does not ask about some/full: %q", i, qs[0].Stem)
-		}
-		if qs[0].Correct != wantCorrect[metric] {
-			t.Fatalf("iteration %d: metric %q had correct answer %q, want %q", i, metric, qs[0].Correct, wantCorrect[metric])
-		}
-		seen[metric] = true
-	}
-	for _, want := range []string{"`some`", "`full`"} {
-		if !seen[want] {
-			t.Errorf("metric %q never appeared across 100 iterations; saw %v", want, seen)
-		}
-	}
-}
 
 const sampleProcPartitions = `major minor  #blocks  name
 
@@ -359,9 +299,9 @@ func TestProcPartitionsColumnQuestionsCoversAllColumns(t *testing.T) {
 	}
 }
 
-func TestProcPartitionsQuestionsRejectsUnrelatedOutput(t *testing.T) {
+func TestProcPartitionsColumnQuestionsRejectsUnrelatedOutput(t *testing.T) {
 	c := CapturedCommand{Cmd: "cat /proc/cpuinfo", Output: "processor   : 0\nvendor_id : GenuineIntel"}
-	if qs := procPartitionsQuestions(SystemInfo{}, c); qs != nil {
+	if qs := procPartitionsColumnQuestions(SystemInfo{}, c); qs != nil {
 		t.Errorf("expected nil for non-/proc/partitions output, got %d", len(qs))
 	}
 }
@@ -386,7 +326,6 @@ func TestSarDColumnQuestionsCoversObservedColumns(t *testing.T) {
 		}
 	}
 }
-
 
 func TestDiskDeviceVariantsDispatch(t *testing.T) {
 	combined := combineVariantQuestions(diskDeviceVariants())

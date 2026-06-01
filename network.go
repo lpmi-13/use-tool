@@ -406,49 +406,6 @@ func ipLinkColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 
 var sarDevHeaderRe = regexp.MustCompile(`(?m)^[\d:]+\s+IFACE.*rxkB/s.*txkB/s`)
 
-func sarDevQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if !sarDevHeaderRe.MatchString(c.Output) {
-		return nil
-	}
-	type tputPick struct {
-		col, correct, packetDistractor, totalDistractor string
-	}
-	pick := pickRandom([]tputPick{
-		{
-			col:              "rxkB/s",
-			correct:          "Receive throughput in kilobytes per second, averaged over the sample interval",
-			packetDistractor: "Receive packets per second, ignoring packet size",
-			totalDistractor:  "Total kilobytes received since the sar process started",
-		},
-		{
-			col:              "txkB/s",
-			correct:          "Transmit throughput in kilobytes per second, averaged over the sample interval",
-			packetDistractor: "Transmit packets per second, ignoring packet size",
-			totalDistractor:  "Total kilobytes transmitted since the sar process started",
-		},
-	})
-	return []Question{
-		{
-			Stem:    fmt.Sprintf("In `sar -n DEV` output, what does `%s` measure?", pick.col),
-			Correct: pick.correct,
-			Distractors: []string{
-				pick.packetDistractor,
-				pick.totalDistractor,
-				"Maximum spare link capacity currently free, in kilobytes per second",
-			},
-		},
-		{
-			Stem:    "If `rxkB/s` is well below the interface's link speed but the application reports network slowness, what's the right next step?",
-			Correct: "Check sar -n EDEV for drops and `cat /proc/net/snmp` for retransmits; spare bandwidth doesn't mean there's no loss",
-			Distractors: []string{
-				"Conclude the network is fine and look at CPU instead",
-				"Run sar -n DEV with a longer interval until rxkB/s climbs",
-				"Restart the network interface — steady low utilization means a badly set-up driver",
-			},
-		},
-	}
-}
-
 func sarDevColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !sarDevHeaderRe.MatchString(c.Output) {
 		return nil
@@ -546,34 +503,6 @@ var sarDevQuestionPicks = []columnQuestionPick{
 }
 
 var sarEdevHeaderRe = regexp.MustCompile(`(?m)^[\d:]+\s+IFACE.*rxdrop/s`)
-
-func sarEdevQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if !sarEdevHeaderRe.MatchString(c.Output) {
-		return nil
-	}
-	type dropPick struct {
-		col, correct string
-	}
-	pick := pickRandom([]dropPick{
-		{
-			col:     "rxdrop/s",
-			correct: "The NIC ring buffer or kernel queue is filling faster than the system can drain incoming packets (can be tuned with `ethtool -G`)",
-		},
-		{
-			col:     "txdrop/s",
-			correct: "The kernel transmit queue (qdisc) is dropping outgoing packets, often because tx_queue_len is too small for offered load",
-		},
-	})
-	return []Question{{
-		Stem:    fmt.Sprintf("Steady `%s` > 0 on a physical interface most commonly means:", pick.col),
-		Correct: pick.correct,
-		Distractors: []string{
-			"The peer is sending malformed frames that the NIC rejects",
-			"Disk I/O latency is causing TCP buffers to back up",
-			"The application has crashed and its connections are being torn down",
-		},
-	}}
-}
 
 func sarEdevColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !sarEdevHeaderRe.MatchString(c.Output) {
@@ -787,64 +716,7 @@ func outputHasTokenName(output, name string) bool {
 }
 
 var snmpTcpHeaderRe = regexp.MustCompile(`(?m)^Tcp:\s+RtoAlgorithm`)
-
-func snmpQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if !snmpTcpHeaderRe.MatchString(c.Output) {
-		return nil
-	}
-	return []Question{
-		{
-			Stem:    "`/proc/net/snmp` reports TCP `OutSegs` and `RetransSegs`. What does the ratio RetransSegs / OutSegs tell you?",
-			Correct: "The fraction of TCP segments that had to be retransmitted — a stand-in for end-to-end packet loss; healthy is well under 1%",
-			Distractors: []string{
-				"The fraction of segments that took longer than RTO to acknowledge",
-				"The fraction of bandwidth wasted on TCP control packets",
-				"The fraction of connections currently in fast retransmit",
-			},
-		},
-		{
-			Stem:    "If the retransmit ratio is high but `ip -s link` shows zero RX/TX errors and zero drops, where is loss most likely happening?",
-			Correct: "Downstream of this host — an in-between switch, the peer, or somewhere along the path",
-			Distractors: []string{
-				"In the local TCP stack — usually a kernel bug",
-				"In the application — it's failing to read fast enough",
-				"On the local NIC — the error counters are probably broken",
-			},
-		},
-	}
-}
-
 var netstatExtTcpExtRe = regexp.MustCompile(`(?m)^TcpExt:\s+\w`)
-
-func netstatExtQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if !netstatExtTcpExtRe.MatchString(c.Output) {
-		return nil
-	}
-	return []Question{{
-		Stem:    "In /proc/net/netstat, a non-zero `ListenOverflows` means:",
-		Correct: "The kernel dropped a SYN because the application's listen queue (Send-Q in `ss -lnt`) was full — the bottleneck is in user space",
-		Distractors: []string{
-			"The kernel ran out of file descriptors and could not create a new socket",
-			"A TCP connection had its receive window overflow",
-			"The system has too many sockets in TIME_WAIT and can't open new ones",
-		},
-	}}
-}
-
-func procNetDevQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if !strings.Contains(c.Output, "Inter-") || !strings.Contains(c.Output, "Receive") {
-		return nil
-	}
-	return []Question{{
-		Stem:    "/proc/net/dev gives since-boot per-interface counters. To get a *rate*, what should you do?",
-		Correct: "Sample twice with a known time gap and work out the difference, or use a rate-aware tool like sar -n DEV",
-		Distractors: []string{
-			"Multiply the running total by the system tick rate",
-			"Divide by the interface's link speed",
-			"Read /proc/net/dev_rate, which exposes the same data already differentiated",
-		},
-	}}
-}
 
 func procNetDevColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !strings.Contains(c.Output, "Inter-") || !strings.Contains(c.Output, "Receive") {
@@ -1429,34 +1301,8 @@ func extractInterfaceErrors(si SystemInfo, caps []CapturedCommand) (Value, bool)
 }
 
 func extractDmesgNetKeywords(si SystemInfo, caps []CapturedCommand) (Value, bool) {
-	seen := false
-	matched := 0
-	totalLines := 0
 	keywords := []string{"link is down", "link is up", "carrier", "nic link"}
-	for _, c := range caps {
-		b := baseCmd(c.Cmd)
-		if b != "dmesg" && b != "journalctl" {
-			continue
-		}
-		seen = true
-		for _, line := range strings.Split(c.Output, "\n") {
-			if strings.TrimSpace(line) == "" {
-				continue
-			}
-			totalLines++
-			low := strings.ToLower(line)
-			for _, kw := range keywords {
-				if strings.Contains(low, kw) {
-					matched++
-					break
-				}
-			}
-		}
-	}
-	if !seen {
-		return Value{}, false
-	}
-	return Value{Number: float64(matched), Text: fmt.Sprintf("%d/%d lines mention link/NIC events", matched, totalLines)}, true
+	return extractKernelLogKeywords(caps, keywords, "link/NIC events")
 }
 
 // ----- Recall question generators -----
@@ -1505,10 +1351,11 @@ var networkCommands = []CommandRef{
 		Summary: "Socket count summary by protocol and state.\nThe TCP estab number is current connection load.",
 	},
 	{
-		Cmd:      "sar -n EDEV 1 N",
-		Section:  "Saturation",
-		Summary:  "Per-interface error/drop rates.\nrxdrop/s > 0 = NIC ring buffer or kernel queue is filling.\n(sysstat package.)",
-		Requires: []string{"sar"},
+		Cmd:          "sar -n EDEV 1 N",
+		Section:      "Saturation",
+		Summary:      "Per-interface error/drop rates.\nrxdrop/s > 0 = NIC ring buffer or kernel queue is filling.\n(sysstat package.)",
+		Requires:     []string{"sar"},
+		DiagnoseRank: 1,
 	},
 	{
 		Cmd:     "ss -lnt",
@@ -1516,19 +1363,22 @@ var networkCommands = []CommandRef{
 		Summary: "TCP listen sockets with Recv-Q (current queue) vs Send-Q (max backlog).\nRecv-Q approaching Send-Q is the live signal that ListenOverflows is climbing.",
 	},
 	{
-		Cmd:     "netstat -s",
-		Section: "Saturation",
-		Summary: "Human-readable summary of /proc/net/snmp + /proc/net/netstat.\nFound almost everywhere but being phased out in favour of `ss`.",
+		Cmd:          "netstat -s",
+		Section:      "Saturation",
+		Summary:      "Human-readable summary of /proc/net/snmp + /proc/net/netstat.\nFound almost everywhere but being phased out in favour of `ss`.",
+		DiagnoseRank: 2,
 	},
 	{
-		Cmd:     "cat /proc/net/dev",
-		Section: "Errors",
-		Summary: "Per-interface counters since boot (bytes, packets, errs, drop, ...).\nField order is stable; raw source for many other tools.",
+		Cmd:          "cat /proc/net/dev",
+		Section:      "Errors",
+		Summary:      "Per-interface counters since boot (bytes, packets, errs, drop, ...).\nField order is stable; raw source for many other tools.",
+		DiagnoseRank: 1,
 	},
 	{
-		Cmd:     "dmesg -T | grep -iE 'link is|carrier|nic|ethernet'",
-		Section: "Errors",
-		Summary: "Kernel link-state changes and NIC driver errors.\nRepeated up/down sequences mean a flapping cable or peer port.\n" + dmesgPermissionNote,
+		Cmd:          "dmesg -T | grep -iE 'link is|carrier|nic|ethernet'",
+		Section:      "Errors",
+		Summary:      "Kernel link-state changes and NIC driver errors.\nRepeated up/down sequences mean a flapping cable or peer port.\n" + dmesgPermissionNote,
+		DiagnoseRank: 2,
 	},
 	{
 		Cmd:                 "journalctl -k -b --no-pager | grep -iE 'link is|carrier|nic|ethernet'",
@@ -1536,5 +1386,6 @@ var networkCommands = []CommandRef{
 		Summary:             "Kernel link-state changes and NIC driver errors via journald.\nAlternative to dmesg on systemd systems.",
 		Requires:            []string{"journalctl"},
 		HideWhenUnavailable: true,
+		DiagnoseRank:        3,
 	},
 }

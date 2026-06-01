@@ -247,17 +247,18 @@ func isNoMatchGrepExit(cmdStr string, exitCode int, output string) bool {
 }
 
 func lastPipelineCommandBase(cmdStr string) string {
-	fields := strings.Fields(lastPipelineSegment(cmdStr))
-	if len(fields) == 0 {
-		return ""
-	}
-	if fields[0] == "sudo" && len(fields) > 1 {
-		return fields[1]
-	}
-	return fields[0]
+	return commandBase(lastPipelineSegment(cmdStr))
 }
 
 func lastPipelineSegment(cmdStr string) string {
+	return pipelineSegment(cmdStr, true)
+}
+
+func firstPipelineSegment(cmdStr string) string {
+	return pipelineSegment(cmdStr, false)
+}
+
+func pipelineSegment(cmdStr string, last bool) string {
 	start := 0
 	inSingle := false
 	inDouble := false
@@ -282,7 +283,10 @@ func lastPipelineSegment(cmdStr string) string {
 			}
 		case '|':
 			if !inSingle && !inDouble {
-				start = i + len("|")
+				if !last {
+					return strings.TrimSpace(cmdStr[:i])
+				}
+				start = i + 1
 			}
 		}
 	}

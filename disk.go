@@ -158,19 +158,6 @@ func diskThroughputVariants(si SystemInfo) []stepVariant {
 // which always begins with `major minor  #blocks  name`.
 var procPartitionsHeaderRe = regexp.MustCompile(`(?m)^\s*major\s+minor\s+#blocks\s+name\s*$`)
 
-// procPartitionsQuestions returns one random column question — extractor variant.
-func procPartitionsQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if !procPartitionsHeaderRe.MatchString(c.Output) {
-		return nil
-	}
-	return randomColumnQuestions(
-		availableColumnQuestionPicks(c.Output, procPartitionsQuestionPicks),
-		1,
-		procPartitionsStemFor,
-	)
-}
-
-// procPartitionsColumnQuestions returns the full pool — guide-step variant.
 func procPartitionsColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !procPartitionsHeaderRe.MatchString(c.Output) {
 		return nil
@@ -599,33 +586,6 @@ var pidstatDQuestionPicks = []columnQuestionPick{
 
 var psiIOHeaderRe = regexp.MustCompile(`(?m)^some avg10=`)
 
-func psiIOQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if !strings.Contains(c.Cmd, "/proc/pressure/io") {
-		return nil
-	}
-	if !psiIOHeaderRe.MatchString(c.Output) {
-		return nil
-	}
-	type psiPick struct {
-		metric, correct, sibling string
-	}
-	pick := pickRandom([]psiPick{
-		{"some", "The percentage of time when at least one task was stalled on I/O", "The percentage of time when all non-idle tasks were stalled on I/O at the same time"},
-		{"full", "The percentage of time when all non-idle tasks were stalled on I/O at the same time", "The percentage of time when at least one task was stalled on I/O"},
-	})
-	return []Question{
-		{
-			Stem:    fmt.Sprintf("In /proc/pressure/io, what does the `%s` line measure?", pick.metric),
-			Correct: pick.correct,
-			Distractors: []string{
-				pick.sibling,
-				"The percentage of disk capacity currently used",
-				"The percentage of I/O requests that completed within their target latency",
-			},
-		},
-	}
-}
-
 func psiIOColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !strings.Contains(c.Cmd, "/proc/pressure/io") {
 		return nil
@@ -674,7 +634,7 @@ var diskObservations = []Observation{
 		Name:      "psi_io_some_avg10",
 		Title:     "PSI io some (avg10)",
 		Section:   "Saturation",
-		Extract:   extractPSIIO("some"),
+		Extract:   extractPSIAvg10("/proc/pressure/io", "some"),
 		Verdict:   verdictPSISome,
 		Heuristic: "PSI io 'some' avg10 = percent of the last 10s with at least one task stalled on I/O; >10% steady = saturation",
 	},
@@ -682,7 +642,7 @@ var diskObservations = []Observation{
 		Name:      "psi_io_full_avg10",
 		Title:     "PSI io full (avg10)",
 		Section:   "Saturation",
-		Extract:   extractPSIIO("full"),
+		Extract:   extractPSIAvg10("/proc/pressure/io", "full"),
 		Verdict:   verdictPSIFull,
 		Heuristic: "PSI io 'full' avg10 = percent of the window where ALL non-idle tasks stalled on I/O; any steady non-zero = severe saturation",
 	},
@@ -957,66 +917,9 @@ func extractIostatMaxAwait(si SystemInfo, caps []CapturedCommand) (Value, bool) 
 	return Value{Number: max, Unit: " ms"}, true
 }
 
-var psiIOLineRe = regexp.MustCompile(`^(some|full)\s+avg10=([0-9.]+)`)
-
-func extractPSIIO(which string) func(SystemInfo, []CapturedCommand) (Value, bool) {
-	return func(si SystemInfo, caps []CapturedCommand) (Value, bool) {
-		for i := len(caps) - 1; i >= 0; i-- {
-			c := caps[i]
-			if !strings.Contains(c.Cmd, "/proc/pressure/io") {
-				continue
-			}
-			if !psiIOHeaderRe.MatchString(c.Output) {
-				continue
-			}
-			for _, line := range strings.Split(c.Output, "\n") {
-				m := psiIOLineRe.FindStringSubmatch(line)
-				if m == nil || m[1] != which {
-					continue
-				}
-				n, err := strconv.ParseFloat(m[2], 64)
-				if err != nil {
-					continue
-				}
-				return Value{Number: n, Unit: "%"}, true
-			}
-		}
-		return Value{}, false
-	}
-}
-
 func extractDmesgIOErrors(si SystemInfo, caps []CapturedCommand) (Value, bool) {
-	seen := false
-	matched := 0
-	totalLines := 0
 	keywords := []string{"i/o error", "buffer i/o error", "read-only", "ext4-fs error"}
-	for _, c := range caps {
-		b := baseCmd(c.Cmd)
-		if b != "dmesg" && b != "journalctl" {
-			continue
-		}
-		seen = true
-		for _, line := range strings.Split(c.Output, "\n") {
-			if strings.TrimSpace(line) == "" {
-				continue
-			}
-			totalLines++
-			low := strings.ToLower(line)
-			for _, kw := range keywords {
-				if strings.Contains(low, kw) {
-					matched++
-					break
-				}
-			}
-		}
-	}
-	if !seen {
-		return Value{}, false
-	}
-	return Value{
-		Number: float64(matched),
-		Text:   fmt.Sprintf("%d/%d lines mention I/O errors or read-only remounts", matched, totalLines),
-	}, true
+	return extractKernelLogKeywords(caps, keywords, "I/O errors or read-only remounts")
 }
 
 // ----- Recall question generators -----
@@ -1061,10 +964,11 @@ var diskCommands = []CommandRef{
 		Summary: "Tree of block devices and their partitions/LVMs.\nFastest way to get oriented when you don't know the device names.",
 	},
 	{
-		Cmd:      "iostat -xz 1 N | grep -vE '^loop'",
-		Section:  "Utilization",
-		Summary:  "Per-device extended stats over N intervals.\n-x adds %util/await/aqu-sz; -z hides idle devices.\nThe grep filters snap loop-mounts so the real devices don't get\nlost in ~25 rows of `loop0..loopN` noise. Drop the pipe if you\nspecifically want to see those.\nThe single most important disk command.",
-		Requires: []string{"iostat"},
+		Cmd:          "iostat -xz 1 N | grep -vE '^loop'",
+		Section:      "Utilization",
+		Summary:      "Per-device extended stats over N intervals.\n-x adds %util/await/aqu-sz; -z hides idle devices.\nThe grep filters snap loop-mounts so the real devices don't get\nlost in ~25 rows of `loop0..loopN` noise. Drop the pipe if you\nspecifically want to see those.\nThe single most important disk command.",
+		Requires:     []string{"iostat"},
+		DiagnoseRank: 1,
 	},
 	{
 		Cmd:     "df -h",
@@ -1072,16 +976,18 @@ var diskCommands = []CommandRef{
 		Summary: "Filesystem capacity (not bandwidth).\nUseful when 'disk full' is the suspected problem.",
 	},
 	{
-		Cmd:      "iostat -xz 1 N | grep -vE '^loop'",
-		Section:  "Saturation",
-		Summary:  "Same command — read aqu-sz (queueing) and await (latency).\nSteady aqu-sz > 1 or await well above your device baseline\n= saturation, no matter what %util shows.",
-		Requires: []string{"iostat"},
+		Cmd:          "iostat -xz 1 N | grep -vE '^loop'",
+		Section:      "Saturation",
+		Summary:      "Same command — read aqu-sz (queueing) and await (latency).\nSteady aqu-sz > 1 or await well above your device baseline\n= saturation, no matter what %util shows.",
+		Requires:     []string{"iostat"},
+		DiagnoseRank: 1,
 	},
 	{
-		Cmd:      "cat /proc/pressure/io",
-		Section:  "Saturation",
-		Summary:  "PSI: time-share of tasks stalled on I/O.\n`full` > 0 is the strongest saturation signal.\nLinux 4.20+ with PSI enabled.",
-		Requires: []string{"psi"},
+		Cmd:          "cat /proc/pressure/io",
+		Section:      "Saturation",
+		Summary:      "PSI: time-share of tasks stalled on I/O.\n`full` > 0 is the strongest saturation signal.\nLinux 4.20+ with PSI enabled.",
+		Requires:     []string{"psi"},
+		DiagnoseRank: 2,
 	},
 	{
 		Cmd:     "pidstat -d 1 N",
@@ -1094,9 +1000,10 @@ var diskCommands = []CommandRef{
 		Summary: "Friendlier per-process I/O snapshot.\nBatch mode (-b -n1) avoids needing a TTY. (iotop package.)",
 	},
 	{
-		Cmd:     "dmesg -T | grep -iE 'i/o error|EXT4-fs error|Buffer I/O error|read-only'",
-		Section: "Errors",
-		Summary: "Kernel I/O errors and read-only remounts.\nRecurring I/O errors → failing media; read-only remount → kernel\ngave up on writes.\n" + dmesgPermissionNote,
+		Cmd:          "dmesg -T | grep -iE 'i/o error|EXT4-fs error|Buffer I/O error|read-only'",
+		Section:      "Errors",
+		Summary:      "Kernel I/O errors and read-only remounts.\nRecurring I/O errors → failing media; read-only remount → kernel\ngave up on writes.\n" + dmesgPermissionNote,
+		DiagnoseRank: 1,
 	},
 	{
 		Cmd:                 "journalctl -k -b --no-pager | grep -iE 'i/o error|EXT4-fs error|XFS|Buffer I/O error|read-only'",
@@ -1104,6 +1011,7 @@ var diskCommands = []CommandRef{
 		Summary:             "Kernel I/O errors and read-only remounts via journald.\nAlternative to dmesg on systemd systems.",
 		Requires:            []string{"journalctl"},
 		HideWhenUnavailable: true,
+		DiagnoseRank:        2,
 	},
 	{
 		Cmd:     "smartctl -a /dev/sda",

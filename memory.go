@@ -156,89 +156,7 @@ func memoryTopConsumerVariants() []stepVariant {
 
 // ----- Comprehension extractors (per-command) -----
 
-// catMemoryQuestions dispatches based on what the captured output looks like
-// (since `cat` is a multipurpose command).
-
 var meminfoMarkerRe = regexp.MustCompile(`(?m)^MemTotal:\s`)
-
-func meminfoQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if !meminfoMarkerRe.MatchString(c.Output) {
-		return nil
-	}
-	total, tok := parseMeminfoKB(c.Output, "MemTotal")
-	free, fok := parseMeminfoKB(c.Output, "MemFree")
-	avail, aok := parseMeminfoKB(c.Output, "MemAvailable")
-	cached, cok := parseMeminfoKB(c.Output, "Cached")
-	buffers, bok := parseMeminfoKB(c.Output, "Buffers")
-	swapFree, sfok := parseMeminfoKB(c.Output, "SwapFree")
-
-	var qs []Question
-	if fok && aok {
-		qs = append(qs, Question{
-			Stem: fmt.Sprintf(
-				"This run reported `MemFree` as %s and `MemAvailable` as %s.\n"+
-					"What does `MemAvailable` include that makes it the better USE baseline?",
-				formatKiBGiB(free), formatKiBGiB(avail)),
-			Correct: "An estimate of memory allocatable without swapping, including reclaimable cache",
-			Distractors: []string{
-				"Memory mapped by user-space processes only",
-				"The size of the largest contiguous free block",
-				"Memory minus what the kernel has reserved for buffers",
-			},
-		})
-	}
-	if tok && aok && total > 0 {
-		usedPct := (total - avail) / total * 100
-		correct := fmt.Sprintf("%.0f%%", usedPct)
-		pool := []string{
-			fmt.Sprintf("%.0f%%", clamp(usedPct+25, 0, 100)),
-			fmt.Sprintf("%.0f%%", clamp(usedPct-20, 0, 100)),
-			fmt.Sprintf("%.0f%%", clamp(usedPct+10, 0, 100)),
-			"0%", "25%", "50%", "75%", "99%",
-		}
-		qs = append(qs, makeRecallQuestion(
-			fmt.Sprintf(
-				"This run reported `MemTotal` as %s and `MemAvailable` as %s.\n"+
-					"About what memory-used percentage does that work out to when reclaimable cache is treated as available?",
-				formatKiBGiB(total), formatKiBGiB(avail)),
-			correct, pool)...)
-	}
-	if cok && aok {
-		cacheText := formatKiBGiB(cached)
-		if bok {
-			cacheText = fmt.Sprintf("%s (`Cached`) plus %s (`Buffers`)", formatKiBGiB(cached), formatKiBGiB(buffers))
-		}
-		qs = append(qs, Question{
-			Stem: fmt.Sprintf(
-				"This run reported %s and `MemAvailable` as %s.\n"+
-					"If the system feels memory-constrained, what's the right next step?",
-				cacheText, formatKiBGiB(avail)),
-			Correct: "Check `MemAvailable` — most page cache is reclaimable, so high `Cached` is not itself a problem",
-			Distractors: []string{
-				"Run `echo 3 > /proc/sys/vm/drop_caches` to free it",
-				"Conclude the system is out of memory and needs more RAM",
-				"Restart the largest process to release its cached pages",
-			},
-		})
-	}
-	if aok {
-		correct := fmt.Sprintf("`MemAvailable`: %s", formatKiBGiB(avail))
-		var pool []string
-		if fok {
-			pool = append(pool, fmt.Sprintf("`MemFree`: %s", formatKiBGiB(free)))
-		}
-		if cok {
-			pool = append(pool, fmt.Sprintf("`Cached`: %s", formatKiBGiB(cached)))
-		}
-		if sfok {
-			pool = append(pool, fmt.Sprintf("`SwapFree`: %s", formatKiBGiB(swapFree)))
-		}
-		qs = append(qs, makeRecallQuestion(
-			"From this /proc/meminfo output, which field is the best first estimate of memory available for new allocations without swapping?",
-			correct, pool)...)
-	}
-	return qs
-}
 
 func meminfoColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !meminfoMarkerRe.MatchString(c.Output) {
@@ -447,97 +365,6 @@ var freeQuestionPicks = []columnQuestionPick{
 }
 
 var vmstatMemHeaderRe = regexp.MustCompile(`(?m)^\s*r\s+b\s+swpd`)
-
-func formatSamples(samples []float64) string {
-	if len(samples) == 0 {
-		return "[]"
-	}
-	out := make([]string, 0, len(samples))
-	for _, sample := range samples {
-		out = append(out, fmt.Sprintf("%.0f", sample))
-	}
-	return "[" + strings.Join(out, ", ") + "]"
-}
-
-func maxFloat(a, b float64) float64 {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func psiMemoryQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if !psiMemoryHeaderRe.MatchString(c.Output) {
-		return nil
-	}
-	// Randomize whether we ask about `some` or `full` — the two PSI lines
-	// measure adjacent but different things, and learners need to distinguish.
-	type psiPick struct {
-		metric, correct, sibling string
-	}
-	pick := pickRandom([]psiPick{
-		{"some", "The percentage of time when at least one task was stalled on memory", "The percentage of time when all non-idle tasks were stalled on memory at the same time"},
-		{"full", "The percentage of time when all non-idle tasks were stalled on memory at the same time", "The percentage of time when at least one task was stalled on memory"},
-	})
-	qs := []Question{
-		{
-			Stem:    fmt.Sprintf("In /proc/pressure/memory, what does the `%s` line measure?", pick.metric),
-			Correct: pick.correct,
-			Distractors: []string{
-				pick.sibling, // the OTHER PSI line is the strongest distractor
-				"The percentage of physical memory currently in use",
-				"The total time the system has spent in any memory pressure since boot",
-			},
-		},
-		{
-			Stem:    "Which is the strongest signal that memory saturation is hurting throughput?",
-			Correct: "`full avg10` consistently above zero",
-			Distractors: []string{
-				"`some avg10` near 100% with `full` at zero",
-				"`MemFree` below 5% of `MemTotal`",
-				"Any non-zero `Cached` value",
-			},
-		},
-	}
-	someV, someOK := extractPSIMemory("some")(si, []CapturedCommand{c})
-	fullV, fullOK := extractPSIMemory("full")(si, []CapturedCommand{c})
-	if someOK && fullOK {
-		qs = append(qs, Question{
-			Stem: fmt.Sprintf(
-				"This PSI sample reported `some avg10=%.2f` and `full avg10=%.2f`.\n"+
-					"Which reading is the stronger saturation signal for throughput?",
-				someV.Number, fullV.Number),
-			Correct: fmt.Sprintf("`full avg10=%.2f` — it means all non-idle tasks were stalled at the same time during that time-share", fullV.Number),
-			Distractors: []string{
-				fmt.Sprintf("`some avg10=%.2f` — it is always stronger because it is usually larger", someV.Number),
-				"`MemFree` — PSI does not describe stalls",
-				"`total` — it directly reports the current percent of memory in use",
-			},
-		})
-
-		var correct string
-		switch {
-		case fullV.Number > 0:
-			correct = "There was measurable full memory pressure in the avg10 window; tasks were stalled together for part of that interval"
-		case someV.Number > 0:
-			correct = "Some task stalled on memory, but there was no full-system stall in the avg10 window"
-		default:
-			correct = "The avg10 window showed no current memory stalls in either PSI line"
-		}
-		qs = append(qs, Question{
-			Stem: fmt.Sprintf(
-				"Given `some avg10=%.2f` and `full avg10=%.2f` from this run, what should you conclude?",
-				someV.Number, fullV.Number),
-			Correct: correct,
-			Distractors: []string{
-				"These values are memory utilization percentages, so compare them to 100% used memory",
-				"`some` and `full` are cumulative counters, so their avg10 values cannot describe the current window",
-				"Any zero in either line proves there is no memory pressure anywhere on the host",
-			},
-		})
-	}
-	return qs
-}
 
 var psiMemoryHeaderRe = regexp.MustCompile(`(?m)^some avg10=`)
 
@@ -807,21 +634,6 @@ var psRSSQuestionPicks = []columnQuestionPick{
 	},
 }
 
-func topRSSProcess(output string) (string, float64, bool) {
-	for _, line := range strings.Split(output, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 3 || strings.EqualFold(fields[1], "RSS") {
-			continue
-		}
-		rss, err := strconv.ParseFloat(fields[1], 64)
-		if err != nil {
-			continue
-		}
-		return fields[2], rss, true
-	}
-	return "", 0, false
-}
-
 // ----- Observations -----
 
 var memoryObservations = []Observation{
@@ -878,7 +690,7 @@ var memoryObservations = []Observation{
 		Name:      "psi_mem_some_avg10",
 		Title:     "PSI memory some (avg10)",
 		Section:   "Saturation",
-		Extract:   extractPSIMemory("some"),
+		Extract:   extractPSIAvg10("/proc/pressure/memory", "some"),
 		Verdict:   verdictPSISome,
 		Heuristic: "PSI memory 'some' avg10 = percent of the last 10s window with at least one task stalled on memory; >10% steady = saturation",
 	},
@@ -886,7 +698,7 @@ var memoryObservations = []Observation{
 		Name:      "psi_mem_full_avg10",
 		Title:     "PSI memory full (avg10)",
 		Section:   "Saturation",
-		Extract:   extractPSIMemory("full"),
+		Extract:   extractPSIAvg10("/proc/pressure/memory", "full"),
 		Verdict:   verdictPSIFull,
 		Heuristic: "PSI memory 'full' avg10 = percent of the window where ALL non-idle tasks stalled on memory; any steady non-zero = severe saturation",
 	},
@@ -1248,63 +1060,10 @@ func swapUsedPctValue(totalKB, freeKB float64, rounded bool) Value {
 	return Value{Number: used, Unit: "%", Note: note}
 }
 
-var psiMemLineRe = regexp.MustCompile(`^(some|full)\s+avg10=([0-9.]+)`)
-
-// extractPSIMemory returns the avg10 value for the requested PSI line ("some"
-// or "full") from any captured output that looks like /proc/pressure/memory.
-func extractPSIMemory(which string) func(SystemInfo, []CapturedCommand) (Value, bool) {
-	return func(si SystemInfo, caps []CapturedCommand) (Value, bool) {
-		for i := len(caps) - 1; i >= 0; i-- {
-			out := caps[i].Output
-			if !psiMemoryHeaderRe.MatchString(out) {
-				continue
-			}
-			for _, line := range strings.Split(out, "\n") {
-				m := psiMemLineRe.FindStringSubmatch(line)
-				if m == nil || m[1] != which {
-					continue
-				}
-				n, err := strconv.ParseFloat(m[2], 64)
-				if err != nil {
-					continue
-				}
-				return Value{Number: n, Unit: "%"}, true
-			}
-		}
-		return Value{}, false
-	}
-}
-
 func extractDmesgOOM(si SystemInfo, caps []CapturedCommand) (Value, bool) {
-	seen := false
-	matched := 0
-	totalLines := 0
-	for _, c := range caps {
-		b := baseCmd(c.Cmd)
-		if b != "dmesg" && b != "journalctl" {
-			continue
-		}
-		seen = true
-		for _, line := range strings.Split(c.Output, "\n") {
-			if strings.TrimSpace(line) == "" {
-				continue
-			}
-			totalLines++
-			low := strings.ToLower(line)
-			if strings.Contains(low, "killed process") ||
-				strings.Contains(low, "out of memory") ||
-				strings.Contains(low, "oom-killer") {
-				matched++
-			}
-		}
-	}
-	if !seen {
-		return Value{}, false
-	}
-	return Value{
-		Number: float64(matched),
-		Text:   fmt.Sprintf("%d/%d lines mention OOM", matched, totalLines),
-	}, true
+	return extractKernelLogKeywords(caps,
+		[]string{"killed process", "out of memory", "oom-killer"},
+		"OOM")
 }
 
 // ----- Recall question generators -----
@@ -1342,14 +1101,16 @@ func oomQuestions(si SystemInfo, c CapturedCommand) []Question {
 
 var memoryCommands = []CommandRef{
 	{
-		Cmd:     "free -h",
-		Section: "Utilization",
-		Summary: "Total/used/free/available memory and swap, human-readable.\nFastest first look. Read `available`, not `free`.\n`free -m` (MiB) is equivalent and easier to compare exactly;\nthe report ingests either form.",
+		Cmd:          "free -h",
+		Section:      "Utilization",
+		Summary:      "Total/used/free/available memory and swap, human-readable.\nFastest first look. Read `available`, not `free`.\n`free -m` (MiB) is equivalent and easier to compare exactly;\nthe report ingests either form.",
+		DiagnoseRank: 1,
 	},
 	{
-		Cmd:     "cat /proc/meminfo",
-		Section: "Utilization",
-		Summary: "Canonical kernel memory accounting in kB.\n`MemAvailable` includes reclaimable cache; `MemFree` does not.",
+		Cmd:          "cat /proc/meminfo",
+		Section:      "Utilization",
+		Summary:      "Canonical kernel memory accounting in kB.\n`MemAvailable` includes reclaimable cache; `MemFree` does not.",
+		DiagnoseRank: 2,
 	},
 	{
 		Cmd:     "ps -eo pid,rss,comm --sort=-rss | head",
@@ -1362,15 +1123,17 @@ var memoryCommands = []CommandRef{
 		Summary: "Per-process memory with PSS (proportional set size).\nMore accurate per-process numbers than RSS. (smem package.)",
 	},
 	{
-		Cmd:     "vmstat 1 N",
-		Section: "Saturation",
-		Summary: "Watch the `si` and `so` columns. Steady non-zero\nvalues mean the working set is bigger than physical memory.",
+		Cmd:          "vmstat 1 N",
+		Section:      "Saturation",
+		Summary:      "Watch the `si` and `so` columns. Steady non-zero\nvalues mean the working set is bigger than physical memory.",
+		DiagnoseRank: 1,
 	},
 	{
-		Cmd:      "cat /proc/pressure/memory",
-		Section:  "Saturation",
-		Summary:  "PSI: time-share of tasks stalled on memory.\n`full` > 0 is the strongest saturation signal.\nLinux 4.20+ with PSI enabled (kernel.org/PSI).",
-		Requires: []string{"psi"},
+		Cmd:          "cat /proc/pressure/memory",
+		Section:      "Saturation",
+		Summary:      "PSI: time-share of tasks stalled on memory.\n`full` > 0 is the strongest saturation signal.\nLinux 4.20+ with PSI enabled (kernel.org/PSI).",
+		Requires:     []string{"psi"},
+		DiagnoseRank: 2,
 	},
 	{
 		Cmd:      "sar -B 1 N",
@@ -1385,9 +1148,10 @@ var memoryCommands = []CommandRef{
 		Requires: []string{"sar"},
 	},
 	{
-		Cmd:     "dmesg -T | grep -iE 'killed process|out of memory|oom-killer'",
-		Section: "Errors",
-		Summary: "OOM kill events from the kernel log.\nLines include victim PID, RSS at kill time, and (if container) memcg path.\n" + dmesgPermissionNote,
+		Cmd:          "dmesg -T | grep -iE 'killed process|out of memory|oom-killer'",
+		Section:      "Errors",
+		Summary:      "OOM kill events from the kernel log.\nLines include victim PID, RSS at kill time, and (if container) memcg path.\n" + dmesgPermissionNote,
+		DiagnoseRank: 1,
 	},
 	{
 		Cmd:                 "journalctl -k -b --no-pager | grep -iE 'killed process|out of memory|oom-killer'",
@@ -1395,5 +1159,6 @@ var memoryCommands = []CommandRef{
 		Summary:             "OOM events via journald.\nAlternative to dmesg on systemd systems.",
 		Requires:            []string{"journalctl"},
 		HideWhenUnavailable: true,
+		DiagnoseRank:        2,
 	},
 }

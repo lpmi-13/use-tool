@@ -1,7 +1,6 @@
 package main
 
 import (
-	"math/rand"
 	"strings"
 	"testing"
 )
@@ -41,64 +40,6 @@ const sampleDmesgOOM = `[Tue Oct  5 14:00:00 2024] Out of memory: Killed process
 [Tue Oct  5 14:00:00 2024] Memory cgroup out of memory: Killed process 12345
 some unrelated noise line that should not match
 [Tue Oct  5 14:01:00 2024] Killed process 12346 (helper) total-vm:1048576kB`
-
-func TestMeminfoQuestionsFiresOnMeminfoOutput(t *testing.T) {
-	si := SystemInfo{}
-	c := CapturedCommand{Cmd: "cat /proc/meminfo", Output: sampleMeminfo}
-	qs := meminfoQuestions(si, c)
-	if len(qs) == 0 {
-		t.Fatal("expected questions for /proc/meminfo output")
-	}
-}
-
-func TestMeminfoQuestionsUseObservedValues(t *testing.T) {
-	si := SystemInfo{}
-	c := CapturedCommand{Cmd: "cat /proc/meminfo", Output: sampleMeminfo}
-	qs := meminfoQuestions(si, c)
-	if len(qs) < 3 {
-		t.Fatalf("expected several observed-value questions, got %d", len(qs))
-	}
-	var stems []string
-	for _, q := range qs {
-		stems = append(stems, q.Stem)
-	}
-	joined := strings.Join(stems, "\n")
-	for _, want := range []string{"15.6 GiB", "7.8 GiB", "5.7 GiB"} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("meminfo question stems did not include observed value %q:\n%s", want, joined)
-		}
-	}
-	if strings.Contains(joined, "If `Cached` is 6 GiB") {
-		t.Fatalf("meminfo questions still include fixed cache example:\n%s", joined)
-	}
-}
-
-func TestGuideQuestionSelectionCanVaryForMeminfo(t *testing.T) {
-	oldRand := appRand
-	defer func() { appRand = oldRand }()
-	appRand = rand.New(rand.NewSource(1))
-
-	qs := meminfoQuestions(SystemInfo{}, CapturedCommand{Cmd: "cat /proc/meminfo", Output: sampleMeminfo})
-	seen := map[string]bool{}
-	for i := 0; i < 20; i++ {
-		q, ok := chooseGuideQuestion(qs)
-		if !ok {
-			t.Fatal("expected guide question")
-		}
-		seen[q.Stem] = true
-	}
-	if len(seen) < 2 {
-		t.Fatalf("guide selection did not vary across repeated picks; saw %d unique stem(s)", len(seen))
-	}
-}
-
-func TestMeminfoQuestionsRejectsUnrelatedOutput(t *testing.T) {
-	si := SystemInfo{}
-	c := CapturedCommand{Cmd: "cat", Output: "MemTotalIsh: not really"}
-	if qs := meminfoQuestions(si, c); qs != nil {
-		t.Error("expected nil for non-meminfo output")
-	}
-}
 
 func TestParseMeminfoKB(t *testing.T) {
 	cases := []struct {
@@ -186,9 +127,10 @@ func TestExtractCacheBuffersGiB(t *testing.T) {
 
 // sampleFreeM mirrors the values in sampleMeminfo so the test can assert
 // equivalence between the meminfo and `free -m` extraction paths.
-//   MemTotal=16384000 kB → 16000 MiB; MemAvailable=8192000 kB → 8000 MiB;
-//   Cached+Buffers=6512000 kB → 6359 MiB (rounded to nearest MiB);
-//   SwapTotal=2097152 kB → 2048 MiB; SwapFree=1048576 kB → 1024 MiB.
+//
+//	MemTotal=16384000 kB → 16000 MiB; MemAvailable=8192000 kB → 8000 MiB;
+//	Cached+Buffers=6512000 kB → 6359 MiB (rounded to nearest MiB);
+//	SwapTotal=2097152 kB → 2048 MiB; SwapFree=1048576 kB → 1024 MiB.
 const sampleFreeM = `              total        used        free      shared  buff/cache   available
 Mem:          16000        2641        7000         300        6359        8000
 Swap:          2048        1024        1024`
@@ -265,12 +207,12 @@ func TestParseFreeOutputKB_RejectsNonFree(t *testing.T) {
 
 func TestParseFreeCellKB(t *testing.T) {
 	cases := []struct {
-		cell    string
-		defKB   float64
-		want    float64
-		wantOK  bool
+		cell   string
+		defKB  float64
+		want   float64
+		wantOK bool
 	}{
-		{"1024", 1.0, 1024, true},        // default KiB
+		{"1024", 1.0, 1024, true},         // default KiB
 		{"16000", 1024.0, 16384000, true}, // -m
 		{"15Gi", 1.0, 15 * 1024 * 1024, true},
 		{"1.5G", 1.0, 1.5 * 1024 * 1024, true},
@@ -382,27 +324,10 @@ func TestExtractMemUsedPct_MeminfoTakesPrecedence(t *testing.T) {
 	}
 }
 
-func TestPSIMemoryQuestionsFires(t *testing.T) {
-	si := SystemInfo{}
-	c := CapturedCommand{Cmd: "cat /proc/pressure/memory", Output: samplePSIMemory}
-	qs := psiMemoryQuestions(si, c)
-	if len(qs) == 0 {
-		t.Fatal("expected PSI questions for valid PSI output")
-	}
-}
-
-func TestPSIMemoryQuestionsRejectsOther(t *testing.T) {
-	si := SystemInfo{}
-	c := CapturedCommand{Cmd: "cat", Output: "this has nothing to do with PSI"}
-	if qs := psiMemoryQuestions(si, c); qs != nil {
-		t.Error("expected nil for non-PSI output")
-	}
-}
-
 func TestExtractPSIMemorySome(t *testing.T) {
 	si := SystemInfo{}
 	caps := []CapturedCommand{{Cmd: "cat /proc/pressure/memory", Output: samplePSIMemory}}
-	v, ok := extractPSIMemory("some")(si, caps)
+	v, ok := extractPSIAvg10("/proc/pressure/memory", "some")(si, caps)
 	if !ok {
 		t.Fatal("expected PSI some extraction to succeed")
 	}
@@ -417,7 +342,7 @@ func TestExtractPSIMemorySome(t *testing.T) {
 func TestExtractPSIMemoryFull(t *testing.T) {
 	si := SystemInfo{}
 	caps := []CapturedCommand{{Cmd: "cat /proc/pressure/memory", Output: samplePSIMemory}}
-	v, ok := extractPSIMemory("full")(si, caps)
+	v, ok := extractPSIAvg10("/proc/pressure/memory", "full")(si, caps)
 	if !ok {
 		t.Fatal("expected PSI full extraction to succeed")
 	}
@@ -512,10 +437,6 @@ func TestOOMQuestionsSkipsBenign(t *testing.T) {
 	}
 }
 
-
-
-
-
 func TestMemoryInvestigationRegistered(t *testing.T) {
 	inv, err := getInvestigation("memory")
 	if err != nil {
@@ -530,60 +451,6 @@ func TestMemoryInvestigationRegistered(t *testing.T) {
 }
 
 // ----- recall edge cases -----
-
-
-
-
-
-func TestPSIMemoryQuestionsCoversBothMetrics(t *testing.T) {
-	c := CapturedCommand{Cmd: "cat /proc/pressure/memory", Output: samplePSIMemory}
-	seen := map[string]bool{}
-	wantCorrect := map[string]string{
-		"`some`": "The percentage of time when at least one task was stalled on memory",
-		"`full`": "The percentage of time when all non-idle tasks were stalled on memory at the same time",
-	}
-	for i := 0; i < 100; i++ {
-		qs := psiMemoryQuestions(SystemInfo{}, c)
-		if len(qs) < 1 {
-			t.Fatalf("iteration %d: expected at least 1 question", i)
-		}
-		metric := ""
-		for candidate := range wantCorrect {
-			if strings.Contains(qs[0].Stem, candidate) {
-				metric = candidate
-				break
-			}
-		}
-		if metric == "" {
-			t.Fatalf("iteration %d: stem does not ask about some/full: %q", i, qs[0].Stem)
-		}
-		if qs[0].Correct != wantCorrect[metric] {
-			t.Fatalf("iteration %d: metric %q had correct answer %q, want %q", i, metric, qs[0].Correct, wantCorrect[metric])
-		}
-		seen[metric] = true
-	}
-	for _, want := range []string{"`some`", "`full`"} {
-		if !seen[want] {
-			t.Errorf("metric %q never appeared across 100 iterations; saw %v", want, seen)
-		}
-	}
-}
-
-func TestPSIMemoryQuestionsUseObservedValues(t *testing.T) {
-	c := CapturedCommand{Cmd: "cat /proc/pressure/memory", Output: samplePSIMemory}
-	qs := psiMemoryQuestions(SystemInfo{}, c)
-	var stems []string
-	for _, q := range qs {
-		stems = append(stems, q.Stem)
-	}
-	joined := strings.Join(stems, "\n")
-	for _, want := range []string{"some avg10=4.20", "full avg10=0.80"} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("PSI questions did not include observed value %q:\n%s", want, joined)
-		}
-	}
-}
-
 
 const sampleSarW = `Linux 6.1.0 (host)  10/05/2024  _x86_64_  (4 CPU)
 
@@ -652,7 +519,6 @@ func TestSarWColumnQuestionsCoversBothColumns(t *testing.T) {
 	}
 }
 
-
 func TestTopMemColumnQuestionsCoversKeyColumns(t *testing.T) {
 	c := CapturedCommand{Cmd: "top -bn1 -o %MEM", Output: sampleTopMem}
 	qs := topMemColumnQuestions(SystemInfo{}, c)
@@ -673,8 +539,6 @@ func TestTopMemColumnQuestionsCoversKeyColumns(t *testing.T) {
 		}
 	}
 }
-
-
 
 func TestMemoryBaselineVariantsDispatch(t *testing.T) {
 	combined := combineVariantQuestions(memoryBaselineVariants())

@@ -75,7 +75,7 @@ type Observation struct {
 	// per-entry, so the per-resource observation literals stay clean. Used
 	// by whole-system diagnose to group prompts by resource.
 	Resource string
-	Extract func(SystemInfo, []CapturedCommand) (Value, bool)
+	Extract  func(SystemInfo, []CapturedCommand) (Value, bool)
 	// Verdict classifies this observation's value for its USE dimension,
 	// reading SystemInfo and the full Snapshot so a context-sensitive rule can
 	// consult sibling observations (e.g. a run-queue that only reads as

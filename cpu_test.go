@@ -493,7 +493,7 @@ func TestProcPressureCpuQuestionsHandlesSomeOnlyOutput(t *testing.T) {
 
 func TestExtractPSICPUSomeAvg10(t *testing.T) {
 	caps := []CapturedCommand{{Cmd: "cat /proc/pressure/cpu", Output: sampleProcPressureCpu}}
-	v, ok := extractPSICPU("some")(SystemInfo{}, caps)
+	v, ok := extractPSIAvg10("/proc/pressure/cpu", "some")(SystemInfo{}, caps)
 	if !ok {
 		t.Fatal("expected CPU PSI extraction to succeed")
 	}

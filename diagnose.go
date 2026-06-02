@@ -480,6 +480,10 @@ func chooseClaimWithKeys(label, note string, opts []string) (selected int, quit 
 				continue
 			}
 			fmt.Print("\a")
+		case keyRedraw:
+			renderedLines = redrawFullScreen(func() int {
+				return renderClaimSelector(label, note, opts, selected)
+			})
 		case keyEnter:
 			fmt.Println()
 			return selected, false, true
@@ -540,6 +544,11 @@ func chooseEvidenceWithKeys(candidates []Observation, snap Snapshot) (idxs []int
 			}
 			clearRenderedBlock(renderedLines)
 			renderedLines = renderEvidenceSelector(candidates, snap, selected, checked)
+		case keyRedraw:
+			typedListMode = false
+			renderedLines = redrawFullScreen(func() int {
+				return renderEvidenceSelector(candidates, snap, selected, checked)
+			})
 		case keySeparator:
 			typedListMode = true
 		case keyEnter:
@@ -557,6 +566,11 @@ func chooseEvidenceWithKeys(candidates []Observation, snap Snapshot) (idxs []int
 			fmt.Print("\a")
 		}
 	}
+}
+
+func redrawFullScreen(render func() int) int {
+	fmt.Print("\x1b[H\x1b[2J")
+	return render()
 }
 
 func clearRenderedBlock(lines int) {

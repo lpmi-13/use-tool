@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -645,6 +646,28 @@ func TestMoveSelectionWraps(t *testing.T) {
 	}
 }
 
+func TestReadTerminalKeyDistinguishesClearAndRedraw(t *testing.T) {
+	oldStdin := stdin
+	defer func() { stdin = oldStdin }()
+
+	stdin = bufio.NewReader(strings.NewReader("n\f"))
+	key, err := readTerminalKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key.Key != keyClear {
+		t.Fatalf("first key = %v, want keyClear", key.Key)
+	}
+
+	key, err = readTerminalKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key.Key != keyRedraw {
+		t.Fatalf("second key = %v, want keyRedraw", key.Key)
+	}
+}
+
 func TestSelectorRenderersReportLineCounts(t *testing.T) {
 	claimLines := 0
 	captureStdout(func() {
@@ -664,6 +687,22 @@ func TestSelectorRenderersReportLineCounts(t *testing.T) {
 	})
 	if evidenceLines != 4 {
 		t.Fatalf("evidence selector lines = %d, want 4", evidenceLines)
+	}
+}
+
+func TestRedrawFullScreenClearsAndRerenders(t *testing.T) {
+	lines := 0
+	out := captureStdout(func() {
+		lines = redrawFullScreen(func() int {
+			fmt.Print("selector")
+			return 1
+		})
+	})
+	if lines != 1 {
+		t.Fatalf("lines = %d, want 1", lines)
+	}
+	if !strings.HasPrefix(out, "\x1b[H\x1b[2Jselector") {
+		t.Fatalf("redraw output = %q, want clear-screen prefix and selector", out)
 	}
 }
 

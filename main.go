@@ -46,6 +46,7 @@ const (
 	keyQuit
 	keyDigit
 	keyClear
+	keyRedraw
 	keySeparator
 )
 
@@ -851,6 +852,8 @@ func readTerminalKey() (keyEvent, error) {
 		return keyEvent{Key: keyQuit}, nil
 	case b == 'n' || b == 'N':
 		return keyEvent{Key: keyClear}, nil
+	case b == 12:
+		return keyEvent{Key: keyRedraw}, nil
 	case b == ',':
 		return keyEvent{Key: keySeparator}, nil
 	case b >= '1' && b <= '9':

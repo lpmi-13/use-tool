@@ -256,6 +256,10 @@ func askQuestionWithCommandRunner(q Question, run questionCommandRunner) Questio
 				fmt.Printf("Pick a number 1-%d.\n", len(options))
 				continue
 			}
+			if !confirmShellCommand(cmd) {
+				fmt.Printf("Pick a number 1-%d, or inspect more data with `$ <command>`.\n", len(options))
+				continue
+			}
 			c := run(cmd)
 			if c.Output != "" && !strings.HasSuffix(c.Output, "\n") {
 				fmt.Println()
@@ -308,18 +312,201 @@ func commandBase(cmd string) string {
 	if len(fields) == 0 {
 		return ""
 	}
-	return fields[0]
+	return commandName(fields[0])
 }
 
 func commandFields(cmd string) []string {
-	fields := strings.Fields(strings.TrimSpace(cmd))
+	fields := strings.Fields(firstPipelineSegment(cmd))
+	for {
+		if len(fields) == 0 {
+			return nil
+		}
+		if isEnvAssignment(fields[0]) {
+			fields = fields[1:]
+			continue
+		}
+		switch commandName(fields[0]) {
+		case "sudo":
+			fields = stripSudo(fields[1:])
+		case "env":
+			fields = stripEnv(fields[1:])
+		case "timeout":
+			fields = stripTimeout(fields[1:])
+		case "nice":
+			fields = stripNice(fields[1:])
+		case "stdbuf":
+			fields = stripStdbuf(fields[1:])
+		case "nohup", "setsid", "command", "exec":
+			fields = fields[1:]
+		default:
+			return fields
+		}
+	}
+}
+
+func commandName(field string) string {
+	field = strings.Trim(field, `"'`)
+	if i := strings.LastIndex(field, "/"); i >= 0 {
+		return field[i+1:]
+	}
+	return field
+}
+
+func commandHasPath(cmd, path string) bool {
+	for _, field := range commandFields(cmd) {
+		if strings.Trim(field, `"'`) == path {
+			return true
+		}
+	}
+	return false
+}
+
+func commandHasOption(cmd string, options ...string) bool {
+	wanted := map[string]bool{}
+	for _, opt := range options {
+		wanted[opt] = true
+	}
+	for _, field := range commandFields(cmd) {
+		if wanted[field] {
+			return true
+		}
+	}
+	return false
+}
+
+func isEnvAssignment(field string) bool {
+	i := strings.IndexByte(field, '=')
+	if i <= 0 {
+		return false
+	}
+	for _, r := range field[:i] {
+		if r == '_' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func stripSudo(fields []string) []string {
+	for len(fields) > 0 {
+		f := fields[0]
+		if f == "--" {
+			return fields[1:]
+		}
+		if !strings.HasPrefix(f, "-") {
+			return fields
+		}
+		fields = fields[1:]
+		if sudoOptionTakesArg(f) && len(fields) > 0 {
+			fields = fields[1:]
+		}
+	}
+	return nil
+}
+
+func sudoOptionTakesArg(opt string) bool {
+	if strings.Contains(opt, "=") {
+		return false
+	}
+	switch opt {
+	case "-u", "--user", "-g", "--group", "-h", "--host", "-p", "--prompt", "-C", "--close-from", "-T", "--command-timeout", "-t", "--type", "-U", "--other-user":
+		return true
+	default:
+		return false
+	}
+}
+
+func stripEnv(fields []string) []string {
+	for len(fields) > 0 {
+		f := fields[0]
+		if f == "--" {
+			return fields[1:]
+		}
+		if isEnvAssignment(f) {
+			fields = fields[1:]
+			continue
+		}
+		if f == "-u" || f == "--unset" || f == "-C" || f == "--chdir" {
+			if len(fields) > 1 {
+				fields = fields[2:]
+			} else {
+				return nil
+			}
+			continue
+		}
+		if strings.HasPrefix(f, "-") {
+			fields = fields[1:]
+			continue
+		}
+		return fields
+	}
+	return nil
+}
+
+func stripTimeout(fields []string) []string {
+	for len(fields) > 0 {
+		f := fields[0]
+		if f == "--" {
+			fields = fields[1:]
+			break
+		}
+		if f == "-s" || f == "--signal" || f == "-k" || f == "--kill-after" {
+			if len(fields) > 1 {
+				fields = fields[2:]
+			} else {
+				return nil
+			}
+			continue
+		}
+		if strings.HasPrefix(f, "-") {
+			fields = fields[1:]
+			continue
+		}
+		return fields[1:]
+	}
 	if len(fields) == 0 {
 		return nil
 	}
-	if fields[0] == "sudo" && len(fields) > 1 {
-		return fields[1:]
-	}
 	return fields
+}
+
+func stripNice(fields []string) []string {
+	for len(fields) > 0 {
+		f := fields[0]
+		if f == "--" {
+			return fields[1:]
+		}
+		if f == "-n" || f == "--adjustment" {
+			if len(fields) > 1 {
+				fields = fields[2:]
+			} else {
+				return nil
+			}
+			continue
+		}
+		if strings.HasPrefix(f, "-") && len(f) > 1 {
+			fields = fields[1:]
+			continue
+		}
+		return fields
+	}
+	return nil
+}
+
+func stripStdbuf(fields []string) []string {
+	for len(fields) > 0 {
+		f := fields[0]
+		if f == "--" {
+			return fields[1:]
+		}
+		if strings.HasPrefix(f, "-") {
+			fields = fields[1:]
+			continue
+		}
+		return fields
+	}
+	return nil
 }
 
 // personalizeQuestions rewrites the leading "In `<base>...`" reference in
@@ -447,6 +634,12 @@ func requirementAvailable(req string, si SystemInfo) bool {
 		return si.HasJournalctl
 	case "psi":
 		return si.HasPSI
+	case "psi-cpu":
+		return si.HasPSI
+	case "psi-memory":
+		return si.HasMemoryPSI
+	case "psi-io":
+		return si.HasIOPSI
 	default:
 		return haveCmd(req)
 	}
@@ -460,6 +653,12 @@ func requirementHint(req string) string {
 		return "journalctl not found"
 	case "psi":
 		return "/proc/pressure/cpu not available"
+	case "psi-cpu":
+		return "/proc/pressure/cpu not available"
+	case "psi-memory":
+		return "/proc/pressure/memory not available"
+	case "psi-io":
+		return "/proc/pressure/io not available"
 	default:
 		return req + " not found"
 	}

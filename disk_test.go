@@ -327,6 +327,18 @@ func TestSarDColumnQuestionsCoversObservedColumns(t *testing.T) {
 	}
 }
 
+func TestSarDColumnQuestionsAcceptsAMPMTimestamp(t *testing.T) {
+	output := `Linux 6.1.0 (host)  10/05/2024  _x86_64_  (4 CPU)
+
+02:00:01 PM       DEV       tps     rkB/s     wkB/s   areq-sz    aqu-sz     await     svctm     %util
+02:00:02 PM       sda      1.00      0.00      4.00      4.00      0.01      5.00      1.00      0.10`
+
+	qs := sarDColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "sar -d 1 1", Output: output})
+	if len(qs) == 0 {
+		t.Fatal("expected questions for sar -d output with AM/PM timestamps")
+	}
+}
+
 func TestDiskDeviceVariantsDispatch(t *testing.T) {
 	combined := combineVariantQuestions(diskDeviceVariants())
 	// lsblk output → lsblk column questions

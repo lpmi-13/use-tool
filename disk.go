@@ -49,7 +49,7 @@ func diskSteps(si SystemInfo) []GuideStep {
 			Teaching:      throughputPick.Teaching,
 		},
 	}
-	if si.HasPSI {
+	if si.HasIOPSI {
 		steps = append(steps, GuideStep{
 			Name:          "pressure",
 			Intro:         "Step 3: PSI reports time-share of tasks stalled on I/O.",
@@ -214,7 +214,7 @@ var procPartitionsQuestionPicks = []columnQuestionPick{
 // sarDHeaderRe matches the column row of `sar -d`. Pre-12.x sysstat uses
 // `avgqu-sz` / `avgrq-sz`; modern versions emit `aqu-sz` / `areq-sz`. We
 // require `DEV` plus `await` so a sar -W or sar -n match doesn't qualify.
-var sarDHeaderRe = regexp.MustCompile(`(?m)^[\d:]+\s+DEV\b.*\bawait\b`)
+var sarDHeaderRe = regexp.MustCompile(`(?m)^[\d:]+(?:\s+[AP]M)?\s+DEV\b.*\bawait\b`)
 
 // sarDQuestions returns one random column question — extractor variant.
 
@@ -587,7 +587,7 @@ var pidstatDQuestionPicks = []columnQuestionPick{
 var psiIOHeaderRe = regexp.MustCompile(`(?m)^some avg10=`)
 
 func psiIOColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
-	if !strings.Contains(c.Cmd, "/proc/pressure/io") {
+	if !commandHasPath(c.Cmd, "/proc/pressure/io") {
 		return nil
 	}
 	if !psiIOHeaderRe.MatchString(c.Output) {
@@ -986,7 +986,7 @@ var diskCommands = []CommandRef{
 		Cmd:          "cat /proc/pressure/io",
 		Section:      "Saturation",
 		Summary:      "PSI: time-share of tasks stalled on I/O.\n`full` > 0 is the strongest saturation signal.\nLinux 4.20+ with PSI enabled.",
-		Requires:     []string{"psi"},
+		Requires:     []string{"psi-io"},
 		DiagnoseRank: 2,
 	},
 	{

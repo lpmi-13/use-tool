@@ -53,7 +53,7 @@ func memorySteps(si SystemInfo) []GuideStep {
 			Teaching:      swapPick.Teaching,
 		},
 	}
-	if si.HasPSI {
+	if si.HasMemoryPSI {
 		steps = append(steps, GuideStep{
 			Name:          "pressure",
 			Intro:         "Step 3: PSI reports the time-share of tasks stalled on memory.\nLinux 4.20+ with PSI enabled in the kernel.",
@@ -1132,7 +1132,7 @@ var memoryCommands = []CommandRef{
 		Cmd:          "cat /proc/pressure/memory",
 		Section:      "Saturation",
 		Summary:      "PSI: time-share of tasks stalled on memory.\n`full` > 0 is the strongest saturation signal.\nLinux 4.20+ with PSI enabled (kernel.org/PSI).",
-		Requires:     []string{"psi"},
+		Requires:     []string{"psi-memory"},
 		DiagnoseRank: 2,
 	},
 	{

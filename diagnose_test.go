@@ -540,7 +540,7 @@ func TestSuggestNextCommandsCoversOtherResources(t *testing.T) {
 			inv:  memoryInvestigation,
 			dim:  "Saturation",
 			caps: []CapturedCommand{{Cmd: "vmstat 1 3", Output: sampleVmstat}},
-			si:   SystemInfo{HasPSI: true},
+			si:   SystemInfo{HasMemoryPSI: true},
 			want: "cat /proc/pressure/memory",
 		},
 		{

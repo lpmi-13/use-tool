@@ -12,7 +12,7 @@ func extractPSIAvg10(path, which string) func(SystemInfo, []CapturedCommand) (Va
 	return func(si SystemInfo, caps []CapturedCommand) (Value, bool) {
 		for i := len(caps) - 1; i >= 0; i-- {
 			c := caps[i]
-			if path != "" && !strings.Contains(c.Cmd, path) {
+			if path != "" && !commandHasPath(c.Cmd, path) {
 				continue
 			}
 			for _, line := range strings.Split(c.Output, "\n") {

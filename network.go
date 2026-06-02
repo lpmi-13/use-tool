@@ -404,7 +404,7 @@ func ipLinkColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 	}
 }
 
-var sarDevHeaderRe = regexp.MustCompile(`(?m)^[\d:]+\s+IFACE.*rxkB/s.*txkB/s`)
+var sarDevHeaderRe = regexp.MustCompile(`(?m)^[\d:]+(?:\s+[AP]M)?\s+IFACE.*rxkB/s.*txkB/s`)
 
 func sarDevColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !sarDevHeaderRe.MatchString(c.Output) {
@@ -502,7 +502,7 @@ var sarDevQuestionPicks = []columnQuestionPick{
 	},
 }
 
-var sarEdevHeaderRe = regexp.MustCompile(`(?m)^[\d:]+\s+IFACE.*rxdrop/s`)
+var sarEdevHeaderRe = regexp.MustCompile(`(?m)^[\d:]+(?:\s+[AP]M)?\s+IFACE.*rxdrop/s`)
 
 func sarEdevColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 	if !sarEdevHeaderRe.MatchString(c.Output) {
@@ -1059,9 +1059,11 @@ func parseSarTable(output string, mustHaveAll ...string) []map[string]string {
 			headers = nil
 			continue
 		}
-		// A header row begins with a HH:MM:SS timestamp followed by IFACE.
-		if len(fields) >= 2 && isTimestamp(fields[0]) && fields[1] == "IFACE" {
-			headers = fields // includes the timestamp column at index 0
+		// Header rows begin with a timestamp and contain IFACE. Some locales
+		// insert an AM/PM column between the timestamp and IFACE, so locate
+		// IFACE by name instead of assuming a fixed position.
+		if indexOfStr(fields, "IFACE") > 0 && isTimestamp(fields[0]) {
+			headers = fields // includes the timestamp and any AM/PM column
 			for _, must := range mustHaveAll {
 				if indexOfStr(headers, must) == -1 {
 					headers = nil
@@ -1118,7 +1120,7 @@ func indexOfStr(headers []string, name string) int {
 // /proc/net/snmp's Tcp: header pair.
 func findSnmpOutput(caps []CapturedCommand) (string, bool) {
 	for i := len(caps) - 1; i >= 0; i-- {
-		if !strings.Contains(caps[i].Cmd, "/proc/net/snmp") {
+		if !commandHasPath(caps[i].Cmd, "/proc/net/snmp") {
 			continue
 		}
 		if snmpTcpHeaderRe.MatchString(caps[i].Output) {
@@ -1162,6 +1164,9 @@ func parseSnmpTcp(output string) map[string]float64 {
 }
 
 func extractTCPEstab(si SystemInfo, caps []CapturedCommand) (Value, bool) {
+	if estab, ok := findSsEstab(caps); ok {
+		return Value{Number: estab}, true
+	}
 	out, ok := findSnmpOutput(caps)
 	if !ok {
 		return Value{}, false
@@ -1175,6 +1180,10 @@ func extractTCPEstab(si SystemInfo, caps []CapturedCommand) (Value, bool) {
 }
 
 func extractTCPRetransmitRatio(si SystemInfo, caps []CapturedCommand) (Value, bool) {
+	if sent, retrans, ok := findNetstatSRetransmits(caps); ok && sent > 0 {
+		ratio := retrans / sent * 100
+		return Value{Number: ratio, Unit: "%", Note: fmt.Sprintf("%.0f / %.0f", retrans, sent)}, true
+	}
 	out, ok := findSnmpOutput(caps)
 	if !ok {
 		return Value{}, false
@@ -1189,11 +1198,81 @@ func extractTCPRetransmitRatio(si SystemInfo, caps []CapturedCommand) (Value, bo
 	return Value{Number: ratio, Unit: "%", Note: fmt.Sprintf("%.0f / %.0f", retrans, out_)}, true
 }
 
+func findSsEstab(caps []CapturedCommand) (float64, bool) {
+	for i := len(caps) - 1; i >= 0; i-- {
+		if commandBase(caps[i].Cmd) != "ss" || !commandHasOption(caps[i].Cmd, "-s", "--summary") {
+			continue
+		}
+		if estab, ok := parseSsEstab(caps[i].Output); ok {
+			return estab, true
+		}
+	}
+	return 0, false
+}
+
+func parseSsEstab(output string) (float64, bool) {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "TCP:") {
+			continue
+		}
+		for _, field := range strings.Fields(line) {
+			field = strings.Trim(field, "(),")
+			if strings.HasPrefix(field, "estab") && field != "estab" {
+				// Defensive for compact forms like "estab142", if any.
+				if n, err := strconv.ParseFloat(strings.TrimPrefix(field, "estab"), 64); err == nil {
+					return n, true
+				}
+			}
+		}
+		fields := strings.Fields(line)
+		for i, field := range fields {
+			if strings.Trim(field, "(),") != "estab" || i+1 >= len(fields) {
+				continue
+			}
+			n, err := strconv.ParseFloat(strings.Trim(fields[i+1], "(),"), 64)
+			if err == nil {
+				return n, true
+			}
+		}
+	}
+	return 0, false
+}
+
+func findNetstatSRetransmits(caps []CapturedCommand) (sent, retrans float64, ok bool) {
+	for i := len(caps) - 1; i >= 0; i-- {
+		if commandBase(caps[i].Cmd) != "netstat" || !commandHasOption(caps[i].Cmd, "-s", "--statistics") {
+			continue
+		}
+		if sent, retrans, ok = parseNetstatSRetransmits(caps[i].Output); ok {
+			return sent, retrans, true
+		}
+	}
+	return 0, 0, false
+}
+
+func parseNetstatSRetransmits(output string) (sent, retrans float64, ok bool) {
+	for _, line := range strings.Split(output, "\n") {
+		low := strings.ToLower(strings.TrimSpace(line))
+		switch {
+		case strings.Contains(low, "segments sent out") || strings.Contains(low, "segments send out"):
+			if n, ok := leadingNumber(low); ok {
+				sent = n
+			}
+		case strings.Contains(low, "segments retransmitted"):
+			if n, ok := leadingNumber(low); ok {
+				retrans = n
+			}
+		}
+	}
+	return sent, retrans, sent > 0
+}
+
 // findNetstatExtOutput locates a /proc/net/netstat capture with a TcpExt: line.
 func findNetstatExtOutput(caps []CapturedCommand) (string, bool) {
 	for i := len(caps) - 1; i >= 0; i-- {
-		if !strings.Contains(caps[i].Cmd, "/proc/net/netstat") &&
-			!strings.Contains(caps[i].Cmd, "/proc/net/snmp") {
+		if !commandHasPath(caps[i].Cmd, "/proc/net/netstat") &&
+			!commandHasPath(caps[i].Cmd, "/proc/net/snmp") {
 			// /proc/net/netstat is what we want, but `cat /proc/net/snmp /proc/net/netstat`
 			// concatenates both — so the snmp path also matches.
 			continue
@@ -1237,6 +1316,13 @@ func parseNetstatExtTcp(output string) map[string]float64 {
 }
 
 func extractListenOverflows(si SystemInfo, caps []CapturedCommand) (Value, bool) {
+	if overflows, drops, ok := findNetstatSListenOverflows(caps); ok {
+		note := "since boot"
+		if drops > 0 {
+			note = fmt.Sprintf("since boot; ListenDrops=%.0f", drops)
+		}
+		return Value{Number: overflows, Note: note}, true
+	}
 	out, ok := findNetstatExtOutput(caps)
 	if !ok {
 		return Value{}, false
@@ -1254,11 +1340,49 @@ func extractListenOverflows(si SystemInfo, caps []CapturedCommand) (Value, bool)
 	return Value{Number: overflows, Note: note}, true
 }
 
+func findNetstatSListenOverflows(caps []CapturedCommand) (overflows, drops float64, ok bool) {
+	for i := len(caps) - 1; i >= 0; i-- {
+		if commandBase(caps[i].Cmd) != "netstat" || !commandHasOption(caps[i].Cmd, "-s", "--statistics") {
+			continue
+		}
+		if overflows, drops, ok = parseNetstatSListenOverflows(caps[i].Output); ok {
+			return overflows, drops, true
+		}
+	}
+	return 0, 0, false
+}
+
+func parseNetstatSListenOverflows(output string) (overflows, drops float64, ok bool) {
+	for _, line := range strings.Split(output, "\n") {
+		low := strings.ToLower(strings.TrimSpace(line))
+		switch {
+		case strings.Contains(low, "times the listen queue") && strings.Contains(low, "overflow"):
+			if n, ok := leadingNumber(low); ok {
+				overflows = n
+			}
+		case strings.Contains(low, "syns to listen sockets dropped"):
+			if n, ok := leadingNumber(low); ok {
+				drops = n
+			}
+		}
+	}
+	return overflows, drops, overflows > 0 || drops > 0
+}
+
+func leadingNumber(line string) (float64, bool) {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return 0, false
+	}
+	n, err := strconv.ParseFloat(fields[0], 64)
+	return n, err == nil
+}
+
 // findProcNetDev locates a /proc/net/dev capture or an `ip -s link` capture
 // for cumulative interface error totals.
 func findProcNetDev(caps []CapturedCommand) (string, bool) {
 	for i := len(caps) - 1; i >= 0; i-- {
-		if strings.Contains(caps[i].Cmd, "/proc/net/dev") &&
+		if commandHasPath(caps[i].Cmd, "/proc/net/dev") &&
 			strings.Contains(caps[i].Output, "Inter-") {
 			return caps[i].Output, true
 		}

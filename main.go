@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -21,13 +23,17 @@ const (
 )
 
 const (
-	maxCaptureBytes  = 1 << 20 // per-command output cap (1 MB)
-	maxCapturedItems = 50      // per-session command-history cap
+	maxCaptureBytes             = 1 << 20 // per-command output cap (1 MB)
+	maxCapturedItems            = 100     // per-session command-history cap
+	maxCapturedWarningRemaining = maxCapturedItems / 10
 )
+
+var defaultCommandTimeout = 2 * time.Minute
 
 var stdin = bufio.NewReader(os.Stdin)
 var rawInputEnabled = stdinIsTerminal
 var sigintExitSuppressionDepth atomic.Int32
+var activeCommandPGID atomic.Int64
 
 type terminalKey int
 
@@ -149,6 +155,7 @@ type Session struct {
 	// the board, so the learner stops chasing the other tool.
 	kernelLogBlocks     int
 	kernelLogBlockNoted bool
+	historyCapWarned    bool
 }
 
 type SystemInfo struct {
@@ -157,6 +164,8 @@ type SystemInfo struct {
 	HasPidstat    bool
 	HasSar        bool
 	HasPSI        bool
+	HasMemoryPSI  bool
+	HasIOPSI      bool
 	HasJournalctl bool
 }
 
@@ -167,6 +176,8 @@ func detectSystem() SystemInfo {
 		HasPidstat:    haveCmd("pidstat"),
 		HasSar:        haveCmd("sar"),
 		HasPSI:        fileExists("/proc/pressure/cpu"),
+		HasMemoryPSI:  fileExists("/proc/pressure/memory"),
+		HasIOPSI:      fileExists("/proc/pressure/io"),
 		HasJournalctl: haveCmd("journalctl"),
 	}
 }
@@ -190,20 +201,55 @@ func runCommand(cmdStr string) CapturedCommand {
 // when the caller intends to post-process the output before showing it.
 // Stderr always streams to os.Stderr so genuine errors surface immediately.
 func runCommandStreaming(cmdStr string, liveOut io.Writer) CapturedCommand {
-	cmd := exec.Command("sh", "-c", cmdStr)
+	timeout := commandTimeoutDuration()
+	ctx := context.Background()
+	var cancel context.CancelFunc
+	if timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	commandDone := make(chan struct{})
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+		go func(pid int) {
+			select {
+			case <-time.After(2 * time.Second):
+				_ = syscall.Kill(-pid, syscall.SIGKILL)
+			case <-commandDone:
+			}
+		}(cmd.Process.Pid)
+		return nil
+	}
+	cmd.WaitDelay = 3 * time.Second
 	buf := &cappedBuffer{limit: maxCaptureBytes}
-	cmd.Stdout = io.MultiWriter(liveOut, buf)
-	cmd.Stderr = io.MultiWriter(os.Stderr, buf)
+	cmd.Stdout = io.MultiWriter(newSanitizingWriter(liveOut), buf)
+	cmd.Stderr = io.MultiWriter(newSanitizingWriter(os.Stderr), buf)
 	cmd.Stdin = os.Stdin
 	failed := false
 	exitCode := 0
 	releaseSigint := suppressSigintExit()
 	defer releaseSigint()
-	err := cmd.Run()
+	err := cmd.Start()
+	if err == nil {
+		activeCommandPGID.Store(int64(cmd.Process.Pid))
+		err = cmd.Wait()
+		activeCommandPGID.Store(0)
+		close(commandDone)
+	}
 	if err != nil {
 		failed = true
 		if buf.Len() > 0 && !bytes.HasSuffix(buf.Bytes(), []byte("\n")) {
 			fmt.Fprintln(os.Stderr)
+		}
+		if ctx.Err() == context.DeadlineExceeded {
+			exitCode = -1
+			fmt.Fprintf(os.Stderr, "[command timed out after %s]\n", timeout)
+			return CapturedCommand{Cmd: cmdStr, Output: buf.String(), Failed: failed, ExitCode: exitCode}
 		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() >= 0 {
@@ -240,6 +286,102 @@ func runCommandStreaming(cmdStr string, liveOut io.Writer) CapturedCommand {
 		fmt.Fprintln(os.Stderr, "[command failed: journalctl could not read the kernel log; try dmesg or sudo dmesg]")
 	}
 	return CapturedCommand{Cmd: cmdStr, Output: buf.String(), Failed: failed, ExitCode: exitCode}
+}
+
+func commandTimeoutDuration() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("USE_TOOL_COMMAND_TIMEOUT"))
+	if raw == "" {
+		return defaultCommandTimeout
+	}
+	if raw == "0" {
+		return 0
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < 0 {
+		return defaultCommandTimeout
+	}
+	return d
+}
+
+type sanitizeState int
+
+const (
+	sanitizeNormal sanitizeState = iota
+	sanitizeEsc
+	sanitizeCSI
+	sanitizeOSC
+	sanitizeOSCEsc
+)
+
+type sanitizingWriter struct {
+	state sanitizeState
+	w     io.Writer
+}
+
+func newSanitizingWriter(w io.Writer) *sanitizingWriter {
+	return &sanitizingWriter{w: w}
+}
+
+func (s *sanitizingWriter) Write(p []byte) (int, error) {
+	clean := s.sanitize(p)
+	if len(clean) > 0 {
+		if _, err := s.w.Write(clean); err != nil {
+			return 0, err
+		}
+	}
+	return len(p), nil
+}
+
+func sanitizeTerminalBytes(p []byte) []byte {
+	s := &sanitizingWriter{}
+	return s.sanitize(p)
+}
+
+func (s *sanitizingWriter) sanitize(p []byte) []byte {
+	out := make([]byte, 0, len(p))
+	for _, b := range p {
+		switch s.state {
+		case sanitizeNormal:
+			if b == 0x1b {
+				s.state = sanitizeEsc
+				continue
+			}
+			if b < 0x20 && b != '\n' && b != '\r' && b != '\t' {
+				continue
+			}
+			out = append(out, b)
+		case sanitizeEsc:
+			switch b {
+			case '[':
+				s.state = sanitizeCSI
+			case ']':
+				s.state = sanitizeOSC
+			default:
+				s.state = sanitizeNormal
+			}
+		case sanitizeCSI:
+			if b >= 0x40 && b <= 0x7e {
+				s.state = sanitizeNormal
+			}
+		case sanitizeOSC:
+			switch b {
+			case 0x07:
+				s.state = sanitizeNormal
+			case 0x1b:
+				s.state = sanitizeOSCEsc
+			}
+		case sanitizeOSCEsc:
+			switch b {
+			case '\\', 0x07:
+				s.state = sanitizeNormal
+			case 0x1b:
+				s.state = sanitizeOSCEsc
+			default:
+				s.state = sanitizeOSC
+			}
+		}
+	}
+	return out
 }
 
 func isNoMatchGrepExit(cmdStr string, exitCode int, output string) bool {
@@ -323,7 +465,7 @@ func (s *Session) runAndCaptureFiltered(cmdStr string, filter func(CapturedComma
 	}
 	if filter != nil {
 		c.Output = filter(c)
-		fmt.Print(c.Output)
+		_, _ = newSanitizingWriter(os.Stdout).Write([]byte(c.Output))
 		if c.Output != "" && !strings.HasSuffix(c.Output, "\n") {
 			fmt.Println()
 		}
@@ -410,6 +552,135 @@ func (s *Session) appendCaptured(c CapturedCommand) {
 		fmt.Fprintf(os.Stderr, "(history cap reached; dropped oldest: %q)\n", dropped)
 	}
 	s.Captured = append(s.Captured, c)
+	s.warnCapturedNearLimit()
+}
+
+func (s *Session) warnCapturedNearLimit() {
+	if s.historyCapWarned {
+		return
+	}
+	remaining := maxCapturedItems - len(s.Captured)
+	if remaining > maxCapturedWarningRemaining {
+		return
+	}
+	s.historyCapWarned = true
+	fmt.Fprintf(os.Stderr, "(report evidence warning: %d/%d command slots used; report findings are derived from this history, and older evidence will be dropped when the cap is exceeded.)\n", len(s.Captured), maxCapturedItems)
+}
+
+func confirmShellCommand(cmdStr string) bool {
+	reason, ok := dangerousCommandReason(cmdStr)
+	if !ok {
+		return true
+	}
+	fmt.Fprintf(os.Stderr, "[warning: %s]\n", reason)
+	fmt.Fprint(os.Stderr, "Type `run` to execute anyway: ")
+	line, ok := readLine()
+	if !ok || strings.TrimSpace(line) != "run" {
+		fmt.Fprintln(os.Stderr, "(command cancelled)")
+		return false
+	}
+	return true
+}
+
+func dangerousCommandReason(cmdStr string) (string, bool) {
+	for _, segment := range shellCommandSegments(cmdStr) {
+		fields := commandFields(segment)
+		if reason, ok := dangerousFieldsReason(fields); ok {
+			return reason, true
+		}
+	}
+	return "", false
+}
+
+func dangerousFieldsReason(fields []string) (string, bool) {
+	if len(fields) == 0 {
+		return "", false
+	}
+	base := commandName(fields[0])
+	switch {
+	case base == "rm" && rmLooksDangerous(fields[1:]):
+		return "`rm` command may recursively or forcefully delete files", true
+	case base == "dd":
+		return "`dd` can overwrite disks or filesystems", true
+	case strings.HasPrefix(base, "mkfs"):
+		return "`mkfs` formats filesystems", true
+	case base == "wipefs" || base == "fdisk" || base == "parted" || base == "sfdisk":
+		return base + " changes disk partition or filesystem metadata", true
+	case base == "shutdown" || base == "reboot" || base == "poweroff" || base == "halt":
+		return base + " changes host power state", true
+	case base == "systemctl" && systemctlLooksDangerous(fields[1:]):
+		return "`systemctl` power-state command", true
+	default:
+		return "", false
+	}
+}
+
+func shellCommandSegments(cmdStr string) []string {
+	var segments []string
+	start := 0
+	inSingle := false
+	inDouble := false
+	escaped := false
+	for i, r := range cmdStr {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if r == '\\' && !inSingle {
+			escaped = true
+			continue
+		}
+		switch r {
+		case '\'':
+			if !inDouble {
+				inSingle = !inSingle
+			}
+		case '"':
+			if !inSingle {
+				inDouble = !inDouble
+			}
+		case '|', ';', '&':
+			if inSingle || inDouble {
+				continue
+			}
+			if segment := strings.TrimSpace(cmdStr[start:i]); segment != "" {
+				segments = append(segments, segment)
+			}
+			start = i + 1
+		}
+	}
+	if segment := strings.TrimSpace(cmdStr[start:]); segment != "" {
+		segments = append(segments, segment)
+	}
+	return segments
+}
+
+func rmLooksDangerous(args []string) bool {
+	recursive := false
+	for _, arg := range args {
+		if arg == "--" {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") && (strings.Contains(arg, "r") || strings.Contains(arg, "R")) {
+			recursive = true
+			continue
+		}
+		target := strings.Trim(arg, `"'`)
+		if target == "/" || target == "/*" || target == "$HOME" || target == "~" || target == "~/" || strings.HasPrefix(target, "/home/") || strings.HasPrefix(target, "/etc/") || strings.HasPrefix(target, "/var/") {
+			return true
+		}
+	}
+	return recursive
+}
+
+func systemctlLooksDangerous(args []string) bool {
+	for _, arg := range args {
+		switch arg {
+		case "reboot", "poweroff", "halt", "kexec", "rescue", "emergency":
+			return true
+		}
+	}
+	return false
 }
 
 func readLine() (string, bool) {
@@ -476,6 +747,8 @@ func readRawLine(prompt string, out io.Writer, readByte func() (byte, error)) (s
 				buf = buf[:0]
 				redrawPromptLine(out, prompt, buf)
 			}
+		case 0x1b:
+			consumeInputEscapeSequence(readByte)
 		case 8, 127:
 			if len(buf) > 0 {
 				buf = buf[:len(buf)-1]
@@ -489,6 +762,40 @@ func readRawLine(prompt string, out io.Writer, readByte func() (byte, error)) (s
 			buf = append(buf, b)
 			_, _ = out.Write([]byte{b})
 		}
+	}
+}
+
+func consumeInputEscapeSequence(readByte func() (byte, error)) {
+	second, err := readByte()
+	if err != nil {
+		return
+	}
+	switch second {
+	case '[':
+		for {
+			b, err := readByte()
+			if err != nil {
+				return
+			}
+			if b >= 0x40 && b <= 0x7e {
+				return
+			}
+		}
+	case ']':
+		for {
+			b, err := readByte()
+			if err != nil || b == 0x07 {
+				return
+			}
+			if b == 0x1b {
+				next, err := readByte()
+				if err != nil || next == '\\' {
+					return
+				}
+			}
+		}
+	default:
+		return
 	}
 }
 
@@ -587,6 +894,9 @@ func exitOnSigint() {
 	go func() {
 		for range ch {
 			if sigintExitSuppressed() {
+				if pgid := activeCommandPGID.Load(); pgid > 0 {
+					_ = syscall.Kill(-int(pgid), syscall.SIGINT)
+				}
 				continue
 			}
 			fmt.Fprintln(os.Stderr, "\nInterrupted. Exiting.")

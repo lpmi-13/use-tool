@@ -170,6 +170,9 @@ func guideStepCommand(s *Session, step GuideStep) *CapturedCommand {
 			fmt.Printf("(That looks like a multiple-choice answer (`%s`), but we're at a shell prompt — not a `Choice:` prompt yet.\n  Run a command (try `%s`), or type `skip`.)\n", line, step.Suggested)
 			continue
 		}
+		if !confirmShellCommand(line) {
+			continue
+		}
 		c := s.runAndCaptureFiltered(line, step.Filter)
 		if c.Failed {
 			fmt.Println("(Command failed; fix it and try again, or `skip`.)")

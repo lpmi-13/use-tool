@@ -84,6 +84,28 @@ func TestParseSarDevTable(t *testing.T) {
 	}
 }
 
+func TestParseSarDevTableWithAMPMTimestamp(t *testing.T) {
+	output := `Linux 6.1.0 (host)  10/05/2024  _x86_64_  (4 CPU)
+
+02:00:01 PM     IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+02:00:02 PM      eth0    100.00    200.00    300.00    400.00      0.00      0.00      0.00      1.00
+Average:         eth0    100.00    200.00    300.00    400.00      0.00      0.00      0.00      1.00`
+
+	rows := parseSarTable(output, "rxkB/s", "txkB/s")
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 data row (Average: skipped), got %d", len(rows))
+	}
+	if got := rows[0]["IFACE"]; got != "eth0" {
+		t.Fatalf("IFACE = %q, want eth0; row=%v", got, rows[0])
+	}
+	if got := rows[0]["rxkB/s"]; got != "300.00" {
+		t.Fatalf("rxkB/s = %q, want 300.00; row=%v", got, rows[0])
+	}
+	if qs := sarDevColumnQuestions(SystemInfo{}, CapturedCommand{Cmd: "sar -n DEV 1 1", Output: output}); len(qs) == 0 {
+		t.Fatal("expected sar -n DEV questions for AM/PM timestamp output")
+	}
+}
+
 func TestParseSarTableRejectsWrongTable(t *testing.T) {
 	// Asking for rxdrop/s when given a DEV table → no rows returned
 	if rows := parseSarTable(sampleSarDev, "rxdrop/s"); len(rows) != 0 {
@@ -162,6 +184,17 @@ func TestExtractTCPEstab(t *testing.T) {
 	}
 }
 
+func TestExtractTCPEstabFromSsSummary(t *testing.T) {
+	caps := []CapturedCommand{{Cmd: "timeout 5s ss -s", Output: sampleSsSummary}}
+	v, ok := extractTCPEstab(SystemInfo{}, caps)
+	if !ok {
+		t.Fatal("expected extraction to succeed")
+	}
+	if v.Number != 142 {
+		t.Errorf("got %v, want 142", v.Number)
+	}
+}
+
 func TestExtractTCPRetransmitRatio(t *testing.T) {
 	caps := []CapturedCommand{{Cmd: "cat /proc/net/snmp", Output: sampleSnmpTcp}}
 	v, ok := extractTCPRetransmitRatio(SystemInfo{}, caps)
@@ -171,6 +204,32 @@ func TestExtractTCPRetransmitRatio(t *testing.T) {
 	// 5000 / 1000000 = 0.5%
 	if v.Number != 0.5 {
 		t.Errorf("got %v, want 0.5", v.Number)
+	}
+}
+
+func TestExtractTCPRetransmitRatioFromNetstatS(t *testing.T) {
+	caps := []CapturedCommand{{Cmd: "env LC_ALL=C netstat -s", Output: sampleNetstatS}}
+	v, ok := extractTCPRetransmitRatio(SystemInfo{}, caps)
+	if !ok {
+		t.Fatal("expected extraction to succeed")
+	}
+	if v.Number != 100.0/900000.0*100 {
+		t.Errorf("got %v, want %v", v.Number, 100.0/900000.0*100)
+	}
+	if !strings.Contains(v.Note, "100 / 900000") {
+		t.Errorf("expected retrans/sent note, got %q", v.Note)
+	}
+}
+
+func TestExtractTCPRetransmitRatioFromNetstatSSendOutWording(t *testing.T) {
+	output := strings.ReplaceAll(sampleNetstatS, "segments sent out", "segments send out")
+	caps := []CapturedCommand{{Cmd: "netstat -s", Output: output}}
+	v, ok := extractTCPRetransmitRatio(SystemInfo{}, caps)
+	if !ok {
+		t.Fatal("expected extraction to succeed")
+	}
+	if v.Number != 100.0/900000.0*100 {
+		t.Errorf("got %v, want %v", v.Number, 100.0/900000.0*100)
 	}
 }
 
@@ -203,6 +262,20 @@ func TestExtractListenOverflows(t *testing.T) {
 		t.Errorf("got %v, want 12", v.Number)
 	}
 	if !strings.Contains(v.Note, "ListenDrops=18") {
+		t.Errorf("expected ListenDrops in note, got %q", v.Note)
+	}
+}
+
+func TestExtractListenOverflowsFromNetstatS(t *testing.T) {
+	caps := []CapturedCommand{{Cmd: "sudo -n netstat -s", Output: sampleNetstatS}}
+	v, ok := extractListenOverflows(SystemInfo{}, caps)
+	if !ok {
+		t.Fatal("expected extraction to succeed")
+	}
+	if v.Number != 10 {
+		t.Errorf("got %v, want 10", v.Number)
+	}
+	if !strings.Contains(v.Note, "ListenDrops=5") {
 		t.Errorf("expected ListenDrops in note, got %q", v.Note)
 	}
 }

@@ -59,6 +59,9 @@ func practiceLoop(s *Session) {
 				return
 			}
 		default:
+			if !confirmShellCommand(line) {
+				continue
+			}
 			s.runAndCapture(line)
 		}
 	}

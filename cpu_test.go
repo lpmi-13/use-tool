@@ -195,7 +195,12 @@ func TestBaseCmdStripsSudoAndArgs(t *testing.T) {
 		{"dmesg", "dmesg"},
 		{"dmesg -T | tail", "dmesg"},
 		{"sudo dmesg", "dmesg"},
-		{"sudo", "sudo"}, // bare sudo with no following command
+		{"sudo -n dmesg", "dmesg"},
+		{"env LC_ALL=C dmesg", "dmesg"},
+		{"timeout 5s dmesg", "dmesg"},
+		{"nice -n 5 dmesg", "dmesg"},
+		{"/bin/dmesg", "dmesg"},
+		{"sudo", ""},
 		{"vim dmesg.txt", "vim"},
 		{"cat /etc/dmesg.conf", "cat"},
 	}
@@ -203,6 +208,21 @@ func TestBaseCmdStripsSudoAndArgs(t *testing.T) {
 		if got := baseCmd(tc.in); got != tc.want {
 			t.Errorf("baseCmd(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestCommandPathAndOptionMatchingUsesClassifiedCommand(t *testing.T) {
+	if !commandHasPath("sudo -n cat /proc/net/snmp /proc/net/netstat", "/proc/net/snmp") {
+		t.Fatal("expected wrapped cat command path to match")
+	}
+	if commandHasPath("vim /tmp/proc-net-snmp.txt", "/proc/net/snmp") {
+		t.Fatal("did not expect unrelated path to match")
+	}
+	if !commandHasOption("timeout 5s ss -s", "-s") {
+		t.Fatal("expected wrapped ss option to match")
+	}
+	if !commandHasOption("env LC_ALL=C netstat --statistics", "--statistics") {
+		t.Fatal("expected wrapped netstat long option to match")
 	}
 }
 

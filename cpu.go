@@ -1130,7 +1130,7 @@ var cpuCommands = []CommandRef{
 		Cmd:          "cat /proc/pressure/cpu",
 		Section:      "Saturation",
 		Summary:      "PSI: time-share of tasks stalled on CPU.\nLinux 4.20+ with PSI enabled (kernel.org/PSI).",
-		Requires:     []string{"psi"},
+		Requires:     []string{"psi-cpu"},
 		DiagnoseRank: 2,
 	},
 	{

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSuggestCommand(t *testing.T) {
@@ -41,10 +42,23 @@ func TestCommandStatusMarksUnavailableRequirements(t *testing.T) {
 func TestCommandStatusEmptyWhenRequirementsAvailable(t *testing.T) {
 	ref := CommandRef{
 		Cmd:      "mpstat -P ALL 1 N",
-		Requires: []string{"mpstat", "psi"},
+		Requires: []string{"mpstat", "psi-cpu"},
 	}
 	si := SystemInfo{HasMpstat: true, HasPSI: true}
 	if got := commandStatus(ref, si); got != "" {
+		t.Fatalf("commandStatus() = %q, want empty status", got)
+	}
+}
+
+func TestCommandStatusDistinguishesPSIResources(t *testing.T) {
+	ref := CommandRef{
+		Cmd:      "cat /proc/pressure/memory",
+		Requires: []string{"psi-memory"},
+	}
+	if got := commandStatus(ref, SystemInfo{HasPSI: true}); got == "" {
+		t.Fatal("memory PSI should not be available just because CPU PSI is available")
+	}
+	if got := commandStatus(ref, SystemInfo{HasMemoryPSI: true}); got != "" {
 		t.Fatalf("commandStatus() = %q, want empty status", got)
 	}
 }
@@ -181,6 +195,114 @@ func TestReadRawLineIgnoresOtherControlBytes(t *testing.T) {
 	}
 	if got := out.String(); strings.Contains(got, "\x01") {
 		t.Fatalf("control byte leaked into output: %q", got)
+	}
+}
+
+func TestReadRawLineConsumesEscapeSequences(t *testing.T) {
+	reader := bufio.NewReader(strings.NewReader("\x1b[Aecho\x1b]0;title\x07 ok\n"))
+	var out bytes.Buffer
+
+	line, status := readRawLine("[practice] $ ", &out, reader.ReadByte)
+	if status != lineReadOK || line != "echo ok" {
+		t.Fatalf("readRawLine() = %q, %v; want echo ok, lineReadOK", line, status)
+	}
+	if got := out.String(); strings.Contains(got, "[A") || strings.Contains(got, "title") {
+		t.Fatalf("escape sequence leaked into echoed input: %q", got)
+	}
+}
+
+func TestSanitizeTerminalBytesStripsEscapesAndControls(t *testing.T) {
+	got := string(sanitizeTerminalBytes([]byte("ok\x1b[2J\x1b]0;title\x07\tstill\x07\n")))
+	want := "ok\tstill\n"
+	if got != want {
+		t.Fatalf("sanitizeTerminalBytes() = %q, want %q", got, want)
+	}
+}
+
+func TestSanitizingWriterHandlesSplitEscapes(t *testing.T) {
+	var out bytes.Buffer
+	w := newSanitizingWriter(&out)
+	if _, err := w.Write([]byte("ok\x1b[")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("2Jdone\n")); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out.String(), "okdone\n"; got != want {
+		t.Fatalf("sanitized output = %q, want %q", got, want)
+	}
+}
+
+func TestCommandTimeoutDuration(t *testing.T) {
+	t.Setenv("USE_TOOL_COMMAND_TIMEOUT", "")
+	if got := commandTimeoutDuration(); got != defaultCommandTimeout {
+		t.Fatalf("default timeout = %s, want %s", got, defaultCommandTimeout)
+	}
+
+	t.Setenv("USE_TOOL_COMMAND_TIMEOUT", "30s")
+	if got := commandTimeoutDuration(); got != 30*time.Second {
+		t.Fatalf("configured timeout = %s, want 30s", got)
+	}
+
+	t.Setenv("USE_TOOL_COMMAND_TIMEOUT", "0")
+	if got := commandTimeoutDuration(); got != 0 {
+		t.Fatalf("disabled timeout = %s, want 0", got)
+	}
+
+	t.Setenv("USE_TOOL_COMMAND_TIMEOUT", "-1s")
+	if got := commandTimeoutDuration(); got != defaultCommandTimeout {
+		t.Fatalf("invalid timeout = %s, want %s", got, defaultCommandTimeout)
+	}
+}
+
+func TestDangerousCommandReason(t *testing.T) {
+	cases := []struct {
+		cmd  string
+		want bool
+	}{
+		{"rm -rf /tmp/use-tool-test", true},
+		{"sudo -n rm -rf /etc", true},
+		{"dd if=/dev/zero of=/dev/sda bs=1M", true},
+		{"mkfs.ext4 /dev/sdb1", true},
+		{"systemctl reboot", true},
+		{"echo ok; rm -rf /tmp/use-tool-test", true},
+		{"printf ok | sudo -n rm -rf /etc", true},
+		{"echo 'rm -rf /'", false},
+		{"rm build.log", false},
+		{"cat /proc/meminfo", false},
+	}
+	for _, tc := range cases {
+		_, got := dangerousCommandReason(tc.cmd)
+		if got != tc.want {
+			t.Fatalf("dangerousCommandReason(%q) ok = %v, want %v", tc.cmd, got, tc.want)
+		}
+	}
+}
+
+func TestAppendCapturedWarnsBeforeHistoryCap(t *testing.T) {
+	s := &Session{}
+	for i := 0; i < maxCapturedItems-maxCapturedWarningRemaining-1; i++ {
+		s.Captured = append(s.Captured, CapturedCommand{Cmd: "echo old"})
+	}
+
+	stderr := captureStderr(func() {
+		s.appendCaptured(CapturedCommand{Cmd: "echo new"})
+	})
+	if !strings.Contains(stderr, "report evidence warning") {
+		t.Fatalf("expected report evidence warning, got %q", stderr)
+	}
+	if !strings.Contains(stderr, "report findings are derived from this history") {
+		t.Fatalf("expected report findings context, got %q", stderr)
+	}
+	if len(s.Captured) != maxCapturedItems-maxCapturedWarningRemaining {
+		t.Fatalf("captured count = %d, want %d", len(s.Captured), maxCapturedItems-maxCapturedWarningRemaining)
+	}
+
+	stderr = captureStderr(func() {
+		s.appendCaptured(CapturedCommand{Cmd: "echo another"})
+	})
+	if strings.Contains(stderr, "report evidence warning") {
+		t.Fatalf("report evidence warning repeated: %q", stderr)
 	}
 }
 
@@ -423,7 +545,7 @@ func TestWideColumnGuideStepsAskThreeHeaderQuestions(t *testing.T) {
 		},
 		{
 			name: "memory PSI",
-			step: mustFindGuideStep(t, memorySteps(SystemInfo{HasPSI: true}), "pressure"),
+			step: mustFindGuideStep(t, memorySteps(SystemInfo{HasMemoryPSI: true}), "pressure"),
 			captured: CapturedCommand{
 				Cmd:    "cat /proc/pressure/memory",
 				Output: samplePSIMemory,
@@ -466,7 +588,7 @@ func TestWideColumnGuideStepsAskThreeHeaderQuestions(t *testing.T) {
 		},
 		{
 			name: "disk PSI",
-			step: mustFindGuideStep(t, diskSteps(SystemInfo{HasPSI: true}), "pressure"),
+			step: mustFindGuideStep(t, diskSteps(SystemInfo{HasIOPSI: true}), "pressure"),
 			captured: CapturedCommand{
 				Cmd:    "cat /proc/pressure/io",
 				Output: samplePSIIO,
@@ -803,8 +925,8 @@ func TestErrorGuideStepsHaveEmptyOutputMessages(t *testing.T) {
 		steps    []GuideStep
 	}{
 		{"cpu", cpuSteps(SystemInfo{})},
-		{"memory", memorySteps(SystemInfo{HasPSI: true})},
-		{"disk", diskSteps(SystemInfo{HasPSI: true})},
+		{"memory", memorySteps(SystemInfo{HasMemoryPSI: true})},
+		{"disk", diskSteps(SystemInfo{HasIOPSI: true})},
 		{"network", networkSteps(SystemInfo{})},
 	}
 	for _, tc := range cases {
@@ -829,7 +951,7 @@ func TestErrorGuideStepsOfferJournalctlAlternativeOnlyWhenAvailable(t *testing.T
 		{"network", networkSteps},
 	}
 	for _, tc := range cases {
-		withJournal, ok := findGuideStep(tc.stepsFn(SystemInfo{HasPSI: true, HasJournalctl: true}), "errors")
+		withJournal, ok := findGuideStep(tc.stepsFn(SystemInfo{HasPSI: true, HasMemoryPSI: true, HasIOPSI: true, HasJournalctl: true}), "errors")
 		if !ok {
 			t.Fatalf("%s: expected errors step", tc.resource)
 		}
@@ -840,7 +962,7 @@ func TestErrorGuideStepsOfferJournalctlAlternativeOnlyWhenAvailable(t *testing.T
 			t.Fatalf("%s: intro should not unconditionally mention journalctl: %s", tc.resource, withJournal.Intro)
 		}
 
-		withoutJournal, ok := findGuideStep(tc.stepsFn(SystemInfo{HasPSI: true}), "errors")
+		withoutJournal, ok := findGuideStep(tc.stepsFn(SystemInfo{HasPSI: true, HasMemoryPSI: true, HasIOPSI: true}), "errors")
 		if !ok {
 			t.Fatalf("%s: expected errors step", tc.resource)
 		}
@@ -869,7 +991,7 @@ func TestGuideStepHeaderPrintsAlternativesCompactly(t *testing.T) {
 
 func TestDmesgRecommendationsDoNotDiscardPermissionErrors(t *testing.T) {
 	for _, inv := range investigations {
-		step, ok := findGuideStep(inv.StepsFn(SystemInfo{HasPSI: true}), "errors")
+		step, ok := findGuideStep(inv.StepsFn(SystemInfo{HasPSI: true, HasMemoryPSI: true, HasIOPSI: true}), "errors")
 		if ok && strings.Contains(step.Suggested, "dmesg") && strings.Contains(step.Suggested, "2>/dev/null") {
 			t.Fatalf("%s guide suggests dmesg command that discards stderr: %s", inv.Name, step.Suggested)
 		}

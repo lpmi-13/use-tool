@@ -23,7 +23,8 @@ Three modes plus a reference cheatsheet:
   verdicts against the signals you captured, `commands` for the cheatsheet,
   `help`, or `exit` to quit. At the pseudo-shell prompt, Control-C clears a
   partially typed line, Control-C on an empty line exits the activity, and
-  Control-L clears the screen and redraws the current input.
+  Control-L clears the screen and redraws the current input. In `diagnose`
+  selectors, use arrows or `j`/`k` to move and `?` to expand the key help.
 - **`commands`** — a short-to-medium reference for the selected resource,
   grouped by Utilization / Saturation / Errors, with one or two lines on what
   each command shows and when to use it.

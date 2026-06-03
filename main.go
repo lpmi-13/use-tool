@@ -48,6 +48,7 @@ const (
 	keyClear
 	keyRedraw
 	keySeparator
+	keyHelp
 )
 
 type keyEvent struct {
@@ -856,6 +857,12 @@ func readTerminalKey() (keyEvent, error) {
 		return keyEvent{Key: keyRedraw}, nil
 	case b == ',':
 		return keyEvent{Key: keySeparator}, nil
+	case b == '?':
+		return keyEvent{Key: keyHelp}, nil
+	case b == 'k' || b == 'K':
+		return keyEvent{Key: keyUp}, nil
+	case b == 'j' || b == 'J':
+		return keyEvent{Key: keyDown}, nil
 	case b >= '1' && b <= '9':
 		return keyEvent{Key: keyDigit, Digit: int(b - '0')}, nil
 	case b == 0x1b:

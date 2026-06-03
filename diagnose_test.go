@@ -650,7 +650,7 @@ func TestReadTerminalKeyDistinguishesClearAndRedraw(t *testing.T) {
 	oldStdin := stdin
 	defer func() { stdin = oldStdin }()
 
-	stdin = bufio.NewReader(strings.NewReader("n\f"))
+	stdin = bufio.NewReader(strings.NewReader("n\f?kJ"))
 	key, err := readTerminalKey()
 	if err != nil {
 		t.Fatal(err)
@@ -666,12 +666,36 @@ func TestReadTerminalKeyDistinguishesClearAndRedraw(t *testing.T) {
 	if key.Key != keyRedraw {
 		t.Fatalf("second key = %v, want keyRedraw", key.Key)
 	}
+
+	key, err = readTerminalKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key.Key != keyHelp {
+		t.Fatalf("third key = %v, want keyHelp", key.Key)
+	}
+
+	key, err = readTerminalKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key.Key != keyUp {
+		t.Fatalf("fourth key = %v, want keyUp", key.Key)
+	}
+
+	key, err = readTerminalKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key.Key != keyDown {
+		t.Fatalf("fifth key = %v, want keyDown", key.Key)
+	}
 }
 
 func TestSelectorRenderersReportLineCounts(t *testing.T) {
 	claimLines := 0
 	captureStdout(func() {
-		claimLines = renderClaimSelector("Utilization", "extra context", claimOptions("Utilization"), 0)
+		claimLines = renderClaimSelector("Utilization", "extra context", claimOptions("Utilization"), 0, false)
 	})
 	if claimLines != 7 {
 		t.Fatalf("claim selector lines = %d, want 7", claimLines)
@@ -683,10 +707,37 @@ func TestSelectorRenderersReportLineCounts(t *testing.T) {
 		{Name: "mpstat_idle_mean", Title: "Mean %idle (mpstat)"},
 	}
 	captureStdout(func() {
-		evidenceLines = renderEvidenceSelector(candidates, Snapshot{}, 0, []bool{true, false})
+		evidenceLines = renderEvidenceSelector(candidates, Snapshot{}, 0, []bool{true, false}, false)
 	})
 	if evidenceLines != 4 {
 		t.Fatalf("evidence selector lines = %d, want 4", evidenceLines)
+	}
+}
+
+func TestSelectorRenderersCanExpandHelp(t *testing.T) {
+	claimLines := 0
+	claimOut := captureStdout(func() {
+		claimLines = renderClaimSelector("Errors", "", claimOptions("Errors"), 0, true)
+	})
+	if claimLines <= 1+len(claimOptions("Errors"))+1 {
+		t.Fatalf("expanded claim selector lines = %d, want more than compact help", claimLines)
+	}
+	if !strings.Contains(claimOut, "hide help") || !strings.Contains(claimOut, "move between verdicts") {
+		t.Fatalf("expanded claim help missing expected text:\n%s", claimOut)
+	}
+
+	candidates := []Observation{
+		{Name: "vmstat_r", Title: "vmstat r (run-queue)"},
+	}
+	evidenceLines := 0
+	evidenceOut := captureStdout(func() {
+		evidenceLines = renderEvidenceSelector(candidates, Snapshot{}, 0, []bool{false}, true)
+	})
+	if evidenceLines <= 1+len(candidates)+1 {
+		t.Fatalf("expanded evidence selector lines = %d, want more than compact help", evidenceLines)
+	}
+	if !strings.Contains(evidenceOut, "submit selected signals") || !strings.Contains(evidenceOut, "hide help") {
+		t.Fatalf("expanded evidence help missing expected text:\n%s", evidenceOut)
 	}
 }
 

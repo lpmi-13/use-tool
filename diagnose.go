@@ -459,8 +459,9 @@ func chooseClaimWithKeys(label, note string, opts []string) (selected int, quit 
 	defer restore()
 
 	selected = 0
+	showHelp := false
 	fmt.Println()
-	renderedLines := renderClaimSelector(label, note, opts, selected)
+	renderedLines := renderClaimSelector(label, note, opts, selected, showHelp)
 	for {
 		key, err := readTerminalKey()
 		if err != nil {
@@ -471,18 +472,22 @@ func chooseClaimWithKeys(label, note string, opts []string) (selected int, quit 
 		case keyUp, keyDown:
 			selected = moveSelection(selected, len(opts), key.Key)
 			clearRenderedBlock(renderedLines)
-			renderedLines = renderClaimSelector(label, note, opts, selected)
+			renderedLines = renderClaimSelector(label, note, opts, selected, showHelp)
 		case keyDigit:
 			if key.Digit >= 1 && key.Digit <= len(opts) {
 				selected = key.Digit - 1
 				clearRenderedBlock(renderedLines)
-				renderedLines = renderClaimSelector(label, note, opts, selected)
+				renderedLines = renderClaimSelector(label, note, opts, selected, showHelp)
 				continue
 			}
 			fmt.Print("\a")
+		case keyHelp:
+			showHelp = !showHelp
+			clearRenderedBlock(renderedLines)
+			renderedLines = renderClaimSelector(label, note, opts, selected, showHelp)
 		case keyRedraw:
 			renderedLines = redrawFullScreen(func() int {
-				return renderClaimSelector(label, note, opts, selected)
+				return renderClaimSelector(label, note, opts, selected, showHelp)
 			})
 		case keyEnter:
 			fmt.Println()
@@ -506,8 +511,9 @@ func chooseEvidenceWithKeys(candidates []Observation, snap Snapshot) (idxs []int
 	selected := 0
 	checked := make([]bool, len(candidates))
 	typedListMode := false
+	showHelp := false
 	fmt.Println()
-	renderedLines := renderEvidenceSelector(candidates, snap, selected, checked)
+	renderedLines := renderEvidenceSelector(candidates, snap, selected, checked, showHelp)
 	for {
 		key, err := readTerminalKey()
 		if err != nil {
@@ -519,21 +525,21 @@ func chooseEvidenceWithKeys(candidates []Observation, snap Snapshot) (idxs []int
 			typedListMode = false
 			selected = moveSelection(selected, len(candidates), key.Key)
 			clearRenderedBlock(renderedLines)
-			renderedLines = renderEvidenceSelector(candidates, snap, selected, checked)
+			renderedLines = renderEvidenceSelector(candidates, snap, selected, checked, showHelp)
 		case keySpace:
 			if typedListMode {
 				continue
 			}
 			checked[selected] = !checked[selected]
 			clearRenderedBlock(renderedLines)
-			renderedLines = renderEvidenceSelector(candidates, snap, selected, checked)
+			renderedLines = renderEvidenceSelector(candidates, snap, selected, checked, showHelp)
 		case keyDigit:
 			if key.Digit >= 1 && key.Digit <= len(candidates) {
 				typedListMode = true
 				checked[key.Digit-1] = !checked[key.Digit-1]
 				selected = key.Digit - 1
 				clearRenderedBlock(renderedLines)
-				renderedLines = renderEvidenceSelector(candidates, snap, selected, checked)
+				renderedLines = renderEvidenceSelector(candidates, snap, selected, checked, showHelp)
 				continue
 			}
 			fmt.Print("\a")
@@ -543,11 +549,16 @@ func chooseEvidenceWithKeys(candidates []Observation, snap Snapshot) (idxs []int
 				checked[i] = false
 			}
 			clearRenderedBlock(renderedLines)
-			renderedLines = renderEvidenceSelector(candidates, snap, selected, checked)
+			renderedLines = renderEvidenceSelector(candidates, snap, selected, checked, showHelp)
+		case keyHelp:
+			typedListMode = false
+			showHelp = !showHelp
+			clearRenderedBlock(renderedLines)
+			renderedLines = renderEvidenceSelector(candidates, snap, selected, checked, showHelp)
 		case keyRedraw:
 			typedListMode = false
 			renderedLines = redrawFullScreen(func() int {
-				return renderEvidenceSelector(candidates, snap, selected, checked)
+				return renderEvidenceSelector(candidates, snap, selected, checked, showHelp)
 			})
 		case keySeparator:
 			typedListMode = true
@@ -597,8 +608,8 @@ func moveSelection(selected, count int, key terminalKey) int {
 	}
 }
 
-func renderClaimSelector(label, note string, opts []string, selected int) int {
-	lines := 1 + len(opts) + 1
+func renderClaimSelector(label, note string, opts []string, selected int, showHelp bool) int {
+	lines := 1 + len(opts)
 	fmt.Printf("%s — your verdict?\n", label)
 	if note != "" {
 		lines++
@@ -611,13 +622,11 @@ func renderClaimSelector(label, note string, opts []string, selected int) int {
 		}
 		fmt.Printf("%s %d. %s\n", cursor, i+1, o)
 	}
-	fmt.Print("Use ↑/↓, number to move, Enter to choose, q to quit.")
-	return lines
+	return lines + printSelectorHelp(claimSelectorHelp(len(opts), showHelp))
 }
 
-func renderEvidenceSelector(candidates []Observation, snap Snapshot, selected int, checked []bool) int {
+func renderEvidenceSelector(candidates []Observation, snap Snapshot, selected int, checked []bool, showHelp bool) int {
 	fmt.Println("Evidence — choose supporting signals")
-	fmt.Println("Space toggles, number toggles, n clears, Enter submits, q quits. Submit with none selected for `none`.")
 	for i, obs := range candidates {
 		cursor := " "
 		if i == selected {
@@ -628,13 +637,49 @@ func renderEvidenceSelector(candidates []Observation, snap Snapshot, selected in
 			box = "x"
 		}
 		line := fmt.Sprintf("%s [%s] [%d] %s = %s", cursor, box, i+1, obs.Title, formatValue(snap.Values[obs.Name]))
-		if i == len(candidates)-1 {
-			fmt.Print(line)
-		} else {
-			fmt.Println(line)
-		}
+		fmt.Println(line)
 	}
-	return 2 + len(candidates)
+	return 1 + len(candidates) + printSelectorHelp(evidenceSelectorHelp(len(candidates), showHelp))
+}
+
+func claimSelectorHelp(optionCount int, showHelp bool) []string {
+	if !showHelp {
+		return []string{fmt.Sprintf("↑/k ↓/j move | 1-%d jump | Enter choose | q quit | ? help", optionCount)}
+	}
+	return []string{
+		"Keys:",
+		"  ↑/k, ↓/j  move between verdicts",
+		fmt.Sprintf("  1-%d       jump to a verdict", optionCount),
+		"  Enter     choose the highlighted verdict",
+		"  q         quit diagnose",
+		"  ?         hide help",
+	}
+}
+
+func evidenceSelectorHelp(candidateCount int, showHelp bool) []string {
+	if !showHelp {
+		return []string{fmt.Sprintf("↑/k ↓/j move | Space/1-%d toggle | n clear | Enter submit | q quit | ? help", candidateCount)}
+	}
+	return []string{
+		"Keys:",
+		"  ↑/k, ↓/j  move between signals",
+		fmt.Sprintf("  Space     toggle highlighted signal; 1-%d toggles by number", candidateCount),
+		"  n         clear all selected signals",
+		"  Enter     submit selected signals; submit none selected for `none`",
+		"  q         quit diagnose",
+		"  ?         hide help",
+	}
+}
+
+func printSelectorHelp(lines []string) int {
+	for i, line := range lines {
+		if i == len(lines)-1 {
+			fmt.Print(line)
+			continue
+		}
+		fmt.Println(line)
+	}
+	return len(lines)
 }
 
 // parseIndexList parses "1, 3,4" into a sorted, de-duplicated []int, validating

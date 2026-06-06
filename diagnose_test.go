@@ -24,6 +24,8 @@ func TestCPUVerdicts(t *testing.T) {
 		{"idle low = busy", verdictIdleMean(si, Value{Number: 10}, Snapshot{}), SignalHigh},
 		{"idle mid", verdictIdleMean(si, Value{Number: 50}, Snapshot{}), SignalModerate},
 		{"idle high = quiet", verdictIdleMean(si, Value{Number: 95}, Snapshot{}), SignalLow},
+		{"per-cpu idle range has hot CPU", verdictIdleRange(si, Value{Samples: []float64{0, 95}}, Snapshot{}), SignalHigh},
+		{"per-cpu idle range all quiet", verdictIdleRange(si, Value{Samples: []float64{85, 95}}, Snapshot{}), SignalLow},
 		{"runq over NumCPU", verdictRunQueue(si, Value{Samples: []float64{1, 2, 7}}, Snapshot{}), SignalHigh},
 		{"runq under NumCPU", verdictRunQueue(si, Value{Samples: []float64{0, 1, 2}}, Snapshot{}), SignalLow},
 		{"steal present", verdictSteal(si, Value{Samples: []float64{0, 3}}, Snapshot{}), SignalHigh},
@@ -472,6 +474,37 @@ func TestPrintDiagnoseFeedbackUsesReadableBlocks(t *testing.T) {
 	for _, line := range strings.Split(out, "\n") {
 		if len(line) > 100 {
 			t.Fatalf("feedback line too long (%d): %q\nfull output:\n%s", len(line), line, out)
+		}
+	}
+}
+
+func TestCPUUtilizationFeedbackExplainsAggregateLoadVsPerCPU(t *testing.T) {
+	si := SystemInfo{NumCPU: 4}
+	snap := snapWith(map[string]Value{
+		"loadavg_1min":      {Number: 1.42, Note: "NumCPU=4, ratio 0.35"},
+		"mpstat_idle_range": {Text: "0.0 - 96.0%", Samples: []float64{0, 96}, Note: "spread 96.0"},
+		"vmstat_r":          {Samples: []float64{1, 1}},
+	})
+	g := gradeDimension(si, snap, cpuObservations, "Utilization", "high", []string{
+		"loadavg_1min",
+		"mpstat_idle_range",
+		"vmstat_r",
+	})
+	out := captureStdout(func() {
+		printDiagnoseFeedback([]dimensionGrade{g}, false)
+	})
+
+	for _, want := range []string{
+		"✗ 1-min load average",
+		"Observed: 1.42 (NumCPU=4, ratio 0.35)",
+		"below NumCPU is not evidence of high overall utilization",
+		"✓ Per-CPU %idle range",
+		"Observed: 0.0 - 96.0% (spread 96.0)",
+		"one CPU is highly utilized",
+		"Wrong USE dimension: this is not a utilization signal.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("feedback missing %q in:\n%s", want, out)
 		}
 	}
 }

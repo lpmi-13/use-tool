@@ -723,7 +723,7 @@ var cpuObservations = []Observation{
 		Section:   "Utilization",
 		Extract:   extractLoadavgN(0),
 		Verdict:   verdictLoad1min,
-		Heuristic: "load average ÷ NumCPU near 1 = fully committed; above 1 = more runnable demand than CPUs",
+		Heuristic: "load average is aggregate runnable demand: near NumCPU means the CPU pool is fully committed; below NumCPU is not evidence of high overall utilization, though one logical CPU can still be hot",
 	},
 	{
 		Name:    "loadavg_5min",
@@ -739,17 +739,19 @@ var cpuObservations = []Observation{
 	},
 	{
 		Name:      "mpstat_idle_mean",
-		Title:     "Mean %idle (mpstat)",
+		Title:     "Mean per-CPU %idle (mpstat)",
 		Section:   "Utilization",
 		Extract:   extractMpstatIdleMean,
 		Verdict:   verdictIdleMean,
-		Heuristic: "utilization ≈ 100 − %idle: low idle = high utilization",
+		Heuristic: "mpstat -P ALL reports each logical CPU; low mean %idle across those samples means high utilization across the sampled CPUs",
 	},
 	{
-		Name:    "mpstat_idle_range",
-		Title:   "Per-CPU %idle range",
-		Section: "Utilization",
-		Extract: extractMpstatIdleRange,
+		Name:      "mpstat_idle_range",
+		Title:     "Per-CPU %idle range",
+		Section:   "Utilization",
+		Extract:   extractMpstatIdleRange,
+		Verdict:   verdictIdleRange,
+		Heuristic: "mpstat -P ALL separates logical CPUs; a low minimum %idle means at least one CPU is highly utilized even if load average is below NumCPU",
 	},
 	{
 		Name:      "vmstat_r",
@@ -820,6 +822,21 @@ func verdictIdleMean(_ SystemInfo, v Value, _ Snapshot) Signal {
 	case v.Number < 20:
 		return SignalHigh
 	case v.Number < 70:
+		return SignalModerate
+	default:
+		return SignalLow
+	}
+}
+
+func verdictIdleRange(_ SystemInfo, v Value, _ Snapshot) Signal {
+	min := v.Min()
+	if math.IsNaN(min) {
+		return SignalNone
+	}
+	switch {
+	case min < 20:
+		return SignalHigh
+	case min < 70:
 		return SignalModerate
 	default:
 		return SignalLow

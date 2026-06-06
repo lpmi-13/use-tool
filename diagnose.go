@@ -94,6 +94,8 @@ type citedEvidence struct {
 	Verdict   citationVerdict
 	Reads     Signal
 	Heuristic string
+	Value     Value
+	HasValue  bool
 }
 
 type dimensionGrade struct {
@@ -167,7 +169,7 @@ func gradeDimension(si SystemInfo, snap Snapshot, dimObs []Observation, dim, cla
 		if !ok {
 			continue
 		}
-		v := snap.Values[obs.Name]
+		v, hasValue := snap.Values[obs.Name]
 		cv := classifyCitation(si, snap, dim, claim, obs, v)
 		var reads Signal
 		if obs.Verdict != nil {
@@ -175,6 +177,7 @@ func gradeDimension(si SystemInfo, snap Snapshot, dimObs []Observation, dim, cla
 		}
 		g.Cited = append(g.Cited, citedEvidence{
 			Name: obs.Name, Title: obs.Title, Verdict: cv, Reads: reads, Heuristic: obs.Heuristic,
+			Value: v, HasValue: hasValue,
 		})
 		switch cv {
 		case citeSupports:
@@ -198,7 +201,7 @@ func gradeDimension(si SystemInfo, snap Snapshot, dimObs []Observation, dim, cla
 			}
 			g.Uncited = append(g.Uncited, citedEvidence{
 				Name: obs.Name, Title: obs.Title, Verdict: classifyCitation(si, snap, dim, claim, obs, v),
-				Reads: reads, Heuristic: obs.Heuristic,
+				Reads: reads, Heuristic: obs.Heuristic, Value: v, HasValue: true,
 			})
 		}
 	}
@@ -746,17 +749,21 @@ func printDiagnoseFeedback(grades []dimensionGrade, multiResource bool) {
 			case citeSupports:
 				fmt.Printf("    ✓ %s\n", c.Title)
 				printWrappedFeedback("      ", "Supports this verdict.")
+				printEvidenceValue(c)
 				printEvidenceHeuristic(c.Heuristic)
 			case citeContradicts:
 				fmt.Printf("    ✗ %s\n", c.Title)
 				printWrappedFeedback("      ", fmt.Sprintf("Reads %q, which points the other way.", labelForSignal(g.Dimension, c.Reads)))
+				printEvidenceValue(c)
 				printEvidenceHeuristic(c.Heuristic)
 			case citeWrongDimension:
 				fmt.Printf("    ✗ %s\n", c.Title)
 				printWrappedFeedback("      ", fmt.Sprintf("Wrong USE dimension: this is not a %s signal.", strings.ToLower(g.Dimension)))
+				printEvidenceValue(c)
 			case citeNoSignal:
 				fmt.Printf("    – %s\n", c.Title)
 				printWrappedFeedback("      ", "Carries no diagnostic reading.")
+				printEvidenceValue(c)
 				if c.Heuristic != "" {
 					printEvidenceHeuristic(c.Heuristic)
 				}
@@ -911,6 +918,13 @@ func firstSummaryLine(summary string) string {
 		}
 	}
 	return ""
+}
+
+func printEvidenceValue(c citedEvidence) {
+	if !c.HasValue {
+		return
+	}
+	printWrappedFeedback("      ", "Observed: "+formatValue(c.Value))
 }
 
 func printEvidenceHeuristic(heuristic string) {

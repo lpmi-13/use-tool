@@ -747,6 +747,46 @@ func TestSelectorRenderersReportLineCounts(t *testing.T) {
 	}
 }
 
+func TestSelectorRenderersCountWrappedRows(t *testing.T) {
+	oldWidth := selectorTerminalWidth
+	selectorTerminalWidth = func() int { return 30 }
+	defer func() { selectorTerminalWidth = oldWidth }()
+
+	candidates := []Observation{
+		{Name: "long_signal", Title: "Very long evidence title"},
+	}
+	snap := Snapshot{Values: map[string]Value{
+		"long_signal": {Text: strings.Repeat("x", 70)},
+	}}
+	lines := 0
+	captureStdout(func() {
+		lines = renderEvidenceSelector(candidates, snap, 0, []bool{false}, false)
+	})
+
+	logicalLines := 1 + len(candidates) + len(evidenceSelectorHelp(len(candidates), false))
+	if lines <= logicalLines {
+		t.Fatalf("wrapped evidence selector rows = %d, want more than logical line count %d", lines, logicalLines)
+	}
+}
+
+func TestVisualLineRows(t *testing.T) {
+	cases := []struct {
+		line  string
+		width int
+		want  int
+	}{
+		{"", 10, 1},
+		{"1234567890", 10, 1},
+		{"12345678901", 10, 2},
+		{"123\t", 4, 2},
+	}
+	for _, tc := range cases {
+		if got := visualLineRows(tc.line, tc.width); got != tc.want {
+			t.Fatalf("visualLineRows(%q, %d) = %d, want %d", tc.line, tc.width, got, tc.want)
+		}
+	}
+}
+
 func TestSelectorRenderersCanExpandHelp(t *testing.T) {
 	claimLines := 0
 	claimOut := captureStdout(func() {

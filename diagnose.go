@@ -2,9 +2,12 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
+	"unsafe"
 )
 
 // diagnose is the practice-mode assessment of the USE method itself: the
@@ -16,6 +19,8 @@ import (
 
 // useDimensions is the order USE dimensions are assessed in.
 var useDimensions = []string{"Utilization", "Saturation", "Errors"}
+
+var selectorTerminalWidth = detectTerminalWidth
 
 // claimOptions are the verdicts a learner may state per dimension. The empty
 // string is the internal value for "not enough data".
@@ -612,24 +617,24 @@ func moveSelection(selected, count int, key terminalKey) int {
 }
 
 func renderClaimSelector(label, note string, opts []string, selected int, showHelp bool) int {
-	lines := 1 + len(opts)
-	fmt.Printf("%s — your verdict?\n", label)
+	width := selectorTerminalWidth()
+	lines := printSelectorLine(fmt.Sprintf("%s — your verdict?", label), width, true)
 	if note != "" {
-		lines++
-		fmt.Printf("  Note: %s\n", note)
+		lines += printSelectorLine("  Note: "+note, width, true)
 	}
 	for i, o := range opts {
 		cursor := " "
 		if i == selected {
 			cursor = ">"
 		}
-		fmt.Printf("%s %d. %s\n", cursor, i+1, o)
+		lines += printSelectorLine(fmt.Sprintf("%s %d. %s", cursor, i+1, o), width, true)
 	}
-	return lines + printSelectorHelp(claimSelectorHelp(len(opts), showHelp))
+	return lines + printSelectorHelp(claimSelectorHelp(len(opts), showHelp), width)
 }
 
 func renderEvidenceSelector(candidates []Observation, snap Snapshot, selected int, checked []bool, showHelp bool) int {
-	fmt.Println("Evidence — choose supporting signals")
+	width := selectorTerminalWidth()
+	lines := printSelectorLine("Evidence — choose supporting signals", width, true)
 	for i, obs := range candidates {
 		cursor := " "
 		if i == selected {
@@ -640,9 +645,9 @@ func renderEvidenceSelector(candidates []Observation, snap Snapshot, selected in
 			box = "x"
 		}
 		line := fmt.Sprintf("%s [%s] [%d] %s = %s", cursor, box, i+1, obs.Title, formatValue(snap.Values[obs.Name]))
-		fmt.Println(line)
+		lines += printSelectorLine(line, width, true)
 	}
-	return 1 + len(candidates) + printSelectorHelp(evidenceSelectorHelp(len(candidates), showHelp))
+	return lines + printSelectorHelp(evidenceSelectorHelp(len(candidates), showHelp), width)
 }
 
 func claimSelectorHelp(optionCount int, showHelp bool) []string {
@@ -674,15 +679,67 @@ func evidenceSelectorHelp(candidateCount int, showHelp bool) []string {
 	}
 }
 
-func printSelectorHelp(lines []string) int {
+func printSelectorHelp(lines []string, width int) int {
+	rows := 0
 	for i, line := range lines {
-		if i == len(lines)-1 {
-			fmt.Print(line)
+		rows += printSelectorLine(line, width, i != len(lines)-1)
+	}
+	return rows
+}
+
+func printSelectorLine(line string, width int, newline bool) int {
+	if newline {
+		fmt.Println(line)
+	} else {
+		fmt.Print(line)
+	}
+	return visualLineRows(line, width)
+}
+
+func visualLineRows(line string, width int) int {
+	if width <= 0 {
+		width = 80
+	}
+	cols := displayColumns(line)
+	if cols == 0 {
+		return 1
+	}
+	return (cols + width - 1) / width
+}
+
+func displayColumns(s string) int {
+	cols := 0
+	for _, r := range s {
+		if r == '\t' {
+			cols += 4
 			continue
 		}
-		fmt.Println(line)
+		if r < 0x20 || r == 0x7f {
+			continue
+		}
+		cols++
 	}
-	return len(lines)
+	return cols
+}
+
+func detectTerminalWidth() int {
+	type winsize struct {
+		row    uint16
+		col    uint16
+		xpixel uint16
+		ypixel uint16
+	}
+	var ws winsize
+	_, _, errno := syscall.Syscall(
+		syscall.SYS_IOCTL,
+		os.Stdout.Fd(),
+		uintptr(syscall.TIOCGWINSZ),
+		uintptr(unsafe.Pointer(&ws)),
+	)
+	if errno != 0 || ws.col == 0 {
+		return 80
+	}
+	return int(ws.col)
 }
 
 // parseIndexList parses "1, 3,4" into a sorted, de-duplicated []int, validating

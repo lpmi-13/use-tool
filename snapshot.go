@@ -89,10 +89,11 @@ type Observation struct {
 }
 
 type Snapshot struct {
-	Sections    []SnapshotSection
-	NotCaptured []Observation
-	Sources     []string
-	Values      map[string]Value
+	Sections      []SnapshotSection
+	NotCaptured   []Observation
+	Sources       []string
+	Values        map[string]Value
+	CapturedCount int
 }
 
 type SnapshotSection struct {
@@ -124,23 +125,75 @@ func (s *Session) Snapshot() Snapshot {
 			sections = append(sections, SnapshotSection{Title: name, Items: items})
 		}
 	}
+	srcs := relevantSources(s.Investigation, s.System, s.Captured)
+	return Snapshot{
+		Sections:      sections,
+		NotCaptured:   notCaptured,
+		Sources:       srcs,
+		Values:        values,
+		CapturedCount: len(s.Captured),
+	}
+}
+
+func relevantSources(inv *Investigation, si SystemInfo, caps []CapturedCommand) []string {
 	srcSet := map[string]struct{}{}
-	for _, c := range s.Captured {
-		srcSet[c.Cmd] = struct{}{}
+	for _, c := range caps {
+		if commandRelevantToInvestigation(inv, si, c) {
+			srcSet[c.Cmd] = struct{}{}
+		}
 	}
 	srcs := make([]string, 0, len(srcSet))
 	for c := range srcSet {
 		srcs = append(srcs, c)
 	}
 	sort.Strings(srcs)
-	return Snapshot{Sections: sections, NotCaptured: notCaptured, Sources: srcs, Values: values}
+	return srcs
+}
+
+func commandRelevantToInvestigation(inv *Investigation, si SystemInfo, c CapturedCommand) bool {
+	return commandMatchesInvestigationReference(inv, c) || commandContributesObservation(inv, si, c)
+}
+
+func commandMatchesInvestigationReference(inv *Investigation, c CapturedCommand) bool {
+	if inv == nil {
+		return false
+	}
+	key := commandFamilyKey(c.Cmd)
+	if key == "" {
+		return false
+	}
+	for _, ref := range inv.Commands {
+		if commandFamilyKey(ref.Cmd) == key {
+			return true
+		}
+	}
+	return false
+}
+
+func commandContributesObservation(inv *Investigation, si SystemInfo, c CapturedCommand) bool {
+	if inv == nil {
+		return false
+	}
+	for _, obs := range inv.Observations {
+		if obs.Extract == nil {
+			continue
+		}
+		if _, ok := obs.Extract(si, []CapturedCommand{c}); ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (s Snapshot) Print() {
 	fmt.Println()
 	fmt.Println(strings.Repeat("=", 60))
 	if len(s.Sources) == 0 {
-		fmt.Println("No commands captured yet.")
+		if s.CapturedCount == 0 {
+			fmt.Println("No commands captured yet.")
+		} else {
+			fmt.Println("No USE-relevant data captured yet.")
+		}
 		fmt.Println()
 		return
 	}

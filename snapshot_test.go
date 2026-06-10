@@ -77,6 +77,51 @@ func TestSnapshotSourcesDeduped(t *testing.T) {
 	}
 }
 
+func TestSnapshotSourcesExcludeCommandsUnrelatedToInvestigation(t *testing.T) {
+	caps := []CapturedCommand{
+		{
+			Cmd: "ifconfig",
+			Output: "eth0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500\n" +
+				"        inet 192.0.2.10  netmask 255.255.255.0\n",
+		},
+		{Cmd: "cat /proc/meminfo", Output: sampleMeminfo},
+	}
+	s := &Session{Investigation: memoryInvestigation, System: SystemInfo{}, Captured: caps}
+	snap := s.Snapshot()
+
+	if len(snap.Sources) != 1 || snap.Sources[0] != "cat /proc/meminfo" {
+		t.Fatalf("sources = %v, want only cat /proc/meminfo", snap.Sources)
+	}
+}
+
+func TestSnapshotSourcesIncludeCuratedCommandWithoutObservation(t *testing.T) {
+	caps := []CapturedCommand{{
+		Cmd:    "top -bcn1 w512",
+		Output: "PID USER PR NI VIRT RES SHR S %CPU %MEM TIME+ COMMAND\n123 root 20 0 1g 1m 1m R 99.0 0.1 0:01.00 worker\n",
+	}}
+	s := &Session{Investigation: cpuInvestigation, System: SystemInfo{}, Captured: caps}
+	snap := s.Snapshot()
+
+	if len(snap.Sources) != 1 || snap.Sources[0] != "top -bcn1 w512" {
+		t.Fatalf("sources = %v, want top command", snap.Sources)
+	}
+}
+
+func TestSnapshotPrintReportsNoUSERelevantData(t *testing.T) {
+	snap := Snapshot{CapturedCount: 1}
+
+	out := captureStdout(func() {
+		snap.Print()
+	})
+
+	if !strings.Contains(out, "No USE-relevant data captured yet.") {
+		t.Fatalf("expected no USE-relevant data message, got:\n%s", out)
+	}
+	if strings.Contains(out, "No commands captured yet.") {
+		t.Fatalf("irrelevant capture reported as no commands captured:\n%s", out)
+	}
+}
+
 func TestSnapshotPrintAlignsValueColumnToLongestTitle(t *testing.T) {
 	snap := Snapshot{
 		Sources: []string{"iostat -xz 1 3"},

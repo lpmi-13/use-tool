@@ -182,7 +182,7 @@ var meminfoQuestionPicks = []columnQuestionPick{
 	},
 	{
 		Column:  "MemFree",
-		Correct: "Completely unused RAM, not counting reclaimable page cache and buffers",
+		Correct: "Currently unused RAM, not counting reclaimable page cache and buffers",
 		Distractors: []string{
 			"Memory available for new allocations without swapping",
 			"Memory used by filesystem cache",
@@ -319,7 +319,7 @@ var freeQuestionPicks = []columnQuestionPick{
 	},
 	{
 		Column:  "used",
-		Correct: "Total minus free, buff/cache, and (when present) shared",
+		Correct: "Total memory minus free memory and buff/cache; this is not committed virtual memory",
 		Distractors: []string{
 			"Memory currently mapped into any process's virtual address space",
 			"Memory the kernel has decided cannot be reclaimed",
@@ -328,7 +328,7 @@ var freeQuestionPicks = []columnQuestionPick{
 	},
 	{
 		Column:  "free",
-		Correct: "Completely unused memory — not counting reclaimable buffers or page cache",
+		Correct: "Currently unused RAM from MemFree, not counting reclaimable buffers or page cache",
 		Distractors: []string{
 			"Memory the kernel estimates is available for new allocations without swapping",
 			"Memory that has never been touched by any process",

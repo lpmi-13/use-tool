@@ -491,6 +491,32 @@ func TestFreeColumnQuestionsCoversObservedColumns(t *testing.T) {
 	}
 }
 
+func TestFreeColumnQuestionDefinitionsMatchProcpsFree(t *testing.T) {
+	c := CapturedCommand{Cmd: "free -h", Output: sampleFreeH}
+	qs := freeColumnQuestions(SystemInfo{}, c)
+	used, ok := findQuestionByStemFragment(qs, "`used`")
+	if !ok {
+		t.Fatalf("expected used column question; got %v", stems(qs))
+	}
+	if used.Correct != "Total memory minus free memory and buff/cache; this is not committed virtual memory" {
+		t.Fatalf("unexpected used answer: %q", used.Correct)
+	}
+	if strings.Contains(strings.ToLower(used.Correct), "shared") {
+		t.Fatalf("used answer should not subtract shared memory: %q", used.Correct)
+	}
+
+	free, ok := findQuestionByStemFragment(qs, "the `free` column")
+	if !ok {
+		t.Fatalf("expected free column question; got %v", stems(qs))
+	}
+	if free.Correct != "Currently unused RAM from MemFree, not counting reclaimable buffers or page cache" {
+		t.Fatalf("unexpected free answer: %q", free.Correct)
+	}
+	if strings.Contains(free.Stem, "`free -h` column") {
+		t.Fatalf("free question should name the free column, not the command: %q", free.Stem)
+	}
+}
+
 func TestFreeColumnQuestionsRejectsUnrelatedOutput(t *testing.T) {
 	c := CapturedCommand{Cmd: "echo", Output: "hello world"}
 	if qs := freeColumnQuestions(SystemInfo{}, c); qs != nil {

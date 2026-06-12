@@ -51,6 +51,14 @@ TCP       178       128       50
 INET      187       136       51
 FRAG      0         0         0`
 
+const sampleSsTinClean = `State Recv-Q Send-Q Local Address:Port Peer Address:Port Process
+ESTAB 0      0      10.231.0.1:43000 10.231.0.2:5201
+     cubic wscale:7,7 rto:201 rtt:0.052/0.012 mss:1448 pmtu:1500 cwnd:10 bytes_sent:1000 bytes_acked:1000 segs_out:10 segs_in:8 send 2.23Mbps pacing_rate 4.46Mbps`
+
+const sampleSsTinBackedUp = `State Recv-Q Send-Q Local Address:Port Peer Address:Port Process
+ESTAB 0      131072 10.231.0.1:43000 10.231.0.2:5201
+     cubic wscale:7,7 rto:201 rtt:0.052/0.012 mss:1448 pmtu:1500 cwnd:10 retrans:0/3 bytes_sent:1000 bytes_acked:900 rwnd_limited:120ms(15.2%) sndbuf_limited:20ms(2.3%)`
+
 const sampleIpLink = `1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT
     link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
     RX:  bytes  packets  errors  dropped overrun mcast
@@ -125,6 +133,43 @@ func TestExtractSarRxPeak(t *testing.T) {
 	}
 }
 
+func TestExtractSarIfutilPeak(t *testing.T) {
+	caps := []CapturedCommand{{Cmd: "sar -n DEV 1 2", Output: sampleSarDev}}
+	v, ok := extractSarIfutilPeak(SystemInfo{}, caps)
+	if !ok {
+		t.Fatal("expected extraction to succeed")
+	}
+	if v.Number != 3.00 {
+		t.Errorf("got %v, want 3.00", v.Number)
+	}
+	if v.Unit != "%" {
+		t.Errorf("unit = %q, want %%", v.Unit)
+	}
+	if !strings.Contains(v.Note, "eth0") {
+		t.Errorf("expected note to name peak interface, got %q", v.Note)
+	}
+}
+
+func TestExtractSarIfutilPeakIncludesVeth(t *testing.T) {
+	output := `Linux 6.1.0 (host)  10/05/2024  _x86_64_  (4 CPU)
+
+14:00:01        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+14:00:02           lo      2.00      2.00      0.20      0.20      0.00      0.00      0.00      0.00
+14:00:02         eth0      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
+14:00:02   veth62046a12h      0.00   3666.50      0.00   5163.18      0.00      0.00      0.00      0.42`
+	caps := []CapturedCommand{{Cmd: "sar -n DEV 1 5", Output: output}}
+	v, ok := extractSarIfutilPeak(SystemInfo{}, caps)
+	if !ok {
+		t.Fatal("expected extraction to succeed")
+	}
+	if v.Number != 0.42 {
+		t.Errorf("got %v, want 0.42", v.Number)
+	}
+	if !strings.Contains(v.Note, "veth62046a12h") {
+		t.Errorf("expected note to name veth peak interface, got %q", v.Note)
+	}
+}
+
 func TestExtractSarRxPeakSkipsLoopback(t *testing.T) {
 	loopbackOnly := `Linux 6.1.0 (host)  10/05/2024  _x86_64_  (4 CPU)
 
@@ -192,6 +237,70 @@ func TestExtractTCPEstabFromSsSummary(t *testing.T) {
 	}
 	if v.Number != 142 {
 		t.Errorf("got %v, want 142", v.Number)
+	}
+}
+
+func TestSsInfoQuestions(t *testing.T) {
+	qs := ssInfoQuestions(SystemInfo{}, CapturedCommand{Cmd: "ss -tin", Output: sampleSsTinClean})
+	if len(qs) == 0 {
+		t.Fatal("expected ss -tin questions")
+	}
+}
+
+func TestParseSsTCPInfoClean(t *testing.T) {
+	stats := parseSsTCPInfo(sampleSsTinClean)
+	if !stats.Seen {
+		t.Fatal("expected ss tcp info to be detected")
+	}
+	if stats.MaxSendQ != 0 {
+		t.Errorf("MaxSendQ = %v, want 0", stats.MaxSendQ)
+	}
+	if stats.RetransSockets != 0 {
+		t.Errorf("RetransSockets = %v, want 0", stats.RetransSockets)
+	}
+	if stats.MaxLimitedPct != 0 {
+		t.Errorf("MaxLimitedPct = %v, want 0", stats.MaxLimitedPct)
+	}
+}
+
+func TestParseSsTCPInfoBackedUp(t *testing.T) {
+	stats := parseSsTCPInfo(sampleSsTinBackedUp)
+	if !stats.Seen {
+		t.Fatal("expected ss tcp info to be detected")
+	}
+	if stats.MaxSendQ != 131072 {
+		t.Errorf("MaxSendQ = %v, want 131072", stats.MaxSendQ)
+	}
+	if stats.RetransSockets != 1 {
+		t.Errorf("RetransSockets = %v, want 1", stats.RetransSockets)
+	}
+	if stats.MaxLimitedPct != 15.2 {
+		t.Errorf("MaxLimitedPct = %v, want 15.2", stats.MaxLimitedPct)
+	}
+}
+
+func TestExtractSsTCPSaturationSignals(t *testing.T) {
+	caps := []CapturedCommand{{Cmd: "sudo ss -tin", Output: sampleSsTinBackedUp}}
+	sendQ, ok := extractSsTCPMaxSendQ(SystemInfo{}, caps)
+	if !ok {
+		t.Fatal("expected Send-Q extraction")
+	}
+	if sendQ.Number != 131072 {
+		t.Errorf("Send-Q = %v, want 131072", sendQ.Number)
+	}
+	retrans, ok := extractSsTCPRetransSockets(SystemInfo{}, caps)
+	if !ok {
+		t.Fatal("expected retrans extraction")
+	}
+	if retrans.Number != 1 {
+		t.Errorf("retrans sockets = %v, want 1", retrans.Number)
+	}
+	limited, ok := extractSsTCPLimitedPct(SystemInfo{}, caps)
+	if !ok {
+		t.Fatal("expected limited-time extraction")
+	}
+	if limited.Number != 15.2 {
+		t.Errorf("limited pct = %v, want 15.2", limited.Number)
 	}
 }
 
@@ -361,7 +470,10 @@ func TestFilterNoiseInterfacesSarDev(t *testing.T) {
 	if !strings.Contains(got, "         eth0") {
 		t.Error("expected eth0 rows to be kept")
 	}
-	for _, drop := range []string{"           lo", "veth1a2b3c"} {
+	if !strings.Contains(got, "veth1a2b3c") {
+		t.Error("expected active veth rows to be kept")
+	}
+	for _, drop := range []string{"           lo"} {
 		if strings.Contains(got, drop) {
 			t.Errorf("expected %q rows to be dropped", strings.TrimSpace(drop))
 		}
@@ -380,22 +492,43 @@ func TestFilterNoiseInterfacesSarEdev(t *testing.T) {
 	if !strings.Contains(got, "         eth0") {
 		t.Error("expected eth0 rows to be kept")
 	}
-	for _, drop := range []string{"           lo", "veth1a2b3c"} {
+	if !strings.Contains(got, "veth1a2b3c") {
+		t.Error("expected active veth rows to be kept")
+	}
+	for _, drop := range []string{"           lo"} {
 		if strings.Contains(got, drop) {
 			t.Errorf("expected %q rows to be dropped", strings.TrimSpace(drop))
 		}
 	}
 }
 
-func TestFilterNoiseInterfacesSarKeepsAllWhenOnlyNoise(t *testing.T) {
+func TestFilterNoiseInterfacesSarDropsInactiveVirtualRows(t *testing.T) {
+	output := `Linux 6.1.0 (host)  10/05/2024  _x86_64_  (4 CPU)
+
+14:00:01        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+14:00:02         eth0      1.00      1.00      2.00      2.00      0.00      0.00      0.00      0.01
+14:00:02       vethidle    0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00`
+	got := filterNoiseInterfaces(CapturedCommand{Cmd: "sar -n DEV 1 2", Output: output})
+	if !strings.Contains(got, "eth0") {
+		t.Error("expected active eth0 row to be kept")
+	}
+	if strings.Contains(got, "vethidle") {
+		t.Error("expected inactive veth row to be dropped")
+	}
+}
+
+func TestFilterNoiseInterfacesSarKeepsActiveVethWhenOnlyVirtualTraffic(t *testing.T) {
 	onlyNoise := `Linux 6.1.0 (host)  10/05/2024  _x86_64_  (4 CPU)
 
 14:00:01        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s
 14:00:02           lo      0.00      0.00      0.00      0.00
 14:00:02       veth1a2b3c      9.00      8.00      7.00      6.00`
 	got := filterNoiseInterfaces(CapturedCommand{Cmd: "sar -n DEV 1 2", Output: onlyNoise})
-	if got != onlyNoise {
-		t.Errorf("expected original sar output when filtering would hide every interface, got:\n%s", got)
+	if !strings.Contains(got, "veth1a2b3c") {
+		t.Errorf("expected active veth row to be kept, got:\n%s", got)
+	}
+	if strings.Contains(got, "           lo") {
+		t.Errorf("expected loopback row to be dropped, got:\n%s", got)
 	}
 }
 
@@ -564,8 +697,24 @@ func TestNetworkInterfaceVariantsDispatch(t *testing.T) {
 
 func TestNetworkTCPVariantsDispatch(t *testing.T) {
 	combined := combineVariantQuestions(networkTCPVariants())
+	// `ss -tin` output → live TCP-info questions
+	qs := combined(SystemInfo{}, CapturedCommand{Cmd: "ss -tin", Output: sampleSsTinClean})
+	if len(qs) == 0 {
+		t.Fatal("expected questions for ss -tin via TCP variants")
+	}
+	gotSSInfo := false
+	for _, q := range qs {
+		if strings.Contains(q.Stem, "ss -tin") {
+			gotSSInfo = true
+			break
+		}
+	}
+	if !gotSSInfo {
+		t.Errorf("expected ss -tin-style question; got %v", stems(qs))
+	}
+
 	// netstat -s output → netstatSColumnQuestions
-	qs := combined(SystemInfo{}, CapturedCommand{Cmd: "netstat -s", Output: sampleNetstatS})
+	qs = combined(SystemInfo{}, CapturedCommand{Cmd: "netstat -s", Output: sampleNetstatS})
 	if len(qs) == 0 {
 		t.Fatal("expected questions for netstat -s via TCP variants")
 	}

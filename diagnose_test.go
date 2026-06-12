@@ -11,6 +11,23 @@ func snapWith(values map[string]Value) Snapshot {
 	return Snapshot{Values: values}
 }
 
+func findObservationByName(obs []Observation, name string) (Observation, bool) {
+	for _, o := range obs {
+		if o.Name == name {
+			return o, true
+		}
+	}
+	return Observation{}, false
+}
+
+func observationNames(obs []Observation) []string {
+	names := make([]string, len(obs))
+	for i, o := range obs {
+		names[i] = o.Name
+	}
+	return names
+}
+
 func TestCPUVerdicts(t *testing.T) {
 	si := SystemInfo{NumCPU: 4}
 	cases := []struct {
@@ -216,6 +233,11 @@ func TestNetworkVerdicts(t *testing.T) {
 		got  Signal
 		want Signal
 	}{
+		{"ifutil high", verdictNetIfutil(si, Value{Number: 90}, Snapshot{}), SignalHigh},
+		{"ifutil moderate", verdictNetIfutil(si, Value{Number: 60}, Snapshot{}), SignalModerate},
+		{"ifutil low", verdictNetIfutil(si, Value{Number: 0.42}, Snapshot{}), SignalLow},
+		{"positive high", verdictPositiveIsHigh(si, Value{Number: 1}, Snapshot{}), SignalHigh},
+		{"zero low", verdictPositiveIsHigh(si, Value{Number: 0}, Snapshot{}), SignalLow},
 		{"drops present", verdictNetDrops(si, Value{Number: 5}, Snapshot{}), SignalHigh},
 		{"drops absent", verdictNetDrops(si, Value{Number: 0}, Snapshot{}), SignalLow},
 		{"retrans high", verdictRetransRatio(si, Value{Number: 1.2}, Snapshot{}), SignalHigh},
@@ -265,6 +287,51 @@ func TestGradeDiskBusySaturation(t *testing.T) {
 	}
 	if !g.Accurate || g.assessment() != "well supported" {
 		t.Errorf("accurate=%v assessment=%q", g.Accurate, g.assessment())
+	}
+}
+
+func TestNetworkSsInfoIsDiagnoseCandidate(t *testing.T) {
+	snap := snapWith(map[string]Value{
+		"tcp_ss_retrans_sockets": {Number: 1, Unit: " sockets"},
+		"tcp_ss_sendq_max":       {Number: 131072, Unit: " B"},
+		"tcp_ss_limited_pct_max": {Number: 15.2, Unit: "%"},
+		"tcp_estab_connections":  {Number: 3},
+	})
+	byResource := candidatesByResource(networkInvestigation, snap)
+	cands := byResource[ResourceNetwork]
+	for _, name := range []string{"tcp_ss_retrans_sockets", "tcp_ss_sendq_max", "tcp_ss_limited_pct_max"} {
+		obs, ok := findObservationByName(cands, name)
+		if !ok {
+			t.Fatalf("expected %s candidate, got %v", name, observationNames(cands))
+		}
+		if obs.Section != "Saturation" || obs.Verdict == nil {
+			t.Fatalf("%s candidate not verdict-bearing saturation: %+v", name, obs)
+		}
+	}
+	if _, ok := findObservationByName(cands, "tcp_estab_connections"); ok {
+		t.Fatalf("connection count should remain context-only, got %v", observationNames(cands))
+	}
+}
+
+func TestNetworkIfutilIsDiagnoseCandidate(t *testing.T) {
+	snap := snapWith(map[string]Value{
+		"net_peak_ifutil_pct": {Number: 0.42, Unit: "%"},
+		"net_peak_tx_kbps":    {Number: 5163.18, Unit: " kB/s"},
+	})
+	byResource := candidatesByResource(networkInvestigation, snap)
+	cands := byResource[ResourceNetwork]
+	if len(cands) == 0 {
+		t.Fatal("expected network candidates")
+	}
+	util, ok := findObservationByName(cands, "net_peak_ifutil_pct")
+	if !ok {
+		t.Fatalf("expected ifutil candidate, got %v", observationNames(cands))
+	}
+	if util.Section != "Utilization" || util.Verdict == nil {
+		t.Fatalf("ifutil candidate not verdict-bearing utilization: %+v", util)
+	}
+	if _, ok := findObservationByName(cands, "net_peak_tx_kbps"); ok {
+		t.Fatalf("raw throughput should remain context-only, got %v", observationNames(cands))
 	}
 }
 

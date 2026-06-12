@@ -17,7 +17,7 @@ var networkInvestigation = &Investigation{
 	Observations: networkObservations,
 	Commands:     networkCommands,
 	DiagnoseNotes: map[string]string{
-		"Utilization": "network utilization can't be worked out without per-interface link speed, which the tool doesn't know — throughput numbers in the snapshot are for context only.",
+		"Utilization": "raw network throughput can't be turned into utilization without per-interface link speed; if `sar` reports `%ifutil`, use that estimate, otherwise throughput numbers in the snapshot are for context only.",
 	},
 }
 
@@ -145,10 +145,7 @@ var noiseInterfacePrefixes = []string{
 }
 
 func isNoiseInterface(name string) bool {
-	name = strings.TrimSpace(name)
-	if i := strings.IndexByte(name, '@'); i >= 0 {
-		name = name[:i]
-	}
+	name = interfaceBaseName(name)
 	if name == "lo" {
 		return true
 	}
@@ -160,11 +157,23 @@ func isNoiseInterface(name string) bool {
 	return false
 }
 
-// filterNoiseInterfaces drops loopback and container/virtual interface rows or
-// stanzas from network guide output so the learner sees only USE-relevant
-// uplinks. It dispatches on the captured command's format and, as a safety net,
-// returns the original output unchanged if filtering would hide every interface
-// (e.g. a host with only `lo` and veths).
+func interfaceBaseName(name string) string {
+	name = strings.TrimSpace(name)
+	if i := strings.IndexByte(name, '@'); i >= 0 {
+		name = name[:i]
+	}
+	return name
+}
+
+func isLoopbackInterface(name string) bool {
+	return interfaceBaseName(name) == "lo"
+}
+
+// filterNoiseInterfaces drops loopback and inactive container/virtual interface
+// rows or stanzas from network guide output so the learner sees USE-relevant
+// links. Active sar rows are kept even for veth/docker-style names because
+// local lab traffic often uses those links. As a safety net, filtering returns
+// the original output unchanged if it would hide every interface.
 func filterNoiseInterfaces(c CapturedCommand) string {
 	switch baseCmd(c.Cmd) {
 	case "ip":
@@ -248,7 +257,10 @@ func filterSarNetworkOutput(output string) string {
 
 		iface := fields[ifaceField]
 		sawIface = true
-		if isNoiseInterface(iface) {
+		if isLoopbackInterface(iface) {
+			continue
+		}
+		if isNoiseInterface(iface) && !sarRowHasNonZeroMetric(fields, ifaceField) {
 			continue
 		}
 		keptIface = true
@@ -258,6 +270,16 @@ func filterSarNetworkOutput(output string) string {
 		return output
 	}
 	return strings.Join(out, "\n")
+}
+
+func sarRowHasNonZeroMetric(fields []string, ifaceField int) bool {
+	for _, field := range fields[ifaceField+1:] {
+		v, err := strconv.ParseFloat(field, 64)
+		if err == nil && v != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func sarIfaceHeaderIndex(fields []string) int {
@@ -288,6 +310,15 @@ func isSarTableRowPrefix(s string) bool {
 // ubiquitous even on hosts without sysstat installed.
 func networkTCPVariants() []stepVariant {
 	return []stepVariant{
+		{
+			Cmd:         "ss -tin",
+			QuestionsFn: ssInfoQuestions,
+			Teaching: "`ss -tin` shows live established TCP sockets with kernel TCP\n" +
+				"state. In the table, Send-Q is locally queued/unacknowledged data.\n" +
+				"In the indented TCP-info line, `retrans:` shows live retransmission\n" +
+				"state and fields like `rwnd_limited` / `sndbuf_limited` show time\n" +
+				"spent limited by peer receive window or local send buffer pressure.",
+		},
 		{
 			Cmd:         "netstat -s",
 			QuestionsFn: netstatSColumnQuestions,
@@ -715,6 +746,49 @@ func outputHasTokenName(output, name string) bool {
 	return false
 }
 
+func ssInfoQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if !ssInfoOutputDetected(c.Output) {
+		return nil
+	}
+	return []Question{
+		{
+			Stem:    "In `ss -tin` output for an established TCP socket, what does `Send-Q` indicate?",
+			Correct: "Bytes queued locally or sent but not yet acknowledged by the peer",
+			Distractors: []string{
+				"The maximum listen backlog for that connection",
+				"The interface transmit queue length in packets",
+				"Bytes the remote process has not read from its socket",
+			},
+		},
+		{
+			Stem:    "In `ss -tin` TCP details, what does non-zero `retrans:` indicate?",
+			Correct: "TCP has retransmitted data on that socket, usually because packets or ACKs were lost",
+			Distractors: []string{
+				"The application retried a failed connect call",
+				"The socket was moved between network namespaces",
+				"The interface compressed packets before transmission",
+			},
+		},
+		{
+			Stem:    "In `ss -tin`, what do `rwnd_limited` and `sndbuf_limited` time percentages point to?",
+			Correct: "Time the TCP sender was limited by the peer receive window or local send buffer",
+			Distractors: []string{
+				"Percent of packets dropped by the NIC driver",
+				"Percent of CPU time spent in softirq processing",
+				"Share of link capacity currently used by multicast traffic",
+			},
+		},
+	}
+}
+
+func ssInfoOutputDetected(output string) bool {
+	low := strings.ToLower(output)
+	return strings.Contains(low, "cwnd:") ||
+		strings.Contains(low, "retrans:") ||
+		strings.Contains(low, "rwnd_limited:") ||
+		strings.Contains(low, "sndbuf_limited:")
+}
+
 var snmpTcpHeaderRe = regexp.MustCompile(`(?m)^Tcp:\s+RtoAlgorithm`)
 var netstatExtTcpExtRe = regexp.MustCompile(`(?m)^TcpExt:\s+\w`)
 
@@ -878,6 +952,14 @@ var netstatSPicks = []phraseQuestionPick{
 
 var networkObservations = []Observation{
 	{
+		Name:      "net_peak_ifutil_pct",
+		Title:     "Peak interface utilization (%ifutil)",
+		Section:   "Utilization",
+		Extract:   extractSarIfutilPeak,
+		Verdict:   verdictNetIfutil,
+		Heuristic: "%ifutil is sar's estimate of link utilization from throughput divided by interface-reported speed; on virtual links that speed is synthetic, so treat it as a useful estimate rather than a hard physical bottleneck",
+	},
+	{
 		Name:      "net_peak_rx_kbps",
 		Title:     "Peak RX rate (across non-lo ifaces)",
 		Section:   "Utilization",
@@ -915,6 +997,30 @@ var networkObservations = []Observation{
 		Heuristic: "retransmit ratio > ~0.5% steady = end-to-end packet loss somewhere between this host and its peers",
 	},
 	{
+		Name:      "tcp_ss_retrans_sockets",
+		Title:     "TCP sockets retransmitting (ss -tin)",
+		Section:   "Saturation",
+		Extract:   extractSsTCPRetransSockets,
+		Verdict:   verdictPositiveIsHigh,
+		Heuristic: "non-zero `retrans:` in `ss -tin` = live TCP retransmission on an established socket",
+	},
+	{
+		Name:      "tcp_ss_sendq_max",
+		Title:     "Max TCP Send-Q (ss -tin)",
+		Section:   "Saturation",
+		Extract:   extractSsTCPMaxSendQ,
+		Verdict:   verdictPositiveIsHigh,
+		Heuristic: "non-zero Send-Q on an established TCP socket means local data is queued or unacknowledged; sustained non-zero values indicate sender-side backpressure",
+	},
+	{
+		Name:      "tcp_ss_limited_pct_max",
+		Title:     "Max TCP rwnd/sndbuf limited time (ss -tin)",
+		Section:   "Saturation",
+		Extract:   extractSsTCPLimitedPct,
+		Verdict:   verdictPositiveIsHigh,
+		Heuristic: "rwnd_limited or sndbuf_limited time in `ss -tin` means TCP spent time blocked by peer receive-window or local send-buffer limits",
+	},
+	{
 		Name:      "tcp_listen_overflows",
 		Title:     "Listen overflows (since boot)",
 		Section:   "Saturation",
@@ -941,6 +1047,24 @@ var networkObservations = []Observation{
 }
 
 // ----- Diagnosis verdicts -----
+
+func verdictNetIfutil(_ SystemInfo, v Value, _ Snapshot) Signal {
+	switch {
+	case v.Number >= 80:
+		return SignalHigh
+	case v.Number >= 50:
+		return SignalModerate
+	default:
+		return SignalLow
+	}
+}
+
+func verdictPositiveIsHigh(_ SystemInfo, v Value, _ Snapshot) Signal {
+	if v.Number > 0 {
+		return SignalHigh
+	}
+	return SignalLow
+}
 
 func verdictNetDrops(_ SystemInfo, v Value, _ Snapshot) Signal {
 	if v.Number > 0 {
@@ -979,6 +1103,43 @@ func verdictDmesgNet(_ SystemInfo, v Value, _ Snapshot) Signal {
 		return SignalHigh
 	}
 	return SignalLow
+}
+
+// extractSarIfutilPeak finds the peak interface utilization percentage from
+// `sar -n DEV`. It includes virtual interfaces because container-generated
+// load commonly appears on veth pairs, but skips loopback.
+func extractSarIfutilPeak(si SystemInfo, caps []CapturedCommand) (Value, bool) {
+	max := 0.0
+	maxIface := ""
+	seen := false
+	for _, c := range caps {
+		if baseCmd(c.Cmd) != "sar" {
+			continue
+		}
+		rows := parseSarTable(c.Output, "%ifutil")
+		for _, r := range rows {
+			if r["IFACE"] == "lo" {
+				continue
+			}
+			v, err := strconv.ParseFloat(r["%ifutil"], 64)
+			if err != nil {
+				continue
+			}
+			seen = true
+			if v > max {
+				max = v
+				maxIface = r["IFACE"]
+			}
+		}
+	}
+	if !seen {
+		return Value{}, false
+	}
+	note := "uses interface-reported speed"
+	if maxIface != "" {
+		note = "peak on " + maxIface + "; " + note
+	}
+	return Value{Number: max, Unit: "%", Note: note}, true
 }
 
 // extractSarNetPeak returns a function that finds the peak value of the named
@@ -1239,6 +1400,129 @@ func parseSsEstab(output string) (float64, bool) {
 	return 0, false
 }
 
+type ssTCPInfoStats struct {
+	Seen           bool
+	MaxSendQ       float64
+	RetransSockets float64
+	MaxLimitedPct  float64
+}
+
+func extractSsTCPMaxSendQ(si SystemInfo, caps []CapturedCommand) (Value, bool) {
+	stats, ok := findSsTCPInfoStats(caps)
+	if !ok {
+		return Value{}, false
+	}
+	return Value{Number: stats.MaxSendQ, Unit: " B", Note: "established TCP sockets"}, true
+}
+
+func extractSsTCPRetransSockets(si SystemInfo, caps []CapturedCommand) (Value, bool) {
+	stats, ok := findSsTCPInfoStats(caps)
+	if !ok {
+		return Value{}, false
+	}
+	return Value{Number: stats.RetransSockets, Unit: " sockets"}, true
+}
+
+func extractSsTCPLimitedPct(si SystemInfo, caps []CapturedCommand) (Value, bool) {
+	stats, ok := findSsTCPInfoStats(caps)
+	if !ok {
+		return Value{}, false
+	}
+	return Value{Number: stats.MaxLimitedPct, Unit: "%", Note: "max rwnd/sndbuf limited time"}, true
+}
+
+func findSsTCPInfoStats(caps []CapturedCommand) (ssTCPInfoStats, bool) {
+	for i := len(caps) - 1; i >= 0; i-- {
+		if commandBase(caps[i].Cmd) != "ss" {
+			continue
+		}
+		if stats := parseSsTCPInfo(caps[i].Output); stats.Seen {
+			return stats, true
+		}
+	}
+	return ssTCPInfoStats{}, false
+}
+
+func parseSsTCPInfo(output string) ssTCPInfoStats {
+	var stats ssTCPInfoStats
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		if len(fields) >= 3 && isTCPSocketState(fields[0]) {
+			stats.Seen = true
+			if sendQ, err := strconv.ParseFloat(fields[2], 64); err == nil && sendQ > stats.MaxSendQ {
+				stats.MaxSendQ = sendQ
+			}
+			continue
+		}
+		if strings.Contains(line, "cwnd:") || strings.Contains(line, "retrans:") {
+			stats.Seen = true
+		}
+		if ssLineHasRetrans(line) {
+			stats.RetransSockets++
+		}
+		if pct := ssLineMaxLimitedPct(line); pct > stats.MaxLimitedPct {
+			stats.MaxLimitedPct = pct
+		}
+	}
+	return stats
+}
+
+func isTCPSocketState(s string) bool {
+	switch strings.ToUpper(s) {
+	case "ESTAB", "SYN-SENT", "SYN-RECV", "FIN-WAIT-1", "FIN-WAIT-2",
+		"TIME-WAIT", "CLOSE-WAIT", "LAST-ACK", "CLOSING":
+		return true
+	default:
+		return false
+	}
+}
+
+func ssLineHasRetrans(line string) bool {
+	for _, field := range strings.Fields(line) {
+		field = strings.Trim(field, ",")
+		if !strings.HasPrefix(field, "retrans:") {
+			continue
+		}
+		raw := strings.TrimPrefix(field, "retrans:")
+		for _, part := range strings.Split(raw, "/") {
+			n, err := strconv.ParseFloat(strings.Trim(part, ","), 64)
+			if err == nil && n > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func ssLineMaxLimitedPct(line string) float64 {
+	max := 0.0
+	for _, field := range strings.Fields(line) {
+		if !strings.Contains(field, "rwnd_limited:") && !strings.Contains(field, "sndbuf_limited:") {
+			continue
+		}
+		if pct, ok := percentInParens(field); ok && pct > max {
+			max = pct
+		}
+	}
+	return max
+}
+
+func percentInParens(s string) (float64, bool) {
+	start := strings.LastIndexByte(s, '(')
+	end := strings.LastIndexByte(s, '%')
+	if start < 0 || end <= start {
+		return 0, false
+	}
+	n, err := strconv.ParseFloat(s[start+1:end], 64)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
 func findNetstatSRetransmits(caps []CapturedCommand) (sent, retrans float64, ok bool) {
 	for i := len(caps) - 1; i >= 0; i-- {
 		if commandBase(caps[i].Cmd) != "netstat" || !commandHasOption(caps[i].Cmd, "-s", "--statistics") {
@@ -1482,6 +1766,12 @@ var networkCommands = []CommandRef{
 		DiagnoseRank: 1,
 	},
 	{
+		Cmd:          "ss -tin",
+		Section:      "Saturation",
+		Summary:      "Live established TCP socket state.\nNon-zero Send-Q, retrans, rwnd_limited, or sndbuf_limited points at socket/path backpressure.",
+		DiagnoseRank: 2,
+	},
+	{
 		Cmd:     "ss -lnt",
 		Section: "Saturation",
 		Summary: "TCP listen sockets with Recv-Q (current queue) vs Send-Q (max backlog).\nRecv-Q approaching Send-Q is the live signal that ListenOverflows is climbing.",
@@ -1490,7 +1780,7 @@ var networkCommands = []CommandRef{
 		Cmd:          "netstat -s",
 		Section:      "Saturation",
 		Summary:      "Human-readable summary of /proc/net/snmp + /proc/net/netstat.\nFound almost everywhere but being phased out in favour of `ss`.",
-		DiagnoseRank: 2,
+		DiagnoseRank: 3,
 	},
 	{
 		Cmd:          "cat /proc/net/dev",

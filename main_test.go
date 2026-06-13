@@ -385,6 +385,59 @@ func TestRunAndCaptureKeepsRealGrepErrorsFailed(t *testing.T) {
 	}
 }
 
+func TestRunAndCaptureRejectsGrepMissingPatternBeforeRunning(t *testing.T) {
+	s := &Session{}
+	var c CapturedCommand
+	stderr := captureStderr(func() {
+		c = s.runAndCapture("printf 'oom\\n' | grep -ie")
+	})
+
+	if !c.Failed {
+		t.Fatalf("grep with missing -e pattern should fail preflight, got %+v", c)
+	}
+	if c.ExitCode != -1 {
+		t.Fatalf("exit code = %d, want -1", c.ExitCode)
+	}
+	if len(s.Captured) != 0 {
+		t.Fatalf("captured failed grep command: %+v", s.Captured)
+	}
+	if !strings.Contains(stderr, "[command not run: grep needs a search pattern") {
+		t.Fatalf("expected preflight failure message in stderr, got:\n%s", stderr)
+	}
+	if strings.Contains(stderr, "grep: option requires an argument") {
+		t.Fatalf("grep actually ran instead of being caught by preflight:\n%s", stderr)
+	}
+}
+
+func TestCommandPreflightRejectsBareGrepFilters(t *testing.T) {
+	for _, cmd := range []string{
+		"grep",
+		"grep -i",
+		"dmesg -T | grep -iE",
+		"sudo dmesg -T | grep -ie",
+		"journalctl -k -b --no-pager | grep --regexp",
+	} {
+		if reason, ok := commandPreflightFailure(cmd); !ok || !strings.Contains(reason, "grep needs a search pattern") {
+			t.Fatalf("commandPreflightFailure(%q) = %q, %v; want grep pattern failure", cmd, reason, ok)
+		}
+	}
+}
+
+func TestCommandPreflightAllowsGrepPatterns(t *testing.T) {
+	for _, cmd := range []string{
+		"grep oom",
+		"grep -iE 'killed process|out of memory|oom-killer'",
+		"dmesg -T | grep -ie 'out of memory'",
+		"journalctl -k -b --no-pager | grep --regexp='oom-killer'",
+		"grep -f patterns.txt /var/log/syslog",
+		"grep -- -leading-dash file.txt",
+	} {
+		if reason, ok := commandPreflightFailure(cmd); ok {
+			t.Fatalf("commandPreflightFailure(%q) = %q, true; want allowed", cmd, reason)
+		}
+	}
+}
+
 func TestLastPipelineCommandBaseIgnoresQuotedRegexPipes(t *testing.T) {
 	cmd := "journalctl -k -b --no-pager | grep -iE 'killed process|out of memory|oom-killer'"
 	if got := lastPipelineCommandBase(cmd); got != "grep" {

@@ -203,6 +203,11 @@ func runCommand(cmdStr string) CapturedCommand {
 // when the caller intends to post-process the output before showing it.
 // Stderr always streams to os.Stderr so genuine errors surface immediately.
 func runCommandStreaming(cmdStr string, liveOut io.Writer) CapturedCommand {
+	if reason, ok := commandPreflightFailure(cmdStr); ok {
+		fmt.Fprintf(os.Stderr, "[command not run: %s]\n", reason)
+		return CapturedCommand{Cmd: cmdStr, Failed: true, ExitCode: -1}
+	}
+
 	timeout := commandTimeoutDuration()
 	ctx := context.Background()
 	var cancel context.CancelFunc
@@ -388,6 +393,68 @@ func (s *sanitizingWriter) sanitize(p []byte) []byte {
 
 func isNoMatchGrepExit(cmdStr string, exitCode int, output string) bool {
 	return exitCode == 1 && lastPipelineCommandBase(cmdStr) == "grep" && strings.TrimSpace(output) == ""
+}
+
+func commandPreflightFailure(cmdStr string) (string, bool) {
+	for _, segment := range shellCommandSegments(cmdStr) {
+		fields := commandFields(segment)
+		if reason, ok := grepUsageProblem(fields); ok {
+			return reason, true
+		}
+	}
+	return "", false
+}
+
+func grepUsageProblem(fields []string) (string, bool) {
+	if len(fields) == 0 || commandName(fields[0]) != "grep" {
+		return "", false
+	}
+	if grepHasPattern(fields[1:]) {
+		return "", false
+	}
+	return "grep needs a search pattern; add one after `grep`, or use `-e 'pattern'`", true
+}
+
+func grepHasPattern(args []string) bool {
+	for i := 0; i < len(args); i++ {
+		arg := strings.Trim(args[i], `"'`)
+		if arg == "--" {
+			return i+1 < len(args)
+		}
+		if arg == "-" || !strings.HasPrefix(arg, "-") {
+			return true
+		}
+		if strings.HasPrefix(arg, "--") {
+			name, _, hasValue := strings.Cut(arg, "=")
+			switch name {
+			case "--regexp", "--file":
+				if hasValue {
+					return true
+				}
+				return i+1 < len(args)
+			case "--after-context", "--before-context", "--context", "--binary-files", "--devices",
+				"--directories", "--label", "--include", "--exclude", "--exclude-from", "--exclude-dir",
+				"--max-count":
+				if !hasValue && i+1 < len(args) {
+					i++
+				}
+			}
+			continue
+		}
+		for j := 1; j < len(arg); j++ {
+			switch arg[j] {
+			case 'e', 'f':
+				return j+1 < len(arg) || i+1 < len(args)
+			case 'A', 'B', 'C', 'D', 'd', 'm':
+				if j+1 < len(arg) {
+					j = len(arg)
+				} else if i+1 < len(args) {
+					i++
+				}
+			}
+		}
+	}
+	return false
 }
 
 func lastPipelineCommandBase(cmdStr string) string {

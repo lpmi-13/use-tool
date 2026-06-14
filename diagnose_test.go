@@ -36,7 +36,7 @@ func TestCPUVerdicts(t *testing.T) {
 		want Signal
 	}{
 		{"load over NumCPU", verdictLoad1min(si, Value{Number: 5}, Snapshot{}), SignalHigh},
-		{"load near NumCPU", verdictLoad1min(si, Value{Number: 3}, Snapshot{}), SignalModerate},
+		{"load below NumCPU", verdictLoad1min(si, Value{Number: 3}, Snapshot{}), SignalLow},
 		{"load well under", verdictLoad1min(si, Value{Number: 1}, Snapshot{}), SignalLow},
 		{"idle low = busy", verdictIdleMean(si, Value{Number: 10}, Snapshot{}), SignalHigh},
 		{"idle mid", verdictIdleMean(si, Value{Number: 50}, Snapshot{}), SignalModerate},
@@ -110,11 +110,11 @@ func TestGradeDimensionContradictingEvidence(t *testing.T) {
 func TestGradeDimensionWrongDimensionCitation(t *testing.T) {
 	si := SystemInfo{NumCPU: 4}
 	snap := snapWith(map[string]Value{
-		"vmstat_r":     {Samples: []float64{2, 7}}, // saturation present (gives HasData)
-		"loadavg_1min": {Number: 5},                // utilization signal
+		"vmstat_r":         {Samples: []float64{2, 7}}, // saturation present (gives HasData)
+		"mpstat_idle_mean": {Number: 5},                // utilization signal
 	})
 	// Claim saturation, but cite a utilization signal as evidence.
-	g := gradeDimension(si, snap, cpuObservations, "Saturation", "present", []string{"loadavg_1min"})
+	g := gradeDimension(si, snap, cpuObservations, "Saturation", "present", []string{"mpstat_idle_mean"})
 	if len(g.Cited) != 1 || g.Cited[0].Verdict != citeWrongDimension {
 		t.Fatalf("expected wrong-dimension citation, got %+v", g.Cited)
 	}
@@ -123,6 +123,44 @@ func TestGradeDimensionWrongDimensionCitation(t *testing.T) {
 	}
 	if g.assessment() != "no valid evidence cited" {
 		t.Errorf("assessment = %q", g.assessment())
+	}
+}
+
+func TestGradeCPUSaturationAcceptsLoadAverageEvidence(t *testing.T) {
+	si := SystemInfo{NumCPU: 2}
+	quiet := snapWith(map[string]Value{
+		"loadavg_1min": {Number: 1.30, Note: "NumCPU=2, ratio 0.65"},
+	})
+	g := gradeDimension(si, quiet, cpuObservations, "Saturation", "absent", []string{"loadavg_1min"})
+	if g.Supports != 1 || g.Contradicts != 0 || !g.Accurate {
+		t.Fatalf("quiet load average grade = %+v, want one supporting accurate citation", g)
+	}
+	if len(g.Cited) != 1 || g.Cited[0].Verdict != citeSupports {
+		t.Fatalf("quiet load average citation = %+v, want supports", g.Cited)
+	}
+	out := captureStdout(func() {
+		printDiagnoseFeedback([]dimensionGrade{g}, false)
+	})
+	for _, want := range []string{
+		"✓ 1-min load average",
+		"Observed: 1.30 (NumCPU=2, ratio 0.65)",
+		"below NumCPU is evidence against CPU run-queue",
+		"saturation, though one logical CPU can still be hot",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("feedback missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Wrong USE dimension") {
+		t.Fatalf("load average should not be reported as wrong dimension:\n%s", out)
+	}
+
+	busy := snapWith(map[string]Value{
+		"loadavg_1min": {Number: 8, Note: "NumCPU=2, ratio 4.00"},
+	})
+	g = gradeDimension(si, busy, cpuObservations, "Saturation", "present", []string{"loadavg_1min"})
+	if g.Supports != 1 || g.Contradicts != 0 || !g.Accurate {
+		t.Fatalf("high load average grade = %+v, want one supporting accurate citation", g)
 	}
 }
 
@@ -545,15 +583,13 @@ func TestPrintDiagnoseFeedbackUsesReadableBlocks(t *testing.T) {
 	}
 }
 
-func TestCPUUtilizationFeedbackExplainsAggregateLoadVsPerCPU(t *testing.T) {
+func TestCPUUtilizationFeedbackExplainsPerCPUAndRejectsRunQueue(t *testing.T) {
 	si := SystemInfo{NumCPU: 4}
 	snap := snapWith(map[string]Value{
-		"loadavg_1min":      {Number: 1.42, Note: "NumCPU=4, ratio 0.35"},
 		"mpstat_idle_range": {Text: "0.0 - 96.0%", Samples: []float64{0, 96}, Note: "spread 96.0"},
 		"vmstat_r":          {Samples: []float64{1, 1}},
 	})
 	g := gradeDimension(si, snap, cpuObservations, "Utilization", "high", []string{
-		"loadavg_1min",
 		"mpstat_idle_range",
 		"vmstat_r",
 	})
@@ -562,12 +598,10 @@ func TestCPUUtilizationFeedbackExplainsAggregateLoadVsPerCPU(t *testing.T) {
 	})
 
 	for _, want := range []string{
-		"✗ 1-min load average",
-		"Observed: 1.42 (NumCPU=4, ratio 0.35)",
-		"below NumCPU is not evidence of high overall utilization",
 		"✓ Per-CPU %idle range",
 		"Observed: 0.0 - 96.0% (spread 96.0)",
 		"one CPU is highly utilized",
+		"✗ vmstat r (run-queue)",
 		"Wrong USE dimension: this is not a utilization signal.",
 	} {
 		if !strings.Contains(out, want) {

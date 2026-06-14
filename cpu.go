@@ -720,21 +720,21 @@ var cpuObservations = []Observation{
 	{
 		Name:      "loadavg_1min",
 		Title:     "1-min load average",
-		Section:   "Utilization",
+		Section:   "Saturation",
 		Extract:   extractLoadavgN(0),
 		Verdict:   verdictLoad1min,
-		Heuristic: "load average is aggregate runnable demand: near NumCPU means the CPU pool is fully committed; below NumCPU is not evidence of high overall utilization, though one logical CPU can still be hot",
+		Heuristic: "load average is aggregate runnable or uninterruptible demand: above NumCPU can indicate saturation; below NumCPU is evidence against CPU run-queue saturation, though one logical CPU can still be hot",
 	},
 	{
 		Name:    "loadavg_5min",
 		Title:   "5-min load average",
-		Section: "Utilization",
+		Section: "Saturation",
 		Extract: extractLoadavgN(1),
 	},
 	{
 		Name:    "loadavg_15min",
 		Title:   "15-min load average",
-		Section: "Utilization",
+		Section: "Saturation",
 		Extract: extractLoadavgN(2),
 	},
 	{
@@ -810,8 +810,6 @@ func verdictLoad1min(si SystemInfo, v Value, _ Snapshot) Signal {
 	switch {
 	case ratio >= 1.0:
 		return SignalHigh
-	case ratio >= 0.7:
-		return SignalModerate
 	default:
 		return SignalLow
 	}
@@ -1099,14 +1097,13 @@ func dmesgQuestions(si SystemInfo, c CapturedCommand) []Question {
 
 var cpuCommands = []CommandRef{
 	{
-		Cmd:          "uptime",
-		Section:      "Utilization",
-		Summary:      "1, 5, and 15-minute load averages, plus uptime.\nFastest first look at run-queue pressure.",
-		DiagnoseRank: 1,
+		Cmd:     "uptime",
+		Section: "Saturation",
+		Summary: "1, 5, and 15-minute load averages, plus uptime.\nFastest first look at run-queue pressure.",
 	},
 	{
 		Cmd:     "w",
-		Section: "Utilization",
+		Section: "Saturation",
 		Summary: "Load averages plus per-user session info.\nSimilar info to uptime, with logged-in users.",
 	},
 	{

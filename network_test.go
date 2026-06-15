@@ -15,6 +15,13 @@ const sampleSarDev = `Linux 6.1.0 (host)  10/05/2024  _x86_64_  (4 CPU)
 Average:           lo      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00
 Average:         eth0   1867.28   1144.51   3072.28   1536.16      0.00      0.00      0.00      2.25`
 
+const sampleSarDevUsePracticeHighLoad = `Linux 6.1.0 (lab-01)  06/15/2026  _x86_64_  (4 CPU)
+
+20:41:01        IFACE   rxpck/s   txpck/s    rxkB/s    txkB/s   rxcmp/s   txcmp/s  rxmcst/s   %ifutil
+20:41:02           lo      5.00      5.00      0.40      0.40      0.00      0.00      0.00      0.00
+20:41:02         eth0     20.00     18.00      2.00      1.50      0.00      0.00      0.00      0.00
+20:41:02   veth4b0f6eb1h  26600.00  26800.00    120.00  39500.00      0.00      0.00      0.00      0.42`
+
 const sampleSarEdev = `Linux 6.1.0 (host)  10/05/2024  _x86_64_  (4 CPU)
 
 14:00:01        IFACE   rxerr/s   txerr/s    coll/s  rxdrop/s  txdrop/s  txcarr/s  rxfram/s  rxfifo/s  txfifo/s
@@ -167,6 +174,23 @@ func TestExtractSarIfutilPeakIncludesVeth(t *testing.T) {
 	}
 	if !strings.Contains(v.Note, "veth62046a12h") {
 		t.Errorf("expected note to name veth peak interface, got %q", v.Note)
+	}
+}
+
+func TestExtractSarNetPeakThroughputUsePracticeHighLoad(t *testing.T) {
+	caps := []CapturedCommand{{Cmd: "sar -n DEV 1 3", Output: sampleSarDevUsePracticeHighLoad}}
+	v, ok := extractSarNetPeakThroughput(SystemInfo{}, caps)
+	if !ok {
+		t.Fatal("expected extraction to succeed")
+	}
+	if v.Number != 316 {
+		t.Errorf("got %v, want 316 Mbit/s", v.Number)
+	}
+	if v.Unit != " Mbit/s" {
+		t.Errorf("unit = %q, want Mbit/s", v.Unit)
+	}
+	if !strings.Contains(v.Note, "tx on veth4b0f6eb1h") {
+		t.Errorf("expected note to name veth TX peak, got %q", v.Note)
 	}
 }
 

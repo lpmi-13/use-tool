@@ -274,6 +274,9 @@ func TestNetworkVerdicts(t *testing.T) {
 		{"ifutil high", verdictNetIfutil(si, Value{Number: 90}, Snapshot{}), SignalHigh},
 		{"ifutil moderate", verdictNetIfutil(si, Value{Number: 60}, Snapshot{}), SignalModerate},
 		{"ifutil low", verdictNetIfutil(si, Value{Number: 0.42}, Snapshot{}), SignalLow},
+		{"throughput high", verdictNetThroughput(si, Value{Number: 316}, Snapshot{}), SignalHigh},
+		{"throughput moderate", verdictNetThroughput(si, Value{Number: 25}, Snapshot{}), SignalModerate},
+		{"throughput low", verdictNetThroughput(si, Value{Number: 1}, Snapshot{}), SignalLow},
 		{"positive high", verdictPositiveIsHigh(si, Value{Number: 1}, Snapshot{}), SignalHigh},
 		{"zero low", verdictPositiveIsHigh(si, Value{Number: 0}, Snapshot{}), SignalLow},
 		{"drops present", verdictNetDrops(si, Value{Number: 5}, Snapshot{}), SignalHigh},
@@ -373,6 +376,26 @@ func TestNetworkIfutilIsDiagnoseCandidate(t *testing.T) {
 	}
 }
 
+func TestNetworkHighThroughputIsDiagnoseCandidate(t *testing.T) {
+	snap := snapWith(map[string]Value{
+		"net_peak_ifutil_pct":      {Number: 0.42, Unit: "%"},
+		"net_peak_throughput_mbps": {Number: 316, Unit: " Mbit/s"},
+		"net_peak_tx_kbps":         {Number: 39500, Unit: " kB/s"},
+	})
+	byResource := candidatesByResource(networkInvestigation, snap)
+	cands := byResource[ResourceNetwork]
+	util, ok := findObservationByName(cands, "net_peak_throughput_mbps")
+	if !ok {
+		t.Fatalf("expected peak throughput candidate, got %v", observationNames(cands))
+	}
+	if util.Section != "Utilization" || util.Verdict == nil {
+		t.Fatalf("peak throughput candidate not verdict-bearing utilization: %+v", util)
+	}
+	if _, ok := findObservationByName(cands, "net_peak_tx_kbps"); ok {
+		t.Fatalf("raw tx throughput should remain context-only, got %v", observationNames(cands))
+	}
+}
+
 func TestGradeNoVerdictCitationSurfacesHeuristic(t *testing.T) {
 	si := SystemInfo{}
 	snap := snapWith(map[string]Value{
@@ -433,14 +456,9 @@ func TestNetworkInvestigationCarriesUtilizationNote(t *testing.T) {
 	if note == "" {
 		t.Fatal("expected a DiagnoseNotes entry for network Utilization")
 	}
-	// The text must communicate that the tool can't infer utilization, so
-	// that the learner has explicit guidance at the prompt rather than
-	// having to infer it from each observation's heuristic.
-	// The text must communicate (a) that the tool can't infer utilization
-	// and (b) why — the link-speed gap. It's read in two contexts: at the
-	// verdict prompt when there are captured signals, and embedded in the
-	// auto-skip line when there aren't.
-	for _, want := range []string{"link speed", "for context"} {
+	// The text must preserve the link-speed caveat while explaining why
+	// absolute throughput can still matter for virtual/lab traffic.
+	for _, want := range []string{"link speed", "absolute throughput", "high offered load"} {
 		if !strings.Contains(note, want) {
 			t.Errorf("network utilization note missing %q: %q", want, note)
 		}

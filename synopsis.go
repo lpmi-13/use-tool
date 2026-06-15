@@ -226,6 +226,19 @@ func diskSynopsis(snap Snapshot) []SynopsisIssue {
 
 func networkSynopsis(snap Snapshot) []SynopsisIssue {
 	var issues []SynopsisIssue
+	if v, ok := snap.Values["net_peak_ifutil_pct"]; ok && v.Number >= 80 {
+		issues = append(issues, SynopsisIssue{
+			Section:  "Utilization",
+			Summary:  "interface utilization was high",
+			Evidence: fmt.Sprintf("sar -n DEV %%ifutil peak was %s", formatNumber(v.Number, "%")),
+		})
+	} else if v, ok := snap.Values["net_peak_throughput_mbps"]; ok && v.Number >= networkHighThroughputMbit {
+		issues = append(issues, SynopsisIssue{
+			Section:  "Utilization",
+			Summary:  "network throughput was high",
+			Evidence: fmt.Sprintf("sar -n DEV peak throughput was %s", formatNumber(v.Number, " Mbit/s")),
+		})
+	}
 	if v, ok := snap.Values["net_rx_drops_per_sec_max"]; ok && v.Number > 0 {
 		issues = append(issues, SynopsisIssue{
 			Section:  "Saturation",

@@ -167,6 +167,7 @@ func TestDiskSynopsisIdentifiesUSESignals(t *testing.T) {
 
 func TestNetworkSynopsisIdentifiesSaturationAndErrors(t *testing.T) {
 	snap := Snapshot{Values: map[string]Value{
+		"net_peak_throughput_mbps": {Number: 316},
 		"net_rx_drops_per_sec_max": {Number: 3},
 		"tcp_retransmit_ratio_pct": {Number: 2.5},
 		"tcp_listen_overflows":     {Number: 7},
@@ -175,6 +176,9 @@ func TestNetworkSynopsisIdentifiesSaturationAndErrors(t *testing.T) {
 	}}
 	issues := networkSynopsis(snap)
 
+	if !hasSynopsis(issues, "Utilization", "network throughput") {
+		t.Fatalf("expected network throughput utilization issue, got %#v", issues)
+	}
 	if !hasSynopsis(issues, "Saturation", "receive drops") {
 		t.Fatalf("expected network drop saturation issue, got %#v", issues)
 	}

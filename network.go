@@ -17,9 +17,14 @@ var networkInvestigation = &Investigation{
 	Observations: networkObservations,
 	Commands:     networkCommands,
 	DiagnoseNotes: map[string]string{
-		"Utilization": "raw network throughput can't be turned into utilization without per-interface link speed; if `sar` reports `%ifutil`, use that estimate, otherwise throughput numbers in the snapshot are for context only.",
+		"Utilization": "`%ifutil` is the best relative signal when available; absolute throughput can still identify high offered load on virtual or lab links, but it does not prove physical link saturation without link speed.",
 	},
 }
+
+const (
+	networkModerateThroughputMbit = 10.0
+	networkHighThroughputMbit     = 80.0
+)
 
 // ----- Guide steps -----
 
@@ -960,6 +965,14 @@ var networkObservations = []Observation{
 		Heuristic: "%ifutil is sar's estimate of link utilization from throughput divided by interface-reported speed; on virtual links that speed is synthetic, so treat it as a useful estimate rather than a hard physical bottleneck",
 	},
 	{
+		Name:      "net_peak_throughput_mbps",
+		Title:     "Peak network throughput",
+		Section:   "Utilization",
+		Extract:   extractSarNetPeakThroughput,
+		Verdict:   verdictNetThroughput,
+		Heuristic: "absolute throughput is not link utilization, but sustained tens or hundreds of Mbit/s on a lab or virtual link is high offered network load even when %ifutil is unavailable or synthetic",
+	},
+	{
 		Name:      "net_peak_rx_kbps",
 		Title:     "Peak RX rate (across non-lo ifaces)",
 		Section:   "Utilization",
@@ -1059,6 +1072,17 @@ func verdictNetIfutil(_ SystemInfo, v Value, _ Snapshot) Signal {
 	}
 }
 
+func verdictNetThroughput(_ SystemInfo, v Value, _ Snapshot) Signal {
+	switch {
+	case v.Number >= networkHighThroughputMbit:
+		return SignalHigh
+	case v.Number >= networkModerateThroughputMbit:
+		return SignalModerate
+	default:
+		return SignalLow
+	}
+}
+
 func verdictPositiveIsHigh(_ SystemInfo, v Value, _ Snapshot) Signal {
 	if v.Number > 0 {
 		return SignalHigh
@@ -1140,6 +1164,44 @@ func extractSarIfutilPeak(si SystemInfo, caps []CapturedCommand) (Value, bool) {
 		note = "peak on " + maxIface + "; " + note
 	}
 	return Value{Number: max, Unit: "%", Note: note}, true
+}
+
+func extractSarNetPeakThroughput(si SystemInfo, caps []CapturedCommand) (Value, bool) {
+	maxKBps := 0.0
+	maxIface := ""
+	maxDirection := ""
+	seen := false
+	for _, c := range caps {
+		if baseCmd(c.Cmd) != "sar" {
+			continue
+		}
+		rows := parseSarTable(c.Output, "rxkB/s", "txkB/s") // only matches DEV table
+		for _, r := range rows {
+			if r["IFACE"] == "lo" {
+				continue
+			}
+			for _, col := range []string{"rxkB/s", "txkB/s"} {
+				v, err := strconv.ParseFloat(r[col], 64)
+				if err != nil {
+					continue
+				}
+				seen = true
+				if v > maxKBps {
+					maxKBps = v
+					maxIface = r["IFACE"]
+					maxDirection = strings.TrimSuffix(col, "kB/s")
+				}
+			}
+		}
+	}
+	if !seen {
+		return Value{}, false
+	}
+	note := "from sar kB/s"
+	if maxIface != "" && maxDirection != "" {
+		note = fmt.Sprintf("peak %s on %s; %s", maxDirection, maxIface, note)
+	}
+	return Value{Number: maxKBps * 8 / 1000, Unit: " Mbit/s", Note: note}, true
 }
 
 // extractSarNetPeak returns a function that finds the peak value of the named

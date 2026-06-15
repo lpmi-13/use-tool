@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+const diskKernelLogErrorGrep = "i/o error|EXT4-fs error|Buffer I/O error|XFS.*(error|corrupt|shutdown)|remount.*read-only|filesystem.*read-only|read-only file system"
+
 var diskInvestigation = &Investigation{
 	Name:  "disk",
 	Title: "Disk I/O — Utilization, Saturation, Errors",
@@ -27,6 +29,8 @@ func diskSteps(si SystemInfo) []GuideStep {
 
 	throughputVariants := diskThroughputVariants(si)
 	throughputPick := pickStepVariant(si, throughputVariants)
+	dmesgErrorCmd := "dmesg -T | grep -iE '" + diskKernelLogErrorGrep + "' | tail"
+	journalctlErrorCmd := "journalctl -k -b --no-pager | grep -iE '" + diskKernelLogErrorGrep + "' | tail"
 
 	steps := []GuideStep{
 		{
@@ -81,8 +85,8 @@ func diskSteps(si SystemInfo) []GuideStep {
 	steps = append(steps, GuideStep{
 		Name:               "errors",
 		Intro:              "Step 5: kernel I/O errors. Filesystem-level errors are the smoking\ngun for failing media.\n" + dmesgPermissionNote,
-		Suggested:          "dmesg -T | grep -iE 'i/o error|EXT4-fs error|XFS|Buffer I/O error|read-only' | tail",
-		Alternatives:       journalctlAlternative(si, "journalctl -k -b --no-pager | grep -iE 'i/o error|EXT4-fs error|XFS|Buffer I/O error|read-only' | tail"),
+		Suggested:          dmesgErrorCmd,
+		Alternatives:       journalctlAlternative(si, journalctlErrorCmd),
 		QuestionsFn:        diskDmesgQuestions,
 		AcceptAny:          true,
 		EmptyOutputMessage: "No matching I/O errors found.",
@@ -918,8 +922,53 @@ func extractIostatMaxAwait(si SystemInfo, caps []CapturedCommand) (Value, bool) 
 }
 
 func extractDmesgIOErrors(si SystemInfo, caps []CapturedCommand) (Value, bool) {
-	keywords := []string{"i/o error", "buffer i/o error", "read-only", "ext4-fs error"}
-	return extractKernelLogKeywords(caps, keywords, "I/O errors or read-only remounts")
+	seen := false
+	matched := 0
+	totalLines := 0
+	for _, c := range caps {
+		if !isKernelLogCommand(c.Cmd) {
+			continue
+		}
+		seen = true
+		for _, line := range strings.Split(c.Output, "\n") {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			totalLines++
+			if isDiskKernelLogErrorLine(line) {
+				matched++
+			}
+		}
+	}
+	if !seen {
+		return Value{}, false
+	}
+	return Value{
+		Number: float64(matched),
+		Text:   fmt.Sprintf("%d/%d lines mention I/O errors or read-only remounts", matched, totalLines),
+	}, true
+}
+
+func isDiskKernelLogErrorLine(line string) bool {
+	low := strings.ToLower(line)
+	if strings.Contains(low, "i/o error") ||
+		strings.Contains(low, "buffer i/o error") ||
+		strings.Contains(low, "ext4-fs error") {
+		return true
+	}
+	if strings.Contains(low, "xfs") &&
+		(strings.Contains(low, "error") ||
+			strings.Contains(low, "corrupt") ||
+			strings.Contains(low, "shutdown")) {
+		return true
+	}
+	if strings.Contains(low, "read-only") &&
+		(strings.Contains(low, "remount") ||
+			strings.Contains(low, "filesystem") ||
+			strings.Contains(low, "file system")) {
+		return true
+	}
+	return false
 }
 
 // ----- Recall question generators -----
@@ -927,11 +976,14 @@ func extractDmesgIOErrors(si SystemInfo, caps []CapturedCommand) (Value, bool) {
 // ----- Synthesis rules -----
 
 func diskDmesgQuestions(si SystemInfo, c CapturedCommand) []Question {
-	low := strings.ToLower(c.Output)
-	if !strings.Contains(low, "i/o error") &&
-		!strings.Contains(low, "buffer i/o error") &&
-		!strings.Contains(low, "read-only") &&
-		!strings.Contains(low, "ext4-fs error") {
+	found := false
+	for _, line := range strings.Split(c.Output, "\n") {
+		if isDiskKernelLogErrorLine(line) {
+			found = true
+			break
+		}
+	}
+	if !found {
 		return nil
 	}
 	tool := kernelLogQuestionTool(c.Cmd)
@@ -1000,13 +1052,13 @@ var diskCommands = []CommandRef{
 		Summary: "Friendlier per-process I/O snapshot.\nBatch mode (-b -n1) avoids needing a TTY. (iotop package.)",
 	},
 	{
-		Cmd:          "dmesg -T | grep -iE 'i/o error|EXT4-fs error|Buffer I/O error|read-only'",
+		Cmd:          "dmesg -T | grep -iE '" + diskKernelLogErrorGrep + "'",
 		Section:      "Errors",
 		Summary:      "Kernel I/O errors and read-only remounts.\nRecurring I/O errors → failing media; read-only remount → kernel\ngave up on writes.\n" + dmesgPermissionNote,
 		DiagnoseRank: 1,
 	},
 	{
-		Cmd:                 "journalctl -k -b --no-pager | grep -iE 'i/o error|EXT4-fs error|XFS|Buffer I/O error|read-only'",
+		Cmd:                 "journalctl -k -b --no-pager | grep -iE '" + diskKernelLogErrorGrep + "'",
 		Section:             "Errors",
 		Summary:             "Kernel I/O errors and read-only remounts via journald.\nAlternative to dmesg on systemd systems.",
 		Requires:            []string{"journalctl"},

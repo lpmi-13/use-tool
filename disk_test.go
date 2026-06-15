@@ -1,6 +1,7 @@
 package main
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -38,6 +39,9 @@ const sampleDmesgIOError = `[Tue Oct  5 14:00:00 2024] sd 0:0:0:0: [sda] tag#42 
 [Tue Oct  5 14:00:00 2024] EXT4-fs error (device sda1): ext4_journal_check_start:84
 [Tue Oct  5 14:00:00 2024] EXT4-fs (sda1): Remounting filesystem read-only
 some unrelated noise that should not match`
+
+const sampleBenignDiskDmesgNoise = `[Mon Jun 15 20:36:27 2026] SGI XFS with ACLs, security attributes, quota, no debug enabled
+[Mon Jun 15 20:36:27 2026] Write protecting the kernel read-only data: 28672k`
 
 const sampleLsblk = `NAME        MAJ:MIN RM   SIZE RO TYPE MOUNTPOINTS
 sda           8:0    0   1.8T  0 disk
@@ -226,6 +230,39 @@ func TestExtractDmesgIOErrorsCounts(t *testing.T) {
 	}
 }
 
+func TestExtractDmesgIOErrorsIgnoresBenignBootNoise(t *testing.T) {
+	caps := []CapturedCommand{{Cmd: "dmesg", Output: sampleBenignDiskDmesgNoise}}
+	v, ok := extractDmesgIOErrors(SystemInfo{}, caps)
+	if !ok {
+		t.Fatal("expected extraction to succeed for captured dmesg output")
+	}
+	if v.Number != 0 {
+		t.Fatalf("expected no disk I/O errors, got %v (%q)", v.Number, v.Text)
+	}
+	if !strings.Contains(v.Text, "0/2") {
+		t.Errorf("expected 0/2 in text, got %q", v.Text)
+	}
+}
+
+func TestDiskKernelLogGrepIgnoresBenignBootNoise(t *testing.T) {
+	re := regexp.MustCompile("(?i)" + diskKernelLogErrorGrep)
+	for _, line := range strings.Split(sampleBenignDiskDmesgNoise, "\n") {
+		if re.MatchString(line) {
+			t.Fatalf("grep pattern matched benign line %q", line)
+		}
+	}
+	for _, line := range []string{
+		"[Tue Oct 5] blk_update_request: I/O error, dev sda, sector 12345",
+		"[Tue Oct 5] EXT4-fs (sda1): Remounting filesystem read-only",
+		"[Tue Oct 5] XFS (dm-0): metadata I/O error in xfs_trans_read_buf_map",
+		"[Tue Oct 5] XFS (dm-0): Corruption detected. Unmount and run xfs_repair",
+	} {
+		if !re.MatchString(line) {
+			t.Fatalf("grep pattern did not match disk error line %q", line)
+		}
+	}
+}
+
 func TestExtractDmesgIOErrorsRequiresDmesgBaseCmd(t *testing.T) {
 	caps := []CapturedCommand{{Cmd: "vim dmesg.txt", Output: sampleDmesgIOError}}
 	if _, ok := extractDmesgIOErrors(SystemInfo{}, caps); ok {
@@ -245,6 +282,13 @@ func TestDiskDmesgQuestionsSkipsBenign(t *testing.T) {
 	c := CapturedCommand{Cmd: "dmesg", Output: "[Tue Oct  5] kernel boot complete"}
 	if qs := diskDmesgQuestions(SystemInfo{}, c); qs != nil {
 		t.Error("expected no questions for benign dmesg output")
+	}
+}
+
+func TestDiskDmesgQuestionsSkipsBenignBootNoise(t *testing.T) {
+	c := CapturedCommand{Cmd: "dmesg", Output: sampleBenignDiskDmesgNoise}
+	if qs := diskDmesgQuestions(SystemInfo{}, c); qs != nil {
+		t.Error("expected no questions for benign read-only/XFS boot messages")
 	}
 }
 

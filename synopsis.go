@@ -141,6 +141,20 @@ func memorySynopsis(snap Snapshot) []SynopsisIssue {
 			Evidence: fmt.Sprintf("vmstat si max %s, so max %s", formatOptionalNumber(siMax, siOK, ""), formatOptionalNumber(soMax, soOK, "")),
 		})
 	}
+	if v, ok := snap.Values["sar_b_major_faults"]; ok && v.Max() > 0 {
+		issues = append(issues, SynopsisIssue{
+			Section:  "Saturation",
+			Summary:  "major page faults were observed",
+			Evidence: fmt.Sprintf("sar -B majflt/s max was %s", formatNumber(v.Max(), "")),
+		})
+	}
+	if v, ok := snap.Values["sar_b_reclaim_activity"]; ok && v.Max() > 0 {
+		issues = append(issues, SynopsisIssue{
+			Section:  "Saturation",
+			Summary:  "memory reclaim activity was observed",
+			Evidence: fmt.Sprintf("sar -B reclaim activity max was %s", formatNumber(v.Max(), "")),
+		})
+	}
 	if v, ok := snap.Values["psi_mem_full_avg10"]; ok && v.Number > 0 {
 		issues = append(issues, SynopsisIssue{
 			Section:  "Saturation",

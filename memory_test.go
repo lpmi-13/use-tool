@@ -460,6 +460,86 @@ const sampleSarW = `Linux 6.1.0 (host)  10/05/2024  _x86_64_  (4 CPU)
 12:00:03         0.00      0.00
 Average:         0.00      0.50`
 
+const sampleSarB = `Linux 6.1.167 (lab-01)  06/15/26        _x86_64_        (2 CPU)
+
+21:03:58     pgpgin/s pgpgout/s   fault/s  majflt/s  pgfree/s pgscank/s pgscand/s pgsteal/s    %vmeff
+21:03:59         0.00      0.00      3.00      0.00     20.00      0.00      0.00      0.00      0.00
+21:04:00         0.00      0.00      2.00      0.00      0.00      0.00      0.00      0.00      0.00
+21:04:01         0.00     48.00      1.00      0.00      0.00      0.00      0.00      0.00      0.00
+21:04:02         0.00     88.00      1.00      0.00      0.00      0.00      0.00      0.00      0.00
+21:04:03         0.00     24.00      1.00      0.00      0.00      0.00      0.00      0.00      0.00
+Average:         0.00     32.00      1.60      0.00      4.00      0.00      0.00      0.00      0.00`
+
+func TestParseSarBRowsSkipsAverage(t *testing.T) {
+	rows := parseSarBRows(sampleSarB)
+	if len(rows) != 5 {
+		t.Fatalf("expected 5 interval rows, got %d", len(rows))
+	}
+	if got := rows[3]["pgpgout/s"]; got != 88 {
+		t.Fatalf("pgpgout/s row 4 = %v, want 88", got)
+	}
+	if got := rows[0]["fault/s"]; got != 3 {
+		t.Fatalf("fault/s row 1 = %v, want 3", got)
+	}
+}
+
+func TestExtractSarBQuietPagingContext(t *testing.T) {
+	caps := []CapturedCommand{{Cmd: "sar -B 1 5", Output: sampleSarB}}
+
+	ctx, ok := extractSarBPagingContext(SystemInfo{}, caps)
+	if !ok {
+		t.Fatal("expected sar -B context extraction")
+	}
+	if !strings.Contains(ctx.Text, "fault/s max 3") || !strings.Contains(ctx.Text, "pgpgout/s max 88") {
+		t.Fatalf("unexpected sar -B context: %+v", ctx)
+	}
+
+	maj, ok := extractSarBColumn("majflt/s")(SystemInfo{}, caps)
+	if !ok {
+		t.Fatal("expected majflt/s extraction")
+	}
+	if maj.Max() != 0 || verdictSarBMajorFaults(SystemInfo{}, maj, Snapshot{}) != SignalLow {
+		t.Fatalf("majflt/s should read saturation absent, got value=%+v verdict=%v", maj, verdictSarBMajorFaults(SystemInfo{}, maj, Snapshot{}))
+	}
+
+	reclaim, ok := extractSarBReclaimActivity(SystemInfo{}, caps)
+	if !ok {
+		t.Fatal("expected reclaim extraction")
+	}
+	if reclaim.Max() != 0 || verdictSarBReclaimActivity(SystemInfo{}, reclaim, Snapshot{}) != SignalLow {
+		t.Fatalf("reclaim should read saturation absent, got value=%+v verdict=%v", reclaim, verdictSarBReclaimActivity(SystemInfo{}, reclaim, Snapshot{}))
+	}
+}
+
+func TestMemorySarBEvidenceCandidatesExcludeContextOnlyColumns(t *testing.T) {
+	caps := []CapturedCommand{{Cmd: "sar -B 1 5", Output: sampleSarB}}
+	s := &Session{Investigation: memoryInvestigation, System: SystemInfo{}, Captured: caps}
+	snap := s.Snapshot()
+
+	if _, ok := snap.Values["sar_b_paging_context"]; !ok {
+		t.Fatal("expected sar -B context in snapshot report values")
+	}
+	candidates := candidatesByResource(memoryInvestigation, snap)[ResourceMemory]
+	names := map[string]bool{}
+	for _, obs := range candidates {
+		names[obs.Name] = true
+	}
+	for _, want := range []string{"sar_b_major_faults", "sar_b_reclaim_activity"} {
+		if !names[want] {
+			t.Fatalf("expected %s in diagnose evidence candidates; got %#v", want, names)
+		}
+	}
+	if names["sar_b_paging_context"] {
+		t.Fatalf("context-only sar -B row should not be graded evidence; got %#v", names)
+	}
+
+	g := gradeDimension(SystemInfo{}, snap, memoryObservations, "Saturation", "absent",
+		[]string{"sar_b_major_faults", "sar_b_reclaim_activity"})
+	if !g.Accurate || g.Supports != 2 || g.Contradicts != 0 {
+		t.Fatalf("sar -B quiet saturation grade = accurate %v supports %d contradicts %d, want true 2 0", g.Accurate, g.Supports, g.Contradicts)
+	}
+}
+
 const sampleTopMem = `top - 14:32:01 up  3:14,  2 users,  load average: 0.50, 0.30, 0.20
 Tasks: 281 total,   1 running, 280 sleeping,   0 stopped,   0 zombie
 %Cpu(s):  3.5 us,  1.2 sy,  0.0 ni, 95.1 id,  0.2 wa,  0.0 hi,  0.0 si,  0.0 st

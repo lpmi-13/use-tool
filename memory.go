@@ -687,6 +687,29 @@ var memoryObservations = []Observation{
 		Heuristic: "vmstat so > 0 = pages being swapped OUT to disk = active reclaim under memory pressure (the tool drops vmstat's since-boot first row)",
 	},
 	{
+		Name:      "sar_b_major_faults",
+		Title:     "sar -B majflt/s",
+		Section:   "Saturation",
+		Extract:   extractSarBColumn("majflt/s"),
+		Verdict:   verdictSarBMajorFaults,
+		Heuristic: "sar -B majflt/s reports major page faults requiring disk I/O; sustained non-zero values are a memory pressure clue, unlike ordinary fault/s",
+	},
+	{
+		Name:      "sar_b_reclaim_activity",
+		Title:     "sar -B reclaim activity",
+		Section:   "Saturation",
+		Extract:   extractSarBReclaimActivity,
+		Verdict:   verdictSarBReclaimActivity,
+		Heuristic: "sar -B pgscan/pgsteal activity means the kernel is scanning or reclaiming pages under pressure",
+	},
+	{
+		Name:      "sar_b_paging_context",
+		Title:     "sar -B paging context",
+		Section:   "Saturation",
+		Extract:   extractSarBPagingContext,
+		Heuristic: "sar -B fault/s includes routine minor faults, and pgpgout/s can be ordinary file writeback; treat them as context, not saturation evidence by themselves",
+	},
+	{
 		Name:      "psi_mem_some_avg10",
 		Title:     "PSI memory some (avg10)",
 		Section:   "Saturation",
@@ -737,6 +760,24 @@ func verdictSwapUsed(_ SystemInfo, v Value, _ Snapshot) Signal {
 }
 
 func verdictSwapActivity(_ SystemInfo, v Value, _ Snapshot) Signal {
+	if v.Max() > 0 {
+		return SignalHigh
+	}
+	return SignalLow
+}
+
+func verdictSarBMajorFaults(_ SystemInfo, v Value, _ Snapshot) Signal {
+	switch {
+	case v.Max() >= 10:
+		return SignalHigh
+	case v.Max() > 0:
+		return SignalModerate
+	default:
+		return SignalLow
+	}
+}
+
+func verdictSarBReclaimActivity(_ SystemInfo, v Value, _ Snapshot) Signal {
 	if v.Max() > 0 {
 		return SignalHigh
 	}
@@ -974,6 +1015,119 @@ func findMeminfoOutput(caps []CapturedCommand) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func extractSarBColumn(column string) func(SystemInfo, []CapturedCommand) (Value, bool) {
+	return func(_ SystemInfo, caps []CapturedCommand) (Value, bool) {
+		var samples []float64
+		for _, c := range caps {
+			if baseCmd(c.Cmd) != "sar" {
+				continue
+			}
+			for _, row := range parseSarBRows(c.Output) {
+				if v, ok := row[column]; ok {
+					samples = append(samples, v)
+				}
+			}
+		}
+		if len(samples) == 0 {
+			return Value{}, false
+		}
+		return Value{Samples: samples}, true
+	}
+}
+
+func extractSarBReclaimActivity(_ SystemInfo, caps []CapturedCommand) (Value, bool) {
+	var samples []float64
+	var stealMax float64
+	for _, c := range caps {
+		if baseCmd(c.Cmd) != "sar" {
+			continue
+		}
+		for _, row := range parseSarBRows(c.Output) {
+			scan := row["pgscank/s"] + row["pgscand/s"]
+			steal := row["pgsteal/s"]
+			samples = append(samples, scan+steal)
+			if steal > stealMax {
+				stealMax = steal
+			}
+		}
+	}
+	if len(samples) == 0 {
+		return Value{}, false
+	}
+	return Value{
+		Samples: samples,
+		Note:    fmt.Sprintf("pgscank/s + pgscand/s + pgsteal/s; pgsteal/s max %s", formatNumber(stealMax, "")),
+	}, true
+}
+
+func extractSarBPagingContext(_ SystemInfo, caps []CapturedCommand) (Value, bool) {
+	var faultMax, pgpgoutMax float64
+	var seen bool
+	for _, c := range caps {
+		if baseCmd(c.Cmd) != "sar" {
+			continue
+		}
+		for _, row := range parseSarBRows(c.Output) {
+			seen = true
+			if v := row["fault/s"]; v > faultMax {
+				faultMax = v
+			}
+			if v := row["pgpgout/s"]; v > pgpgoutMax {
+				pgpgoutMax = v
+			}
+		}
+	}
+	if !seen {
+		return Value{}, false
+	}
+	return Value{
+		Text: fmt.Sprintf("fault/s max %s, pgpgout/s max %s",
+			formatNumber(faultMax, ""), formatNumber(pgpgoutMax, "")),
+		Note: "context only: fault/s includes minor faults; pgpgout/s is not swap-out",
+	}, true
+}
+
+func parseSarBRows(output string) []map[string]float64 {
+	lines := strings.Split(output, "\n")
+	var rows []map[string]float64
+	var headers []string
+
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			headers = nil
+			continue
+		}
+		if isSarBHeader(fields) {
+			headers = fields
+			continue
+		}
+		if headers == nil || strings.HasPrefix(fields[0], "Average:") || !isTimestamp(fields[0]) {
+			continue
+		}
+		if len(fields) != len(headers) {
+			continue
+		}
+		row := make(map[string]float64, len(headers))
+		for i, h := range headers {
+			n, err := strconv.ParseFloat(fields[i], 64)
+			if err == nil {
+				row[h] = n
+			}
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func isSarBHeader(fields []string) bool {
+	return isTimestamp(fields[0]) &&
+		indexOfStr(fields, "pgpgin/s") > 0 &&
+		indexOfStr(fields, "pgpgout/s") > 0 &&
+		indexOfStr(fields, "fault/s") > 0 &&
+		indexOfStr(fields, "majflt/s") > 0
 }
 
 func extractMemUsedPct(si SystemInfo, caps []CapturedCommand) (Value, bool) {

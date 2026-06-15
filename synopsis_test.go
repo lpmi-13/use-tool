@@ -63,6 +63,8 @@ func TestMemorySynopsisIdentifiesSaturationAndErrors(t *testing.T) {
 		"swap_used_pct":          {Number: 0},
 		"vmstat_si":              {Samples: []float64{0, 0}},
 		"vmstat_so":              {Samples: []float64{0, 8}},
+		"sar_b_major_faults":     {Samples: []float64{0, 12}},
+		"sar_b_reclaim_activity": {Samples: []float64{0, 5}},
 		"psi_mem_full_avg10":     {Number: 0.8},
 		"dmesg_oom_count":        {Text: "2/5 lines mention OOM"},
 		"dmesg_cpu_keywords":     {Text: "0/0 lines mention CPU/thermal/MCE keywords"},
@@ -75,6 +77,12 @@ func TestMemorySynopsisIdentifiesSaturationAndErrors(t *testing.T) {
 	}
 	if !hasSynopsis(issues, "Saturation", "paging activity") {
 		t.Fatalf("expected paging saturation issue, got %#v", issues)
+	}
+	if !hasSynopsis(issues, "Saturation", "major page faults") {
+		t.Fatalf("expected sar -B major fault issue, got %#v", issues)
+	}
+	if !hasSynopsis(issues, "Saturation", "memory reclaim activity") {
+		t.Fatalf("expected sar -B reclaim issue, got %#v", issues)
 	}
 	if !hasSynopsis(issues, "Saturation", "full memory pressure") {
 		t.Fatalf("expected PSI saturation issue, got %#v", issues)
@@ -123,9 +131,14 @@ func TestMemorySynopsisQuietWhenNoSignalsCrossThresholds(t *testing.T) {
 		"swap_used_pct":      {Number: 0},
 		"vmstat_si":          {Samples: []float64{0, 0}},
 		"vmstat_so":          {Samples: []float64{0, 0}},
-		"psi_mem_some_avg10": {Number: 0},
-		"psi_mem_full_avg10": {Number: 0},
-		"dmesg_oom_count":    {Text: "0/3 lines mention OOM"},
+		"sar_b_major_faults": {Samples: []float64{0, 0}},
+		// Non-zero fault/s and pgpgout/s are context-only and should not
+		// produce a synopsis issue without major faults or reclaim activity.
+		"sar_b_paging_context":   {Text: "fault/s max 3, pgpgout/s max 88"},
+		"sar_b_reclaim_activity": {Samples: []float64{0, 0}},
+		"psi_mem_some_avg10":     {Number: 0},
+		"psi_mem_full_avg10":     {Number: 0},
+		"dmesg_oom_count":        {Text: "0/3 lines mention OOM"},
 	}}
 	if issues := memorySynopsis(snap); len(issues) != 0 {
 		t.Fatalf("expected no memory issues, got %#v", issues)

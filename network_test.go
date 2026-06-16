@@ -66,6 +66,8 @@ const sampleSsTinBackedUp = `State Recv-Q Send-Q Local Address:Port Peer Address
 ESTAB 0      131072 10.231.0.1:43000 10.231.0.2:5201
      cubic wscale:7,7 rto:201 rtt:0.052/0.012 mss:1448 pmtu:1500 cwnd:10 retrans:0/3 bytes_sent:1000 bytes_acked:900 rwnd_limited:120ms(15.2%) sndbuf_limited:20ms(2.3%)`
 
+const sampleSsTinHeaderOnly = `State Recv-Q Send-Q Local Address:Port Peer Address:Port Process`
+
 const sampleIpLink = `1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT
     link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
     RX:  bytes  packets  errors  dropped overrun mcast
@@ -264,6 +266,17 @@ func TestExtractTCPEstabFromSsSummary(t *testing.T) {
 	}
 }
 
+func TestExtractTCPEstabFromSsTinHeaderOnly(t *testing.T) {
+	caps := []CapturedCommand{{Cmd: "ss -tin", Output: sampleSsTinHeaderOnly}}
+	v, ok := extractTCPEstab(SystemInfo{}, caps)
+	if !ok {
+		t.Fatal("expected extraction to succeed")
+	}
+	if v.Number != 0 {
+		t.Errorf("got %v, want 0", v.Number)
+	}
+}
+
 func TestSsInfoQuestions(t *testing.T) {
 	qs := ssInfoQuestions(SystemInfo{}, CapturedCommand{Cmd: "ss -tin", Output: sampleSsTinClean})
 	if len(qs) == 0 {
@@ -271,10 +284,26 @@ func TestSsInfoQuestions(t *testing.T) {
 	}
 }
 
+func TestSsInfoQuestionsHeaderOnly(t *testing.T) {
+	qs := ssInfoQuestions(SystemInfo{}, CapturedCommand{Cmd: "ss -tin", Output: sampleSsTinHeaderOnly})
+	if len(qs) != 1 {
+		t.Fatalf("expected 1 header-only question, got %d", len(qs))
+	}
+	if !strings.Contains(qs[0].Stem, "header row") {
+		t.Errorf("expected header-only question stem, got %q", qs[0].Stem)
+	}
+}
+
 func TestParseSsTCPInfoClean(t *testing.T) {
 	stats := parseSsTCPInfo(sampleSsTinClean)
-	if !stats.Seen {
+	if !stats.Captured {
 		t.Fatal("expected ss tcp info to be detected")
+	}
+	if !stats.HasEstablished {
+		t.Fatal("expected established TCP socket to be detected")
+	}
+	if stats.EstablishedCount != 1 {
+		t.Errorf("EstablishedCount = %v, want 1", stats.EstablishedCount)
 	}
 	if stats.MaxSendQ != 0 {
 		t.Errorf("MaxSendQ = %v, want 0", stats.MaxSendQ)
@@ -289,8 +318,14 @@ func TestParseSsTCPInfoClean(t *testing.T) {
 
 func TestParseSsTCPInfoBackedUp(t *testing.T) {
 	stats := parseSsTCPInfo(sampleSsTinBackedUp)
-	if !stats.Seen {
+	if !stats.Captured {
 		t.Fatal("expected ss tcp info to be detected")
+	}
+	if !stats.HasEstablished {
+		t.Fatal("expected established TCP socket to be detected")
+	}
+	if stats.EstablishedCount != 1 {
+		t.Errorf("EstablishedCount = %v, want 1", stats.EstablishedCount)
 	}
 	if stats.MaxSendQ != 131072 {
 		t.Errorf("MaxSendQ = %v, want 131072", stats.MaxSendQ)
@@ -300,6 +335,19 @@ func TestParseSsTCPInfoBackedUp(t *testing.T) {
 	}
 	if stats.MaxLimitedPct != 15.2 {
 		t.Errorf("MaxLimitedPct = %v, want 15.2", stats.MaxLimitedPct)
+	}
+}
+
+func TestParseSsTCPInfoHeaderOnly(t *testing.T) {
+	stats := parseSsTCPInfo(sampleSsTinHeaderOnly)
+	if !stats.Captured {
+		t.Fatal("expected header-only ss output to count as captured")
+	}
+	if stats.HasEstablished {
+		t.Fatal("expected no established TCP sockets")
+	}
+	if stats.EstablishedCount != 0 {
+		t.Errorf("EstablishedCount = %v, want 0", stats.EstablishedCount)
 	}
 }
 
@@ -325,6 +373,31 @@ func TestExtractSsTCPSaturationSignals(t *testing.T) {
 	}
 	if limited.Number != 15.2 {
 		t.Errorf("limited pct = %v, want 15.2", limited.Number)
+	}
+}
+
+func TestExtractSsTCPSaturationSignalsHeaderOnly(t *testing.T) {
+	caps := []CapturedCommand{{Cmd: "ss -tin", Output: sampleSsTinHeaderOnly}}
+	sendQ, ok := extractSsTCPMaxSendQ(SystemInfo{}, caps)
+	if !ok {
+		t.Fatal("expected Send-Q extraction")
+	}
+	if sendQ.Number != 0 || !strings.Contains(sendQ.Note, "no established TCP sockets") {
+		t.Errorf("Send-Q = %#v, want zero with idle note", sendQ)
+	}
+	retrans, ok := extractSsTCPRetransSockets(SystemInfo{}, caps)
+	if !ok {
+		t.Fatal("expected retrans extraction")
+	}
+	if retrans.Number != 0 || !strings.Contains(retrans.Note, "no established TCP sockets") {
+		t.Errorf("retrans = %#v, want zero with idle note", retrans)
+	}
+	limited, ok := extractSsTCPLimitedPct(SystemInfo{}, caps)
+	if !ok {
+		t.Fatal("expected limited-time extraction")
+	}
+	if limited.Number != 0 || !strings.Contains(limited.Note, "no established TCP sockets") {
+		t.Errorf("limited = %#v, want zero with idle note", limited)
 	}
 }
 
@@ -583,6 +656,19 @@ func TestNetworkSarStepsUseNoiseFilter(t *testing.T) {
 		if step.Filter == nil {
 			t.Fatalf("expected %s guide step to filter noisy interfaces", name)
 		}
+	}
+}
+
+func TestNetworkTCPStepDefaultsToNetstatAndOffersSsAlternative(t *testing.T) {
+	step, ok := findGuideStep(networkSteps(SystemInfo{}), "tcp")
+	if !ok {
+		t.Fatal("expected tcp guide step")
+	}
+	if step.Suggested != "netstat -s" {
+		t.Errorf("Suggested = %q, want %q", step.Suggested, "netstat -s")
+	}
+	if len(step.Alternatives) != 1 || step.Alternatives[0] != "ss -tin" {
+		t.Errorf("Alternatives = %v, want [ss -tin]", step.Alternatives)
 	}
 }
 

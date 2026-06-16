@@ -32,9 +32,6 @@ func networkSteps(si SystemInfo) []GuideStep {
 	interfaceVariants := networkInterfaceVariants()
 	interfacePick := pickStepVariant(si, interfaceVariants)
 
-	tcpVariants := networkTCPVariants()
-	tcpPick := pickStepVariant(si, tcpVariants)
-
 	return []GuideStep{
 		{
 			Name:          "interfaces",
@@ -80,10 +77,15 @@ func networkSteps(si SystemInfo) []GuideStep {
 		{
 			Name:          "tcp",
 			Intro:         "Step 4: protocol-level signals — TCP retransmits and listen overflows.",
-			Suggested:     tcpPick.Cmd,
-			QuestionsFn:   combineVariantQuestions(tcpVariants),
+			Suggested:     "netstat -s",
+			Alternatives:  []string{"ss -tin"},
+			QuestionsFn:   combineVariantQuestions(networkTCPVariants()),
 			QuestionCount: 3,
-			Teaching:      tcpPick.Teaching,
+			Teaching: "`netstat -s` is the reliable first pass here because it always shows\n" +
+				"cumulative TCP counters like retransmits and listen-queue overflows.\n" +
+				"`ss -tin` is the live complement: it shows per-socket TCP state only\n" +
+				"for currently established TCP connections, so on an idle host it may\n" +
+				"print only the header line.",
 		},
 		{
 			Name:          "sockets",
@@ -322,7 +324,9 @@ func networkTCPVariants() []stepVariant {
 				"state. In the table, Send-Q is locally queued/unacknowledged data.\n" +
 				"In the indented TCP-info line, `retrans:` shows live retransmission\n" +
 				"state and fields like `rwnd_limited` / `sndbuf_limited` show time\n" +
-				"spent limited by peer receive window or local send buffer pressure.",
+				"spent limited by peer receive window or local send buffer pressure.\n" +
+				"If there are no established TCP sockets at capture time, `ss -tin`\n" +
+				"may print only the header row.",
 		},
 		{
 			Cmd:         "netstat -s",
@@ -752,6 +756,17 @@ func outputHasTokenName(output, name string) bool {
 }
 
 func ssInfoQuestions(si SystemInfo, c CapturedCommand) []Question {
+	if ssInfoHeaderOnly(c.Output) {
+		return []Question{{
+			Stem:    "In `ss -tin`, seeing only the header row and no socket entries means:",
+			Correct: "There were no established TCP sockets to inspect at capture time, so there was no live per-socket TCP info to show",
+			Distractors: []string{
+				"The kernel cleared all TCP statistics since boot",
+				"TCP listeners were hidden because you forgot `sudo`",
+				"The interface transmit queue was empty, so socket rows were suppressed",
+			},
+		}}
+	}
 	if !ssInfoOutputDetected(c.Output) {
 		return nil
 	}
@@ -792,6 +807,23 @@ func ssInfoOutputDetected(output string) bool {
 		strings.Contains(low, "retrans:") ||
 		strings.Contains(low, "rwnd_limited:") ||
 		strings.Contains(low, "sndbuf_limited:")
+}
+
+func ssInfoHeaderOnly(output string) bool {
+	trimmed := strings.TrimSpace(output)
+	if trimmed == "" {
+		return false
+	}
+	lines := strings.Split(trimmed, "\n")
+	if len(lines) != 1 {
+		return false
+	}
+	line := lines[0]
+	return strings.Contains(line, "State") &&
+		strings.Contains(line, "Recv-Q") &&
+		strings.Contains(line, "Send-Q") &&
+		strings.Contains(line, "Local Address:Port") &&
+		strings.Contains(line, "Peer Address:Port")
 }
 
 var snmpTcpHeaderRe = regexp.MustCompile(`(?m)^Tcp:\s+RtoAlgorithm`)
@@ -1390,6 +1422,9 @@ func extractTCPEstab(si SystemInfo, caps []CapturedCommand) (Value, bool) {
 	if estab, ok := findSsEstab(caps); ok {
 		return Value{Number: estab}, true
 	}
+	if stats, ok := findSsTCPInfoStats(caps); ok {
+		return Value{Number: stats.EstablishedCount}, true
+	}
 	out, ok := findSnmpOutput(caps)
 	if !ok {
 		return Value{}, false
@@ -1463,16 +1498,21 @@ func parseSsEstab(output string) (float64, bool) {
 }
 
 type ssTCPInfoStats struct {
-	Seen           bool
-	MaxSendQ       float64
-	RetransSockets float64
-	MaxLimitedPct  float64
+	Captured         bool
+	HasEstablished   bool
+	EstablishedCount float64
+	MaxSendQ         float64
+	RetransSockets   float64
+	MaxLimitedPct    float64
 }
 
 func extractSsTCPMaxSendQ(si SystemInfo, caps []CapturedCommand) (Value, bool) {
 	stats, ok := findSsTCPInfoStats(caps)
 	if !ok {
 		return Value{}, false
+	}
+	if !stats.HasEstablished {
+		return Value{Number: 0, Unit: " B", Note: "no established TCP sockets at capture time"}, true
 	}
 	return Value{Number: stats.MaxSendQ, Unit: " B", Note: "established TCP sockets"}, true
 }
@@ -1482,6 +1522,9 @@ func extractSsTCPRetransSockets(si SystemInfo, caps []CapturedCommand) (Value, b
 	if !ok {
 		return Value{}, false
 	}
+	if !stats.HasEstablished {
+		return Value{Number: 0, Unit: " sockets", Note: "no established TCP sockets at capture time"}, true
+	}
 	return Value{Number: stats.RetransSockets, Unit: " sockets"}, true
 }
 
@@ -1489,6 +1532,9 @@ func extractSsTCPLimitedPct(si SystemInfo, caps []CapturedCommand) (Value, bool)
 	stats, ok := findSsTCPInfoStats(caps)
 	if !ok {
 		return Value{}, false
+	}
+	if !stats.HasEstablished {
+		return Value{Number: 0, Unit: "%", Note: "no established TCP sockets at capture time"}, true
 	}
 	return Value{Number: stats.MaxLimitedPct, Unit: "%", Note: "max rwnd/sndbuf limited time"}, true
 }
@@ -1498,7 +1544,7 @@ func findSsTCPInfoStats(caps []CapturedCommand) (ssTCPInfoStats, bool) {
 		if commandBase(caps[i].Cmd) != "ss" {
 			continue
 		}
-		if stats := parseSsTCPInfo(caps[i].Output); stats.Seen {
+		if stats := parseSsTCPInfo(caps[i].Output); stats.Captured {
 			return stats, true
 		}
 	}
@@ -1507,20 +1553,28 @@ func findSsTCPInfoStats(caps []CapturedCommand) (ssTCPInfoStats, bool) {
 
 func parseSsTCPInfo(output string) ssTCPInfoStats {
 	var stats ssTCPInfoStats
+	if ssInfoHeaderOnly(output) {
+		stats.Captured = true
+		return stats
+	}
 	for _, line := range strings.Split(output, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) == 0 {
 			continue
 		}
 		if len(fields) >= 3 && isTCPSocketState(fields[0]) {
-			stats.Seen = true
+			stats.Captured = true
+			if strings.EqualFold(fields[0], "ESTAB") {
+				stats.HasEstablished = true
+				stats.EstablishedCount++
+			}
 			if sendQ, err := strconv.ParseFloat(fields[2], 64); err == nil && sendQ > stats.MaxSendQ {
 				stats.MaxSendQ = sendQ
 			}
 			continue
 		}
 		if strings.Contains(line, "cwnd:") || strings.Contains(line, "retrans:") {
-			stats.Seen = true
+			stats.Captured = true
 		}
 		if ssLineHasRetrans(line) {
 			stats.RetransSockets++
@@ -1830,7 +1884,7 @@ var networkCommands = []CommandRef{
 	{
 		Cmd:          "ss -tin",
 		Section:      "Saturation",
-		Summary:      "Live established TCP socket state.\nNon-zero Send-Q, retrans, rwnd_limited, or sndbuf_limited points at socket/path backpressure.",
+		Summary:      "Live established TCP socket state.\nNon-zero Send-Q, retrans, rwnd_limited, or sndbuf_limited points at socket/path backpressure.\nMay show only the header row when there are no established TCP sockets.",
 		DiagnoseRank: 2,
 	},
 	{

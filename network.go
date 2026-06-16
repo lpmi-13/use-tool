@@ -803,7 +803,7 @@ func procNetDevColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 	}
 	return []Question{
 		{
-			Stem:    "In `/proc/net/dev`, what does receive `bytes` represent?",
+			Stem:    "In `/proc/net/dev`, in the `Receive` section, what does the `bytes` column represent?",
 			Correct: "Running total of bytes received by the interface",
 			Distractors: []string{
 				"Current receive throughput in bytes per second",
@@ -812,7 +812,7 @@ func procNetDevColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 			},
 		},
 		{
-			Stem:    "In `/proc/net/dev`, what does receive `errs` represent?",
+			Stem:    "In `/proc/net/dev`, in the `Receive` section, what does the `errs` column represent?",
 			Correct: "Running total of receive errors for the interface",
 			Distractors: []string{
 				"TCP errors reported by applications",
@@ -821,7 +821,7 @@ func procNetDevColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 			},
 		},
 		{
-			Stem:    "In `/proc/net/dev`, what does receive `drop` represent?",
+			Stem:    "In `/proc/net/dev`, in the `Receive` section, what does the `drop` column represent?",
 			Correct: "Running total of received packets dropped before delivery",
 			Distractors: []string{
 				"TCP retransmitted packets",
@@ -830,7 +830,7 @@ func procNetDevColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 			},
 		},
 		{
-			Stem:    "In `/proc/net/dev`, what does transmit `bytes` represent?",
+			Stem:    "In `/proc/net/dev`, in the `Transmit` section, what does the `bytes` column represent?",
 			Correct: "Running total of bytes transmitted by the interface",
 			Distractors: []string{
 				"Current transmit throughput in bytes per second",
@@ -839,7 +839,7 @@ func procNetDevColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 			},
 		},
 		{
-			Stem:    "In `/proc/net/dev`, what does transmit `drop` represent?",
+			Stem:    "In `/proc/net/dev`, in the `Transmit` section, what does the `drop` column represent?",
 			Correct: "Running total of outgoing packets dropped before transmission",
 			Distractors: []string{
 				"Incoming packets dropped by the peer",

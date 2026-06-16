@@ -482,6 +482,24 @@ func TestFilterNoiseInterfacesProcNetDev(t *testing.T) {
 	}
 }
 
+func TestProcNetDevColumnQuestionsNameSectionAndColumn(t *testing.T) {
+	qs := procNetDevColumnQuestions(SystemInfo{}, CapturedCommand{
+		Cmd:    "cat /proc/net/dev",
+		Output: sampleProcNetDev,
+	})
+	if len(qs) == 0 {
+		t.Fatal("expected /proc/net/dev questions")
+	}
+	for _, q := range qs {
+		if !strings.Contains(q.Stem, "section") {
+			t.Errorf("expected stem to name the section, got %q", q.Stem)
+		}
+		if !strings.Contains(q.Stem, "column") {
+			t.Errorf("expected stem to name the column, got %q", q.Stem)
+		}
+	}
+}
+
 const sampleSarDevWithVeth = sampleSarDev + `
 14:00:04       veth1a2b3c      9.00      8.00      7.00      6.00      0.00      0.00      0.00      0.00
 Average:       veth1a2b3c      9.00      8.00      7.00      6.00      0.00      0.00      0.00      0.00`

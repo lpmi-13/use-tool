@@ -75,6 +75,14 @@ Produces a single static binary in the project root.
 ## Run
 
 ```sh
+# Choose a command interactively
+use-tool
+
+# Choose a resource interactively
+use-tool guide
+use-tool practice
+use-tool commands
+
 # Step-by-step USE walkthrough
 use-tool guide cpu
 

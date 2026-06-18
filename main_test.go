@@ -27,6 +27,125 @@ func TestSuggestCommandTooDistant(t *testing.T) {
 	}
 }
 
+func TestBareCommandUsesSubcommandSelector(t *testing.T) {
+	oldArgs := os.Args
+	oldSelector := menuSelector
+	defer func() {
+		os.Args = oldArgs
+		menuSelector = oldSelector
+	}()
+
+	os.Args = []string{"use-tool"}
+	menuSelector = func(spec menuSpec) (string, error) {
+		if spec.Title != "use-tool - choose a command" {
+			t.Fatalf("selector title = %q", spec.Title)
+		}
+		if !optionValuesContain(spec.Options, "guide", "practice", "commands", "list", "version", "help") {
+			t.Fatalf("selector options = %#v", spec.Options)
+		}
+		return "version", nil
+	}
+
+	out := captureStdout(main)
+	if !strings.Contains(out, "use-tool ") {
+		t.Fatalf("version output missing app name: %q", out)
+	}
+}
+
+func TestResourceMenusMatchSubcommand(t *testing.T) {
+	practice := resourceMenuOptions("practice")
+	if !optionValuesContain(practice, "cpu", "disk", "memory", "network", "system") {
+		t.Fatalf("practice resources = %#v", practice)
+	}
+
+	guide := resourceMenuOptions("guide")
+	if !optionValuesContain(guide, "cpu", "disk", "memory", "network") {
+		t.Fatalf("guide resources = %#v", guide)
+	}
+	if optionValuesContain(guide, "system") {
+		t.Fatalf("guide resources should not include practice-only system target: %#v", guide)
+	}
+}
+
+func TestChooseResourceUsesSelector(t *testing.T) {
+	oldSelector := menuSelector
+	defer func() { menuSelector = oldSelector }()
+
+	menuSelector = func(spec menuSpec) (string, error) {
+		if spec.Title != "use-tool practice - choose a resource" {
+			t.Fatalf("selector title = %q", spec.Title)
+		}
+		if spec.Fallback != "cpu" {
+			t.Fatalf("selector fallback = %q, want cpu", spec.Fallback)
+		}
+		return "memory", nil
+	}
+
+	got, err := chooseResourceForCommand("practice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "memory" {
+		t.Fatalf("chooseResourceForCommand() = %q, want memory", got)
+	}
+}
+
+func TestCommandsWithoutResourceUsesResourceSelector(t *testing.T) {
+	oldSelector := menuSelector
+	defer func() { menuSelector = oldSelector }()
+
+	menuSelector = func(spec menuSpec) (string, error) {
+		if spec.Title != "use-tool commands - choose a resource" {
+			t.Fatalf("selector title = %q", spec.Title)
+		}
+		return "network", nil
+	}
+
+	out := captureStdout(func() {
+		cmdCommands(nil)
+	})
+	if !strings.Contains(out, "Network — Utilization, Saturation, Errors — command reference") {
+		t.Fatalf("commands output did not use selected resource:\n%s", out)
+	}
+}
+
+func TestRenderMenuSelectorIncludesOptionsAndHelp(t *testing.T) {
+	lines := 0
+	got := captureStdout(func() {
+		lines = renderMenuSelector("choose", []menuOption{
+			{Label: "guide", Summary: "Guided walkthrough"},
+			{Label: "practice", Summary: "Free-form investigation"},
+		}, 1, true)
+	})
+	for _, want := range []string{
+		"choose",
+		"  1. guide",
+		"> 2. practice",
+		"Up/k, Down/j",
+		"Enter",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("rendered selector missing %q:\n%s", want, got)
+		}
+	}
+	if lines == 0 {
+		t.Fatal("renderMenuSelector reported no lines")
+	}
+}
+
+func optionValuesContain(options []menuOption, values ...string) bool {
+	have := map[string]bool{}
+	for _, option := range options {
+		have[option.Value] = true
+	}
+	for _, value := range values {
+		if !have[value] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestCommandStatusMarksUnavailableRequirements(t *testing.T) {
 	ref := CommandRef{
 		Cmd:      "mpstat -P ALL 1 N",

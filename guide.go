@@ -19,8 +19,11 @@ func isLikelyChoiceAnswer(line string) bool {
 
 func cmdGuide(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: use-tool guide <resource>")
-		os.Exit(2)
+		resource, err := chooseResourceForCommand("guide")
+		if err != nil {
+			exitSelectionError(err)
+		}
+		args = []string{resource}
 	}
 	inv, err := getInvestigation(args[0])
 	if err != nil {

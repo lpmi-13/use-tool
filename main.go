@@ -65,18 +65,28 @@ const (
 )
 
 func main() {
-	if len(os.Args) < 2 {
-		usage(2)
-	}
 	exitOnSigint()
 
-	switch os.Args[1] {
+	args := os.Args[1:]
+	if len(args) == 0 {
+		cmd, err := chooseSubcommand()
+		if err != nil {
+			exitSelectionError(err)
+		}
+		dispatchCommand(cmd, nil)
+		return
+	}
+	dispatchCommand(args[0], args[1:])
+}
+
+func dispatchCommand(cmd string, args []string) {
+	switch cmd {
 	case "guide":
-		cmdGuide(os.Args[2:])
+		cmdGuide(args)
 	case "practice":
-		cmdPractice(os.Args[2:])
+		cmdPractice(args)
 	case "commands":
-		cmdCommands(os.Args[2:])
+		cmdCommands(args)
 	case "list":
 		cmdList()
 	case "version", "--version", "-v":
@@ -84,7 +94,7 @@ func main() {
 	case "help", "--help", "-h":
 		usage(0)
 	default:
-		unknownCommand(os.Args[1])
+		unknownCommand(cmd)
 	}
 }
 
@@ -106,12 +116,13 @@ func usage(code int) {
 	}
 	fmt.Fprintf(out, `%s %s — practice the USE method on a live Linux system
 
-New here? Run: use-tool guide cpu
+New here? Run: use-tool guide
 
 Usage:
-  use-tool guide <resource>     Walk through the USE method as a guided checklist
-  use-tool practice <resource>  Free-form investigation, then understanding check
-  use-tool commands <resource>  Print a reference of relevant commands and what they show
+  use-tool                      Choose a command interactively
+  use-tool guide [resource]     Walk through the USE method as a guided checklist
+  use-tool practice [resource]  Free-form investigation, then understanding check
+  use-tool commands [resource]  Print a reference of relevant commands and what they show
   use-tool list                 Show available resources
   use-tool version              Print version
   use-tool help                 This message
@@ -129,8 +140,11 @@ func cmdList() {
 
 func cmdCommands(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: use-tool commands <resource>")
-		os.Exit(2)
+		resource, err := chooseResourceForCommand("commands")
+		if err != nil {
+			exitSelectionError(err)
+		}
+		args = []string{resource}
 	}
 	inv, err := getInvestigation(args[0])
 	if err != nil {

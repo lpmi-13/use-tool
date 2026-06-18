@@ -7,8 +7,11 @@ import (
 
 func cmdPractice(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: use-tool practice <resource>")
-		os.Exit(2)
+		resource, err := chooseResourceForCommand("practice")
+		if err != nil {
+			exitSelectionError(err)
+		}
+		args = []string{resource}
 	}
 	inv, err := getInvestigation(args[0])
 	if err != nil {

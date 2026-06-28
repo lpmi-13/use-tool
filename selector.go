@@ -24,6 +24,7 @@ type menuSpec struct {
 type menuSelectorFunc func(menuSpec) (string, error)
 
 var menuSelector menuSelectorFunc = terminalMenuSelector
+var hasRenderedMenuSelector bool
 
 func chooseSubcommand() (string, error) {
 	return selectMenuValue(menuSpec{
@@ -48,6 +49,10 @@ func selectMenuValue(spec menuSpec) (string, error) {
 	if menuSelector == nil {
 		return spec.Fallback, nil
 	}
+	if hasRenderedMenuSelector {
+		fmt.Println()
+	}
+	hasRenderedMenuSelector = true
 	return menuSelector(spec)
 }
 

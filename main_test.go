@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"fmt"
 	"math/rand"
 	"os"
 	"sort"
@@ -69,7 +70,11 @@ func TestResourceMenusMatchSubcommand(t *testing.T) {
 
 func TestChooseResourceUsesSelector(t *testing.T) {
 	oldSelector := menuSelector
-	defer func() { menuSelector = oldSelector }()
+	oldRendered := hasRenderedMenuSelector
+	defer func() {
+		menuSelector = oldSelector
+		hasRenderedMenuSelector = oldRendered
+	}()
 
 	menuSelector = func(spec menuSpec) (string, error) {
 		if spec.Title != "use-tool practice - choose a resource" {
@@ -87,6 +92,31 @@ func TestChooseResourceUsesSelector(t *testing.T) {
 	}
 	if got != "memory" {
 		t.Fatalf("chooseResourceForCommand() = %q, want memory", got)
+	}
+}
+
+func TestSecondSelectorAddsBlankLineSeparator(t *testing.T) {
+	oldSelector := menuSelector
+	oldRendered := hasRenderedMenuSelector
+	defer func() {
+		menuSelector = oldSelector
+		hasRenderedMenuSelector = oldRendered
+	}()
+
+	hasRenderedMenuSelector = false
+	menuSelector = func(spec menuSpec) (string, error) {
+		fmt.Printf("selector: %s\n", spec.Title)
+		return spec.Options[0].Value, nil
+	}
+
+	out := captureStdout(func() {
+		_, _ = chooseSubcommand()
+		_, _ = chooseResourceForCommand("guide")
+	})
+
+	want := "selector: use-tool - choose a command\n\nselector: use-tool guide - choose a resource\n"
+	if out != want {
+		t.Fatalf("selector spacing = %q, want %q", out, want)
 	}
 }
 

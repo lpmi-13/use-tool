@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"fmt"
 	"math/rand"
 	"os"
 	"sort"
@@ -70,11 +69,7 @@ func TestResourceMenusMatchSubcommand(t *testing.T) {
 
 func TestChooseResourceUsesSelector(t *testing.T) {
 	oldSelector := menuSelector
-	oldRendered := hasRenderedMenuSelector
-	defer func() {
-		menuSelector = oldSelector
-		hasRenderedMenuSelector = oldRendered
-	}()
+	defer func() { menuSelector = oldSelector }()
 
 	menuSelector = func(spec menuSpec) (string, error) {
 		if spec.Title != "use-tool practice - choose a resource" {
@@ -92,31 +87,6 @@ func TestChooseResourceUsesSelector(t *testing.T) {
 	}
 	if got != "memory" {
 		t.Fatalf("chooseResourceForCommand() = %q, want memory", got)
-	}
-}
-
-func TestSecondSelectorAddsBlankLineSeparator(t *testing.T) {
-	oldSelector := menuSelector
-	oldRendered := hasRenderedMenuSelector
-	defer func() {
-		menuSelector = oldSelector
-		hasRenderedMenuSelector = oldRendered
-	}()
-
-	hasRenderedMenuSelector = false
-	menuSelector = func(spec menuSpec) (string, error) {
-		fmt.Printf("selector: %s\n", spec.Title)
-		return spec.Options[0].Value, nil
-	}
-
-	out := captureStdout(func() {
-		_, _ = chooseSubcommand()
-		_, _ = chooseResourceForCommand("guide")
-	})
-
-	want := "selector: use-tool - choose a command\n\nselector: use-tool guide - choose a resource\n"
-	if out != want {
-		t.Fatalf("selector spacing = %q, want %q", out, want)
 	}
 }
 
@@ -160,6 +130,25 @@ func TestRenderMenuSelectorIncludesOptionsAndHelp(t *testing.T) {
 	}
 	if lines == 0 {
 		t.Fatal("renderMenuSelector reported no lines")
+	}
+}
+
+func TestRedrawMenuSelectorClearsScreenOnEveryRender(t *testing.T) {
+	options := []menuOption{
+		{Label: "guide", Summary: "Guided walkthrough"},
+		{Label: "practice", Summary: "Free-form investigation"},
+	}
+
+	got := captureStdout(func() {
+		redrawMenuSelector("choose", options, 0, false)
+		redrawMenuSelector("choose", options, 1, false)
+	})
+
+	if count := strings.Count(got, "\x1b[H\x1b[2J"); count != 2 {
+		t.Fatalf("clear-screen count = %d, want 2 in %q", count, got)
+	}
+	if !strings.Contains(got, "> 1. guide") || !strings.Contains(got, "> 2. practice") {
+		t.Fatalf("redraws did not render both selections:\n%s", got)
 	}
 }
 

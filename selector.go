@@ -24,7 +24,6 @@ type menuSpec struct {
 type menuSelectorFunc func(menuSpec) (string, error)
 
 var menuSelector menuSelectorFunc = terminalMenuSelector
-var hasRenderedMenuSelector bool
 
 func chooseSubcommand() (string, error) {
 	return selectMenuValue(menuSpec{
@@ -49,10 +48,6 @@ func selectMenuValue(spec menuSpec) (string, error) {
 	if menuSelector == nil {
 		return spec.Fallback, nil
 	}
-	if hasRenderedMenuSelector {
-		fmt.Println()
-	}
-	hasRenderedMenuSelector = true
 	return menuSelector(spec)
 }
 
@@ -112,7 +107,7 @@ func terminalMenuSelector(spec menuSpec) (string, error) {
 
 	selected := 0
 	showHelp := false
-	renderedLines := renderMenuSelector(spec.Title, spec.Options, selected, showHelp)
+	redrawMenuSelector(spec.Title, spec.Options, selected, showHelp)
 	for {
 		key, err := readTerminalKey()
 		if err != nil {
@@ -122,24 +117,19 @@ func terminalMenuSelector(spec menuSpec) (string, error) {
 		switch key.Key {
 		case keyUp, keyDown:
 			selected = moveSelection(selected, len(spec.Options), key.Key)
-			clearRenderedBlock(renderedLines)
-			renderedLines = renderMenuSelector(spec.Title, spec.Options, selected, showHelp)
+			redrawMenuSelector(spec.Title, spec.Options, selected, showHelp)
 		case keyDigit:
 			if key.Digit >= 1 && key.Digit <= len(spec.Options) {
 				selected = key.Digit - 1
-				clearRenderedBlock(renderedLines)
-				renderedLines = renderMenuSelector(spec.Title, spec.Options, selected, showHelp)
+				redrawMenuSelector(spec.Title, spec.Options, selected, showHelp)
 				continue
 			}
 			fmt.Print("\a")
 		case keyHelp:
 			showHelp = !showHelp
-			clearRenderedBlock(renderedLines)
-			renderedLines = renderMenuSelector(spec.Title, spec.Options, selected, showHelp)
+			redrawMenuSelector(spec.Title, spec.Options, selected, showHelp)
 		case keyRedraw:
-			renderedLines = redrawFullScreen(func() int {
-				return renderMenuSelector(spec.Title, spec.Options, selected, showHelp)
-			})
+			redrawMenuSelector(spec.Title, spec.Options, selected, showHelp)
 		case keyEnter:
 			fmt.Println()
 			return spec.Options[selected].Value, nil
@@ -150,6 +140,12 @@ func terminalMenuSelector(spec menuSpec) (string, error) {
 			fmt.Print("\a")
 		}
 	}
+}
+
+func redrawMenuSelector(title string, options []menuOption, selected int, showHelp bool) {
+	redrawFullScreen(func() int {
+		return renderMenuSelector(title, options, selected, showHelp)
+	})
 }
 
 func renderMenuSelector(title string, options []menuOption, selected int, showHelp bool) int {

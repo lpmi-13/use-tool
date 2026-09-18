@@ -659,7 +659,7 @@ var sarUQuestionPicks = []columnQuestionPick{
 		Distractors: []string{
 			"Percent of CPU time spent in kernel code on behalf of applications",
 			"Percent of CPU time available to non-root accounts",
-			"Percent of total CPUs occupied by application processes",
+			"Percent of total CPUs that are currently busy",
 		},
 	},
 	{

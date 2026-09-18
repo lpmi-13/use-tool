@@ -10,6 +10,24 @@ without making guesses about what state the system is "supposed" to be in.
 Currently covers **CPU**, **memory**, **disk I/O**, and **network**, plus a
 **system** practice target that diagnoses all four together.
 
+## How it works
+
+`use-tool` doesn't replace or reimplement the commands you run — it wraps them.
+Each command (whether a guided step suggests it or you type it into `practice`)
+is handed to a real shell subprocess (`sh -c`) and **tee'd**: stdout and stderr
+stream to your terminal live, exactly as if you'd run the command yourself, while
+a copy is captured into an in-memory buffer. Nothing about the command's behavior
+or output changes — the tool is a transparent observer sitting alongside it, with
+a timeout and an output cap so long-running or noisy commands stay in check.
+
+Each captured buffer is then passed through resource-specific parsers that pull
+structured signals out of the raw text — load and run-queue depth, memory
+pressure, disk queueing, packet drops, kernel-log findings — and fold them into a
+running snapshot for the session. The comprehension checks and `diagnose` grading
+read only from these captured observations, never from a separate probe of the
+system, which is why the tool grades what you actually saw rather than a state it
+assumes the host is in.
+
 ## What it does
 
 Three modes plus a reference cheatsheet:

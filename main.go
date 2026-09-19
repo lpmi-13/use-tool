@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -183,6 +184,10 @@ type SystemInfo struct {
 	HasMemoryPSI  bool
 	HasIOPSI      bool
 	HasJournalctl bool
+	// HasThermalThrottle is true only where the kernel exposes per-CPU
+	// thermal-throttle counters under sysfs — x86 bare-metal, essentially.
+	// It is absent on ARM and usually absent in VMs and containers.
+	HasThermalThrottle bool
 }
 
 func detectSystem() SystemInfo {
@@ -195,7 +200,18 @@ func detectSystem() SystemInfo {
 		HasMemoryPSI:  fileExists("/proc/pressure/memory"),
 		HasIOPSI:      fileExists("/proc/pressure/io"),
 		HasJournalctl: haveCmd("journalctl"),
+
+		HasThermalThrottle: hasThermalThrottle(),
 	}
+}
+
+// hasThermalThrottle reports whether the kernel exposes per-CPU
+// thermal-throttle counters under sysfs. The directory is created by the
+// x86 thermal-throttle driver, so it is present on x86 bare-metal and
+// absent on ARM and in most virtualized or containerized environments.
+func hasThermalThrottle() bool {
+	matches, err := filepath.Glob("/sys/devices/system/cpu/cpu[0-9]*/thermal_throttle")
+	return err == nil && len(matches) > 0
 }
 
 func haveCmd(name string) bool {

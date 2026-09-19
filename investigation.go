@@ -640,6 +640,8 @@ func requirementAvailable(req string, si SystemInfo) bool {
 		return si.HasMemoryPSI
 	case "psi-io":
 		return si.HasIOPSI
+	case "thermal-throttle":
+		return si.HasThermalThrottle
 	default:
 		return haveCmd(req)
 	}
@@ -659,6 +661,8 @@ func requirementHint(req string) string {
 		return "/proc/pressure/memory not available"
 	case "psi-io":
 		return "/proc/pressure/io not available"
+	case "thermal-throttle":
+		return "no /sys/devices/system/cpu/*/thermal_throttle (x86 bare-metal only)"
 	default:
 		return req + " not found"
 	}

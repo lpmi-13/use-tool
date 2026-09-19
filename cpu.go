@@ -1168,8 +1168,9 @@ var cpuCommands = []CommandRef{
 		DiagnoseRank:        2,
 	},
 	{
-		Cmd:     "grep . /sys/devices/system/cpu/*/thermal_throttle/* 2>/dev/null",
-		Section: "Errors",
-		Summary: "Per-CPU thermal-throttle event counters.\nNon-zero values mean thermal events have occurred.",
+		Cmd:      "grep . /sys/devices/system/cpu/*/thermal_throttle/* 2>/dev/null",
+		Section:  "Errors",
+		Summary:  "Per-CPU thermal-throttle event counters.\nNon-zero values mean thermal events have occurred.\nx86 bare-metal only: absent on ARM and usually empty in VMs/containers.",
+		Requires: []string{"thermal-throttle"},
 	},
 }

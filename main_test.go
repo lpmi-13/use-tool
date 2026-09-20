@@ -1110,6 +1110,29 @@ func TestGuideStepCommandPrintsEmptyOutputMessage(t *testing.T) {
 	}
 }
 
+func TestGuidePausesBeforeFinalSummary(t *testing.T) {
+	oldStdin := stdin
+	defer func() { stdin = oldStdin }()
+	stdin = bufio.NewReader(strings.NewReader("\n"))
+
+	s := &Session{
+		Investigation: &Investigation{Name: "cpu"},
+		System:        SystemInfo{NumCPU: 2},
+	}
+	out := captureStdout(func() {
+		finishGuide(s, 7, 7)
+	})
+
+	pauseAt := strings.Index(out, "Press Enter to continue...")
+	summaryAt := strings.Index(out, "--- Snapshot of what you observed ---")
+	if pauseAt < 0 || summaryAt < 0 || pauseAt >= summaryAt {
+		t.Fatalf("expected pause before final summary:\n%s", out)
+	}
+	if !strings.Contains(out, "=== Walkthrough complete: 7 / 7 on the inline questions ===") {
+		t.Fatalf("expected completion score after final pause:\n%s", out)
+	}
+}
+
 func TestErrorGuideStepsHaveEmptyOutputMessages(t *testing.T) {
 	cases := []struct {
 		resource string

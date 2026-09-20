@@ -78,10 +78,18 @@ func cmdGuide(args []string) {
 		}
 	}
 
+	finishGuide(s, score, total)
+}
+
+func finishGuide(s *Session, score, total int) {
+	if !pauseGuide() {
+		return
+	}
+
 	fmt.Println("\n--- Snapshot of what you observed ---")
 	snap := s.Snapshot()
 	snap.Print()
-	printSynopsis(inv, si, snap)
+	printSynopsis(s.Investigation, s.System, snap)
 
 	if total > 0 {
 		fmt.Printf("=== Walkthrough complete: %d / %d on the inline questions ===\n", score, total)

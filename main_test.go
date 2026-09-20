@@ -704,6 +704,82 @@ func TestChooseGuideQuestionsUsesRequestedRandomSubset(t *testing.T) {
 	}
 }
 
+func TestChooseGuideQuestionsRandomizesQuestionOrder(t *testing.T) {
+	oldRand := appRand
+	defer func() { appRand = oldRand }()
+	appRand = rand.New(rand.NewSource(1))
+
+	questions := []Question{
+		{Stem: "q1"},
+		{Stem: "q2"},
+		{Stem: "q3"},
+		{Stem: "q4"},
+	}
+	want := map[string]bool{"q1": true, "q2": true, "q3": true, "q4": true}
+	orders := map[string]bool{}
+	for i := 0; i < 20; i++ {
+		chosen := chooseGuideQuestions(questions, len(questions))
+		if len(chosen) != len(questions) {
+			t.Fatalf("iteration %d: got %d questions, want %d", i, len(chosen), len(questions))
+		}
+		seen := map[string]bool{}
+		order := make([]string, 0, len(chosen))
+		for _, q := range chosen {
+			if !want[q.Stem] || seen[q.Stem] {
+				t.Fatalf("iteration %d: result is not a permutation: %#v", i, chosen)
+			}
+			seen[q.Stem] = true
+			order = append(order, q.Stem)
+		}
+		orders[strings.Join(order, ",")] = true
+	}
+	if len(orders) < 2 {
+		t.Fatalf("guide question order did not vary; saw %v", orders)
+	}
+	if len(questions) != 4 || questions[0].Stem != "q1" {
+		t.Fatalf("chooseGuideQuestions mutated original questions: %#v", questions)
+	}
+}
+
+func TestRandomizedQuestionOptionsMovesCorrectAnswer(t *testing.T) {
+	oldRand := appRand
+	defer func() { appRand = oldRand }()
+	appRand = rand.New(rand.NewSource(1))
+
+	q := Question{
+		Correct:     "correct",
+		Distractors: []string{"wrong-1", "wrong-2", "wrong-3"},
+	}
+	want := map[string]bool{
+		"correct": true, "wrong-1": true, "wrong-2": true, "wrong-3": true,
+	}
+	correctPositions := map[int]bool{}
+	for i := 0; i < 100; i++ {
+		options := randomizedQuestionOptions(q)
+		if len(options) != len(want) {
+			t.Fatalf("iteration %d: got %d options, want %d", i, len(options), len(want))
+		}
+		seen := map[string]bool{}
+		for position, option := range options {
+			if !want[option] || seen[option] {
+				t.Fatalf("iteration %d: options are not a permutation: %v", i, options)
+			}
+			seen[option] = true
+			if option == q.Correct {
+				correctPositions[position] = true
+			}
+		}
+	}
+	for position := 0; position < len(want); position++ {
+		if !correctPositions[position] {
+			t.Errorf("correct answer never appeared at zero-based position %d; saw %v", position, correctPositions)
+		}
+	}
+	if q.Correct != "correct" || strings.Join(q.Distractors, ",") != "wrong-1,wrong-2,wrong-3" {
+		t.Fatalf("randomizedQuestionOptions mutated its input: %#v", q)
+	}
+}
+
 func TestWideColumnGuideStepsAskThreeHeaderQuestions(t *testing.T) {
 	cases := []struct {
 		name     string

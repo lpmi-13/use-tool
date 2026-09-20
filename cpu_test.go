@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math/rand"
 	"strings"
 	"testing"
 )
@@ -322,6 +323,10 @@ func TestUptimeQuestionsCoversAllPositions(t *testing.T) {
 	// positions over time. This checks the stem wording, not just the correct
 	// answer, so it catches regressions where the guide always asks about the
 	// first load average.
+	oldRand := appRand
+	defer func() { appRand = oldRand }()
+	appRand = rand.New(rand.NewSource(1))
+
 	si := SystemInfo{NumCPU: 4}
 	c := CapturedCommand{Cmd: "uptime", Output: sampleUptime}
 	wantCorrect := map[string]string{

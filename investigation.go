@@ -224,9 +224,18 @@ func askQuestion(q Question) QuestionResult {
 	return askQuestionWithCommandRunner(q, nil)
 }
 
-func askQuestionWithCommandRunner(q Question, run questionCommandRunner) QuestionResult {
+// randomizedQuestionOptions is the single answer-ordering path for questions
+// shown by guide and practice. Keeping the shuffle here makes the invariant
+// apply to every question generator rather than relying on each guide step to
+// randomize its own correct-answer position.
+func randomizedQuestionOptions(q Question) []string {
 	options := append([]string{q.Correct}, q.Distractors...)
 	appRand.Shuffle(len(options), func(i, j int) { options[i], options[j] = options[j], options[i] })
+	return options
+}
+
+func askQuestionWithCommandRunner(q Question, run questionCommandRunner) QuestionResult {
+	options := randomizedQuestionOptions(q)
 	fmt.Println()
 	fmt.Println("--- Check ---")
 	fmt.Println(q.Stem)

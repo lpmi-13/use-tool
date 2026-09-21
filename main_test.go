@@ -1209,6 +1209,93 @@ func TestGuidePausesBeforeFinalSummary(t *testing.T) {
 	}
 }
 
+// orderingGuideStep builds a guide step that captures a trivial command,
+// always offers one comprehension check, and carries a teaching note — enough
+// to observe the feedback / teaching-note / pause ordering.
+func orderingGuideStep(teaching string) GuideStep {
+	return GuideStep{
+		Name:      "ordering",
+		Suggested: "echo USE",
+		QuestionsFn: func(SystemInfo, CapturedCommand) []Question {
+			return []Question{{
+				Stem:        "Which letter does USE stand for first?",
+				Correct:     "Utilization",
+				Distractors: []string{"Saturation"},
+			}}
+		},
+		Teaching: teaching,
+	}
+}
+
+func TestGuideStepShowsTeachingNoteBeforePause(t *testing.T) {
+	oldStdin := stdin
+	oldRaw := rawInputEnabled
+	defer func() {
+		stdin = oldStdin
+		rawInputEnabled = oldRaw
+	}()
+	// Command at the `[guide] $` prompt, then an answer to the check, then
+	// Enter to clear the advance pause.
+	stdin = bufio.NewReader(strings.NewReader("echo USE\n1\n\n"))
+	rawInputEnabled = func() bool { return false }
+
+	step := orderingGuideStep("Teaching note body for the ordering test.")
+
+	var answered int
+	var ok bool
+	out := captureStdout(func() {
+		_, answered, ok = runGuideStep(&Session{System: SystemInfo{NumCPU: 1}}, step, false)
+	})
+
+	if !ok {
+		t.Fatalf("runGuideStep returned ok=false, want true:\n%s", out)
+	}
+	if answered != 1 {
+		t.Fatalf("answered = %d, want 1:\n%s", answered, out)
+	}
+
+	feedbackAt := strings.Index(out, "--- Feedback ---")
+	teachingAt := strings.Index(out, "--- Teaching note ---")
+	pauseAt := strings.Index(out, "Press Enter to continue...")
+	if feedbackAt < 0 || teachingAt < 0 || pauseAt < 0 {
+		t.Fatalf("expected feedback, teaching note, and pause all present:\n%s", out)
+	}
+	if !(feedbackAt < teachingAt && teachingAt < pauseAt) {
+		t.Fatalf("expected order feedback(%d) < teaching(%d) < pause(%d):\n%s",
+			feedbackAt, teachingAt, pauseAt, out)
+	}
+}
+
+func TestGuideFinalStepDefersPauseToSummary(t *testing.T) {
+	oldStdin := stdin
+	oldRaw := rawInputEnabled
+	defer func() {
+		stdin = oldStdin
+		rawInputEnabled = oldRaw
+	}()
+	// No trailing Enter: the final step must not run a per-step pause (that
+	// pause belongs to finishGuide), so no line is consumed for one.
+	stdin = bufio.NewReader(strings.NewReader("echo USE\n1\n"))
+	rawInputEnabled = func() bool { return false }
+
+	step := orderingGuideStep("Final-step teaching note.")
+
+	var ok bool
+	out := captureStdout(func() {
+		_, _, ok = runGuideStep(&Session{System: SystemInfo{NumCPU: 1}}, step, true)
+	})
+
+	if !ok {
+		t.Fatalf("runGuideStep returned ok=false, want true:\n%s", out)
+	}
+	if !strings.Contains(out, "--- Teaching note ---") {
+		t.Fatalf("expected the teaching note on the final step:\n%s", out)
+	}
+	if strings.Contains(out, "Press Enter to continue...") {
+		t.Fatalf("final step should defer its pause to finishGuide, but paused:\n%s", out)
+	}
+}
+
 func TestErrorGuideStepsHaveEmptyOutputMessages(t *testing.T) {
 	cases := []struct {
 		resource string

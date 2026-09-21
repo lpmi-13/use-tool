@@ -48,37 +48,62 @@ func cmdGuide(args []string) {
 	score, total := 0, 0
 	for i, step := range steps {
 		printGuideStepHeader(i+1, len(steps), step)
-
-		captured := guideStepCommand(s, step)
-		if captured != nil {
-			questions := chooseGuideQuestions(guideQuestions(si, step, *captured), step.QuestionCount)
-			if len(questions) > 0 {
-				for _, q := range questions {
-					result := askQuestionWithCommandRunner(q, s.runAndCapture)
-					if result.Quit {
-						return
-					}
-					if !result.Skipped {
-						total++
-						if result.Correct {
-							score++
-						}
-					}
-				}
-				if !pauseGuide() {
-					return
-				}
-			}
-		}
-
-		if step.Teaching != "" {
-			fmt.Println()
-			fmt.Println("--- Teaching note ---")
-			fmt.Println(step.Teaching)
+		correct, answered, ok := runGuideStep(s, step, i == len(steps)-1)
+		score += correct
+		total += answered
+		if !ok {
+			return
 		}
 	}
 
 	finishGuide(s, score, total)
+}
+
+// runGuideStep drives a single guided-walkthrough step: it captures the
+// learner's command, asks the step's comprehension questions (which print
+// their own feedback), then prints the teaching note and pauses so the learner
+// can advance. The teaching note is printed before the pause so the learner
+// reads the question feedback and the note together, then hits Enter once.
+//
+// isLast suppresses the per-step pause on the final step, whose pause is owned
+// by finishGuide, so the learner never sees two "Press Enter" prompts in a row.
+// It returns how many questions were answered correctly and answered in total,
+// and ok=false when the learner quit or closed input (the caller should stop).
+func runGuideStep(s *Session, step GuideStep, isLast bool) (correct, answered int, ok bool) {
+	captured := guideStepCommand(s, step)
+	hadQuestions := false
+	if captured != nil {
+		questions := chooseGuideQuestions(guideQuestions(s.System, step, *captured), step.QuestionCount)
+		if len(questions) > 0 {
+			hadQuestions = true
+			for _, q := range questions {
+				result := askQuestionWithCommandRunner(q, s.runAndCapture)
+				if result.Quit {
+					return correct, answered, false
+				}
+				if !result.Skipped {
+					answered++
+					if result.Correct {
+						correct++
+					}
+				}
+			}
+		}
+	}
+
+	if step.Teaching != "" {
+		fmt.Println()
+		fmt.Println("--- Teaching note ---")
+		fmt.Println(step.Teaching)
+	}
+
+	// Pause only when this step showed questions, matching the prior behaviour.
+	if hadQuestions && !isLast {
+		if !pauseGuide() {
+			return correct, answered, false
+		}
+	}
+	return correct, answered, true
 }
 
 func finishGuide(s *Session, score, total int) {

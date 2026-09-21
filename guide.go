@@ -139,14 +139,6 @@ func guideQuestions(si SystemInfo, step GuideStep, captured CapturedCommand) []Q
 	return personalizeQuestions(step.QuestionsFn(si, captured), captured.Cmd)
 }
 
-func chooseGuideQuestion(questions []Question) (Question, bool) {
-	chosen := chooseGuideQuestions(questions, 1)
-	if len(chosen) == 0 {
-		return Question{}, false
-	}
-	return chosen[0], true
-}
-
 func chooseGuideQuestions(questions []Question, count int) []Question {
 	if len(questions) == 0 {
 		return nil

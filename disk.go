@@ -34,23 +34,25 @@ func diskSteps(si SystemInfo) []GuideStep {
 
 	steps := []GuideStep{
 		{
-			Name:          "devices",
-			Intro:         "Step 1: get a sense of what block devices the system has.",
-			Suggested:     devicePick.Cmd,
-			QuestionsFn:   combineVariantQuestions(deviceVariants),
-			QuestionCount: 3,
-			AcceptAny:     true,
-			Teaching:      devicePick.Teaching,
+			Name:             "devices",
+			Intro:            "Step 1: get a sense of what block devices the system has.",
+			Suggested:        devicePick.Cmd,
+			ExpectedCommands: stepVariantCommands(deviceVariants),
+			QuestionsFn:      combineVariantQuestions(deviceVariants),
+			QuestionCount:    3,
+			AcceptAny:        true,
+			Teaching:         devicePick.Teaching,
 		},
 		{
 			Name: "throughput",
 			Intro: "Step 2: per-device throughput, queue depth, and latency.\n" +
 				"Look for high queue depth (`aqu-sz` / `avgqu-sz`) or high await/svctm —\n" +
 				"those are the saturation signals.",
-			Suggested:     throughputPick.Cmd,
-			QuestionsFn:   combineVariantQuestions(throughputVariants),
-			QuestionCount: 3,
-			Teaching:      throughputPick.Teaching,
+			Suggested:        throughputPick.Cmd,
+			ExpectedCommands: stepVariantCommands(throughputVariants),
+			QuestionsFn:      combineVariantQuestions(throughputVariants),
+			QuestionCount:    3,
+			Teaching:         throughputPick.Teaching,
 		},
 	}
 	if si.HasIOPSI {

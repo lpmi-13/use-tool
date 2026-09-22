@@ -34,14 +34,15 @@ func networkSteps(si SystemInfo) []GuideStep {
 
 	return []GuideStep{
 		{
-			Name:          "interfaces",
-			Intro:         "Step 1: get familiar with the interfaces and their since-boot counters.",
-			Suggested:     interfacePick.Cmd,
-			QuestionsFn:   combineVariantQuestions(interfaceVariants),
-			QuestionCount: 3,
-			AcceptAny:     true,
-			Filter:        filterNoiseInterfaces,
-			Teaching:      interfacePick.Teaching,
+			Name:             "interfaces",
+			Intro:            "Step 1: get familiar with the interfaces and their since-boot counters.",
+			Suggested:        interfacePick.Cmd,
+			ExpectedCommands: stepVariantCommands(interfaceVariants),
+			QuestionsFn:      combineVariantQuestions(interfaceVariants),
+			QuestionCount:    3,
+			AcceptAny:        true,
+			Filter:           filterNoiseInterfaces,
+			Teaching:         interfacePick.Teaching,
 		},
 		{
 			Name:          "throughput",
@@ -75,12 +76,13 @@ func networkSteps(si SystemInfo) []GuideStep {
 				"that the bandwidth headline will not show you.",
 		},
 		{
-			Name:          "tcp",
-			Intro:         "Step 4: protocol-level signals — TCP retransmits and listen overflows.",
-			Suggested:     "netstat -s",
-			Alternatives:  []string{"ss -tin"},
-			QuestionsFn:   combineVariantQuestions(networkTCPVariants()),
-			QuestionCount: 3,
+			Name:             "tcp",
+			Intro:            "Step 4: protocol-level signals — TCP retransmits and listen overflows.",
+			Suggested:        "netstat -s",
+			Alternatives:     []string{"ss -tin"},
+			ExpectedCommands: stepVariantCommands(networkTCPVariants()),
+			QuestionsFn:      combineVariantQuestions(networkTCPVariants()),
+			QuestionCount:    3,
 			Teaching: "`netstat -s` is the reliable first pass here because it always shows\n" +
 				"cumulative TCP counters like retransmits and listen-queue overflows.\n" +
 				"`ss -tin` is the live complement: it shows per-socket TCP state only\n" +

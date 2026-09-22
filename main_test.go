@@ -658,10 +658,139 @@ func TestGuideStepCommandRetriesFailedAcceptAnyCommand(t *testing.T) {
 	}
 }
 
+func TestGuideStepCommandRetriesUnexpectedAcceptAnyCommand(t *testing.T) {
+	oldStdin := stdin
+	defer func() { stdin = oldStdin }()
+	stdin = bufio.NewReader(strings.NewReader("printf wrong\necho ok\n"))
+
+	var captured *CapturedCommand
+	out := captureStdout(func() {
+		captured = guideStepCommand(&Session{}, GuideStep{AcceptAny: true, Suggested: "echo ok"})
+	})
+	if captured == nil || captured.Cmd != "echo ok" {
+		t.Fatalf("captured = %+v, want expected command after retry", captured)
+	}
+	if !strings.Contains(out, "That command didn't produce output this step recognizes") {
+		t.Fatalf("expected feedback for successful but unrelated command:\n%s", out)
+	}
+}
+
+func TestGuideStepCommandDoesNotDescribeWrongEmptyCommandAsHealthy(t *testing.T) {
+	oldStdin := stdin
+	defer func() { stdin = oldStdin }()
+	stdin = bufio.NewReader(strings.NewReader("true\nprintf ''\n\n"))
+
+	out := captureStdout(func() {
+		captured := guideStepCommand(&Session{}, GuideStep{
+			Suggested:          "printf ''",
+			AcceptAny:          true,
+			EmptyOutputMessage: "No matching errors found.",
+		})
+		if captured == nil || captured.Cmd != "printf ''" {
+			t.Fatalf("captured = %+v, want expected empty command after retry", captured)
+		}
+	})
+	if count := strings.Count(out, "No matching errors found."); count != 1 {
+		t.Fatalf("healthy empty-output message appeared %d times, want once:\n%s", count, out)
+	}
+}
+
+func TestGuideStepCommandSeparatesUnrecognizedFeedbackFromOutput(t *testing.T) {
+	oldStdin := stdin
+	defer func() { stdin = oldStdin }()
+
+	for _, tc := range []struct {
+		name    string
+		command string
+		output  string
+	}{
+		{name: "terminated output", command: `printf 'unrecognized output\n'`, output: "unrecognized output"},
+		{name: "unterminated output", command: `printf 'unrecognized output'`, output: "unrecognized output"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stdin = bufio.NewReader(strings.NewReader(tc.command + "\nskip\n"))
+			out := captureStdout(func() {
+				guideStepCommand(&Session{}, GuideStep{Suggested: "echo expected"})
+			})
+
+			want := tc.output + "\n\n(That command didn't produce output this step recognizes"
+			if !strings.Contains(out, want) {
+				t.Fatalf("expected a blank line before unrecognized-output feedback:\n%s", out)
+			}
+			feedback := "(That command didn't produce output this step recognizes — try `echo expected`, or `skip`.)"
+			if !strings.Contains(out, feedback+"\n\n[guide] $ ") {
+				t.Fatalf("expected a blank line between unrecognized-output feedback and the next prompt:\n%s", out)
+			}
+		})
+	}
+}
+
 func TestGuideQuestionsNilSafe(t *testing.T) {
 	got := guideQuestions(SystemInfo{}, GuideStep{}, CapturedCommand{Cmd: "lsblk", Output: "NAME TYPE\n"})
 	if got != nil {
 		t.Fatalf("guideQuestions with nil QuestionsFn = %v, want nil", got)
+	}
+}
+
+func TestGuideQuestionsRejectsUnexpectedCommandEvenWhenOutputMatches(t *testing.T) {
+	step := mustFindGuideStep(t, cpuSteps(SystemInfo{HasMpstat: true}), "per-cpu")
+	captured := CapturedCommand{Cmd: "iostat 1 3", Output: sampleIostatModern}
+	if raw := step.QuestionsFn(SystemInfo{}, captured); len(raw) == 0 {
+		t.Fatal("test fixture no longer overlaps the mpstat output parser")
+	}
+	if questions := guideQuestions(SystemInfo{}, step, captured); questions != nil {
+		t.Fatalf("expected no mpstat questions for iostat, got %v", stems(questions))
+	}
+}
+
+func TestGuideQuestionsRejectsWrongProcPressureFile(t *testing.T) {
+	step := mustFindGuideStep(t, cpuSteps(SystemInfo{HasPSI: true}), "runqueue")
+	captured := CapturedCommand{
+		Cmd: "cat /proc/pressure/io",
+		Output: "some avg10=0.00 avg60=0.06 avg300=0.21 total=2373245647\n" +
+			"full avg10=0.00 avg60=0.04 avg300=0.17 total=2038554429\n",
+	}
+	if raw := procPressureCpuQuestions(SystemInfo{}, captured); len(raw) == 0 {
+		t.Fatal("test fixture no longer overlaps the CPU PSI output parser")
+	}
+	if questions := guideQuestions(SystemInfo{}, step, captured); questions != nil {
+		t.Fatalf("expected no CPU questions for /proc/pressure/io, got %v", stems(questions))
+	}
+}
+
+func TestGuideCommandMatchesMeaningfulArguments(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		actual   string
+		expected string
+		want     bool
+	}{
+		{name: "exact proc file", actual: "cat /proc/pressure/cpu", expected: "cat /proc/pressure/cpu", want: true},
+		{name: "wrong proc file", actual: "cat /proc/pressure/io", expected: "cat /proc/pressure/cpu", want: false},
+		{name: "wrapped command", actual: "sudo -n cat /proc/pressure/cpu", expected: "cat /proc/pressure/cpu", want: true},
+		{name: "different sample count", actual: "vmstat 2 7", expected: "vmstat 1 3", want: true},
+		{name: "matching sar report", actual: "sar -u 2 5", expected: "sar -u 1 3", want: true},
+		{name: "different sar report", actual: "sar -d 1 3", expected: "sar -u 1 3", want: false},
+		{name: "different ss report", actual: "ss -s", expected: "ss -tin", want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := guideCommandMatches(tc.actual, tc.expected); got != tc.want {
+				t.Fatalf("guideCommandMatches(%q, %q) = %v, want %v", tc.actual, tc.expected, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestGuideQuestionsAcceptsAnExpectedVariantThatWasNotSuggested(t *testing.T) {
+	variants := cpuRunqueueVariants(SystemInfo{HasSar: true})
+	step := GuideStep{
+		Suggested:        "vmstat 1 3",
+		ExpectedCommands: stepVariantCommands(variants),
+		QuestionsFn:      combineVariantQuestions(variants),
+	}
+	captured := CapturedCommand{Cmd: "sar -u 1 3", Output: sampleSarU}
+	if questions := guideQuestions(SystemInfo{HasSar: true}, step, captured); len(questions) == 0 {
+		t.Fatal("expected sar questions when sar is an accepted runqueue variant")
 	}
 }
 

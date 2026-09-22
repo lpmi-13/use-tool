@@ -35,9 +35,10 @@ func memorySteps(si SystemInfo) []GuideStep {
 			Name: "baseline",
 			Intro: "Step 1: get a baseline of total, used, available memory and swap.\n" +
 				"The kernel exposes this via /proc/meminfo; `free` summarises the same data.",
-			Suggested:     baselinePick.Cmd,
-			QuestionsFn:   combineVariantQuestions(baselineVariants),
-			QuestionCount: 3,
+			Suggested:        baselinePick.Cmd,
+			ExpectedCommands: stepVariantCommands(baselineVariants),
+			QuestionsFn:      combineVariantQuestions(baselineVariants),
+			QuestionCount:    3,
 			Teaching: "Read `MemAvailable` (or `available`), not `MemFree`/`free`. `MemFree`\n" +
 				"excludes reclaimable page cache; `MemAvailable` is the kernel's own\n" +
 				"estimate of how much memory is allocatable without going to swap. The\n" +
@@ -47,10 +48,11 @@ func memorySteps(si SystemInfo) []GuideStep {
 			Name: "swap-activity",
 			Intro: "Step 2: look at paging rates. Non-zero swap-in / swap-out activity\n" +
 				"means the working set is bigger than RAM.",
-			Suggested:     swapPick.Cmd,
-			QuestionsFn:   combineVariantQuestions(swapVariants),
-			QuestionCount: 3,
-			Teaching:      swapPick.Teaching,
+			Suggested:        swapPick.Cmd,
+			ExpectedCommands: stepVariantCommands(swapVariants),
+			QuestionsFn:      combineVariantQuestions(swapVariants),
+			QuestionCount:    3,
+			Teaching:         swapPick.Teaching,
 		},
 	}
 	if si.HasMemoryPSI {
@@ -67,13 +69,14 @@ func memorySteps(si SystemInfo) []GuideStep {
 		})
 	}
 	steps = append(steps, GuideStep{
-		Name:          "top-consumers",
-		Intro:         "Step 4: who's actually using memory?",
-		Suggested:     topPick.Cmd,
-		QuestionsFn:   combineVariantQuestions(topVariants),
-		QuestionCount: 3,
-		AcceptAny:     true,
-		Teaching:      topPick.Teaching,
+		Name:             "top-consumers",
+		Intro:            "Step 4: who's actually using memory?",
+		Suggested:        topPick.Cmd,
+		ExpectedCommands: stepVariantCommands(topVariants),
+		QuestionsFn:      combineVariantQuestions(topVariants),
+		QuestionCount:    3,
+		AcceptAny:        true,
+		Teaching:         topPick.Teaching,
 	})
 	steps = append(steps, GuideStep{
 		Name:               "errors",

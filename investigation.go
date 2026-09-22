@@ -29,10 +29,15 @@ type GuideStep struct {
 	Intro        string
 	Suggested    string
 	Alternatives []string
-	QuestionsFn  func(SystemInfo, CapturedCommand) []Question
+	// ExpectedCommands lists every command whose output can produce questions
+	// for this step. It defaults to Suggested plus Alternatives.
+	ExpectedCommands []string
+	QuestionsFn      func(SystemInfo, CapturedCommand) []Question
 	// QuestionCount defaults to 1. Use higher values for steps whose
 	// QuestionsFn returns a pool of interchangeable guide checks.
-	QuestionCount      int
+	QuestionCount int
+	// AcceptAny accepts output that yields no questions, but only after the
+	// learner has run one of the step's expected commands.
 	AcceptAny          bool
 	EmptyOutputMessage string
 	Teaching           string
@@ -69,6 +74,14 @@ type stepVariant struct {
 	Available   func(SystemInfo) bool
 }
 
+func stepVariantCommands(variants []stepVariant) []string {
+	commands := make([]string, 0, len(variants))
+	for _, variant := range variants {
+		commands = append(commands, variant.Cmd)
+	}
+	return commands
+}
+
 // pickStepVariant returns a variant available on this system, chosen at
 // random. Falls back to the first variant if none are marked available
 // (every step must always have some command to suggest).
@@ -85,13 +98,17 @@ func pickStepVariant(si SystemInfo, variants []stepVariant) stepVariant {
 	return pickRandom(avail)
 }
 
-// combineVariantQuestions returns a QuestionsFn that walks variants in order
-// and returns the first non-empty result. Each variant's QuestionsFn is
-// expected to recognise only its own output format; order variants
-// most-specific first when formats can overlap.
+// combineVariantQuestions returns a QuestionsFn that walks variants matching
+// the command the learner ran and returns the first non-empty result. Matching
+// the command before inspecting its output prevents similar-looking tables
+// from another tool from producing a question about the wrong command. Each
+// variant's QuestionsFn is still expected to recognise its own output format.
 func combineVariantQuestions(variants []stepVariant) func(SystemInfo, CapturedCommand) []Question {
 	return func(si SystemInfo, c CapturedCommand) []Question {
 		for _, v := range variants {
+			if !guideCommandMatches(c.Cmd, v.Cmd) {
+				continue
+			}
 			if qs := v.QuestionsFn(si, c); len(qs) > 0 {
 				return qs
 			}
@@ -314,6 +331,48 @@ func isExitCommand(line string) bool {
 // `vim dmesg.txt` matching dmesg.
 func baseCmd(cmd string) string {
 	return commandBase(cmd)
+}
+
+// guideCommandMatches reports whether actual is the same kind of command as
+// expected. The executable alone is not enough: for example, all three PSI
+// files are read with cat, and sar/ss select unrelated reports with options.
+//
+// Sampling numbers are intentionally ignored so a learner can change an
+// interval or sample count without turning an otherwise valid command into a
+// wrong one. Pipelines are also ignored by commandFields; they only post-process
+// the report produced by the first command.
+func guideCommandMatches(actual, expected string) bool {
+	actualFields := commandFields(actual)
+	expectedFields := commandFields(expected)
+	if len(actualFields) == 0 || len(expectedFields) == 0 ||
+		commandName(actualFields[0]) != commandName(expectedFields[0]) {
+		return false
+	}
+
+	actualArgs := make(map[string]int, len(actualFields)-1)
+	for _, field := range actualFields[1:] {
+		actualArgs[guideCommandArg(field)]++
+	}
+	for _, field := range expectedFields[1:] {
+		arg := guideCommandArg(field)
+		if isGuideSamplingNumber(arg) {
+			continue
+		}
+		if actualArgs[arg] == 0 {
+			return false
+		}
+		actualArgs[arg]--
+	}
+	return true
+}
+
+func guideCommandArg(field string) string {
+	return strings.Trim(field, `"'`)
+}
+
+func isGuideSamplingNumber(field string) bool {
+	_, err := strconv.ParseFloat(field, 64)
+	return err == nil
 }
 
 func commandBase(cmd string) string {

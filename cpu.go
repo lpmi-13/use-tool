@@ -27,10 +27,11 @@ func cpuSteps(si SystemInfo) []GuideStep {
 
 	steps := []GuideStep{
 		{
-			Name:        "loadavg",
-			Intro:       "Step 1: Load averages and recent run-queue counters give a coarse\npicture of CPU pressure over 1-, 5-, and 15-minute windows.",
-			Suggested:   loadavgPick.Cmd,
-			QuestionsFn: combineVariantQuestions(loadavgVariants),
+			Name:             "loadavg",
+			Intro:            "Step 1: Load averages and recent run-queue counters give a coarse\npicture of CPU pressure over 1-, 5-, and 15-minute windows.",
+			Suggested:        loadavgPick.Cmd,
+			ExpectedCommands: stepVariantCommands(loadavgVariants),
+			QuestionsFn:      combineVariantQuestions(loadavgVariants),
 			Teaching: fmt.Sprintf(
 				"Rule of thumb: a 1-minute load average above %d (= number of logical CPUs on this machine)\n"+
 					"means more runnable processes than CPUs — the run-queue is saturated.\n"+
@@ -58,10 +59,11 @@ func cpuSteps(si SystemInfo) []GuideStep {
 		Name: "runqueue",
 		Intro: "Step 3: look at saturation signals — run-queue length, CPU stall pressure,\n" +
 			"or the idle-vs-wait breakdown — over a few short samples.",
-		Suggested:     runqueuePick.Cmd,
-		QuestionsFn:   combineVariantQuestions(runqueueVariants),
-		QuestionCount: 3,
-		Teaching:      runqueuePick.Teaching,
+		Suggested:        runqueuePick.Cmd,
+		ExpectedCommands: stepVariantCommands(runqueueVariants),
+		QuestionsFn:      combineVariantQuestions(runqueueVariants),
+		QuestionCount:    3,
+		Teaching:         runqueuePick.Teaching,
 	})
 
 	steps = append(steps, GuideStep{

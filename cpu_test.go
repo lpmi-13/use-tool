@@ -677,6 +677,29 @@ func TestCombineVariantQuestionsDispatchesByOutputFormat(t *testing.T) {
 	}
 }
 
+func TestCombineVariantQuestionsRejectsOutputFromUnexpectedCommand(t *testing.T) {
+	combined := combineVariantQuestions(cpuRunqueueVariants(SystemInfo{HasSar: true}))
+	iostatOutput := `Linux 6.1.167 (lab-01)  09/22/26  _x86_64_  (2 CPU)
+
+avg-cpu:  %user   %nice %system %iowait  %steal   %idle
+           0.91    0.00    1.67    0.88    0.02   96.53
+
+Device             tps    kB_read/s    kB_wrtn/s
+vda            2243.73      1558.28      8732.21`
+
+	qs := combined(SystemInfo{HasSar: true}, CapturedCommand{Cmd: "iostat", Output: iostatOutput})
+	if qs != nil {
+		t.Fatalf("expected no runqueue questions for iostat, got %v", stems(qs))
+	}
+
+	ioPSIOutput := `some avg10=0.00 avg60=0.06 avg300=0.21 total=2373245647
+full avg10=0.00 avg60=0.04 avg300=0.17 total=2038554429`
+	qs = combined(SystemInfo{HasPSI: true}, CapturedCommand{Cmd: "cat /proc/pressure/io", Output: ioPSIOutput})
+	if qs != nil {
+		t.Fatalf("expected no CPU questions for I/O PSI from another cat command, got %v", stems(qs))
+	}
+}
+
 func stems(qs []Question) []string {
 	out := make([]string, len(qs))
 	for i, q := range qs {

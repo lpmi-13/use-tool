@@ -136,7 +136,23 @@ func guideQuestions(si SystemInfo, step GuideStep, captured CapturedCommand) []Q
 	if step.QuestionsFn == nil {
 		return nil
 	}
+	if !guideStepExpectsCommand(step, captured.Cmd) {
+		return nil
+	}
 	return personalizeQuestions(step.QuestionsFn(si, captured), captured.Cmd)
+}
+
+func guideStepExpectsCommand(step GuideStep, actual string) bool {
+	expected := step.ExpectedCommands
+	if len(expected) == 0 {
+		expected = append([]string{step.Suggested}, step.Alternatives...)
+	}
+	for _, command := range expected {
+		if guideCommandMatches(actual, command) {
+			return true
+		}
+	}
+	return false
 }
 
 func chooseGuideQuestions(questions []Question, count int) []Question {
@@ -206,6 +222,10 @@ func guideStepCommand(s *Session, step GuideStep) *CapturedCommand {
 			fmt.Println("(Command failed; fix it and try again, or `skip`.)")
 			continue
 		}
+		if !guideStepExpectsCommand(step, c.Cmd) {
+			printUnrecognizedGuideOutput(c, step)
+			continue
+		}
 		if strings.TrimSpace(c.Output) == "" && step.EmptyOutputMessage != "" {
 			fmt.Println(step.EmptyOutputMessage)
 			if !pauseGuide() {
@@ -218,6 +238,25 @@ func guideStepCommand(s *Session, step GuideStep) *CapturedCommand {
 		if len(guideQuestions(s.System, step, c)) > 0 {
 			return &c
 		}
-		fmt.Printf("(That command didn't produce output this step recognizes — try `%s`, or `skip`.)\n", step.Suggested)
+		printUnrecognizedGuideOutput(c, step)
 	}
+}
+
+func printUnrecognizedGuideOutput(c CapturedCommand, step GuideStep) {
+	// Leave one blank line between command output and guide feedback. Filtered
+	// output without a trailing newline was already terminated when displayed
+	// by runAndCaptureFiltered, even though c.Output retains its original form.
+	switch {
+	case c.Output == "":
+		fmt.Println()
+	case step.Filter != nil && !strings.HasSuffix(c.Output, "\n"):
+		fmt.Println()
+	case strings.HasSuffix(c.Output, "\n\n"):
+		// The command already left a blank line.
+	case strings.HasSuffix(c.Output, "\n"):
+		fmt.Println()
+	default:
+		fmt.Print("\n\n")
+	}
+	fmt.Printf("(That command didn't produce output this step recognizes — try `%s`, or `skip`.)\n\n", step.Suggested)
 }

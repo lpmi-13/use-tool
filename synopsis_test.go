@@ -9,7 +9,7 @@ func TestCPUSynopsisIdentifiesUSESignals(t *testing.T) {
 	snap := Snapshot{Values: map[string]Value{
 		"mpstat_idle_mean":    {Number: 4.5},
 		"vmstat_r":            {Samples: []float64{2, 10, 12}},
-		"dmesg_cpu_keywords":  {Text: "1/8 lines mention CPU/thermal/MCE keywords"},
+		"dmesg_cpu_keywords":  {Text: "1/8 lines matched recognized CPU/MCE/throttling signatures"},
 		"loadavg_1min":        {Number: 12},
 		"mpstat_idle_range":   {Text: "4.0% - 5.0%"},
 		"dmesg_oom_count":     {Text: "0/0 lines mention OOM"},

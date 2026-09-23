@@ -27,6 +27,27 @@ const sampleDmesgWithMCE = `[Tue Oct  5 14:00:00 2024] mce: [Hardware Error]: CP
 [Tue Oct  5 14:00:00 2024] mce: [Hardware Error]: TSC 0 ADDR 1234 MISC 5678
 [Tue Oct  5 14:01:00 2024] thermal_throttle: CPU2 above threshold`
 
+const sampleDmesgWithUnrelatedThermalZoneWarnings = `[384800.826252] Bluetooth: hci0: HCI LE Coded PHY feature bit is set, but its usage is not supported.
+[388790.722835] lockdown_is_locked_down: 1 callbacks suppressed
+[388796.608604] done.
+[388796.623714] thermal thermal_zone12: failed to read out thermal zone (-61)
+[388798.529308] Bluetooth: hci0: HCI LE Coded PHY feature bit is set, but its usage is not supported.
+[392141.385036] atkbd serio0: Unknown key pressed (translated set 2, code 0x65 on isa0060/serio0).
+[392141.385060] atkbd serio0: Use 'setkeycodes 65 <keycode>' to make it known.
+[392141.445450] atkbd serio0: Unknown key released (translated set 2, code 0x65 on isa0060/serio0).
+[392141.445472] atkbd serio0: Use 'setkeycodes 65 <keycode>' to make it known.
+[453343.270869] lockdown_is_locked_down: 1 callbacks suppressed
+[453349.293600] done.
+[453349.322474] thermal thermal_zone12: failed to read out thermal zone (-61)
+[453351.228460] Bluetooth: hci0: HCI LE Coded PHY feature bit is set, but its usage is not supported.
+[454435.316494] done.
+[454435.317769] thermal thermal_zone12: failed to read out thermal zone (-61)
+[454437.258094] Bluetooth: hci0: HCI LE Coded PHY feature bit is set, but its usage is not supported.
+[460772.917025] lockdown_is_locked_down: 1 callbacks suppressed
+[460775.455106] done.
+[460775.456052] thermal thermal_zone12: failed to read out thermal zone (-61)
+[460777.303135] Bluetooth: hci0: HCI LE Coded PHY feature bit is set, but its usage is not supported.`
+
 func TestUptimeQuestionsExtractsLoadavg(t *testing.T) {
 	si := SystemInfo{NumCPU: 4}
 	c := CapturedCommand{Cmd: "uptime", Output: sampleUptime}
@@ -147,6 +168,28 @@ func TestExtractDmesgCpuKeywordsCounts(t *testing.T) {
 	}
 }
 
+func TestExtractDmesgCpuKeywordsIgnoresUnrelatedThermalZoneWarnings(t *testing.T) {
+	caps := []CapturedCommand{{Cmd: "sudo dmesg --level=err,warn | tail -20", Output: sampleDmesgWithUnrelatedThermalZoneWarnings}}
+	v, ok := extractDmesgCpuKeywords(SystemInfo{}, caps)
+	if !ok {
+		t.Fatal("expected extraction to succeed for captured dmesg output")
+	}
+	if v.Number != 0 {
+		t.Fatalf("matched signatures = %v, want 0; value = %+v", v.Number, v)
+	}
+	if !strings.Contains(v.Text, "0/20 lines") {
+		t.Fatalf("value text = %q, want a 0/20 count", v.Text)
+	}
+	if got := verdictDmesgErrors(SystemInfo{}, v, Snapshot{}); got != SignalLow {
+		t.Fatalf("verdict = %v, want SignalLow", got)
+	}
+
+	snap := Snapshot{Values: map[string]Value{"dmesg_cpu_keywords": v}}
+	if issues := cpuSynopsis(SystemInfo{}, snap); len(issues) != 0 {
+		t.Fatalf("unrelated warnings produced CPU synopsis issues: %#v", issues)
+	}
+}
+
 func TestExtractDmesgCpuKeywordsRequiresDmesgCommand(t *testing.T) {
 	si := SystemInfo{}
 	caps := []CapturedCommand{{Cmd: "echo", Output: sampleDmesgWithMCE}}
@@ -242,6 +285,36 @@ func TestDmesgQuestionsFiresOnMCE(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("no MCE-related question generated; got: %+v", qs)
+	}
+}
+
+func TestDmesgQuestionsFiresOnExplicitCPUThermalThrottling(t *testing.T) {
+	cases := []string{
+		"thermal_throttle: CPU2 above threshold",
+		"CPU0: Core temperature above threshold, cpu clock throttled (total events = 1)",
+		"mce: CPU2: Package temperature above threshold, cpu clock throttled (total events = 1)",
+	}
+	for _, output := range cases {
+		qs := dmesgQuestions(SystemInfo{}, CapturedCommand{Cmd: "dmesg", Output: output})
+		if len(qs) != 1 || !strings.Contains(qs[0].Stem, "thermal throttling") {
+			t.Errorf("output %q produced questions %+v, want one thermal-throttling question", output, qs)
+		}
+	}
+}
+
+func TestDmesgQuestionsIgnoreUnrelatedThermalZoneWarnings(t *testing.T) {
+	c := CapturedCommand{Cmd: "dmesg", Output: sampleDmesgWithUnrelatedThermalZoneWarnings}
+	if qs := dmesgQuestions(SystemInfo{}, c); len(qs) != 0 {
+		t.Fatalf("unrelated thermal-zone warnings produced questions: %+v", qs)
+	}
+}
+
+func TestDmesgQuestionsRequireLineLocalStrongEvidence(t *testing.T) {
+	output := "CPU topology initialized\n" +
+		"battery temperature reached a firmware threshold\n" +
+		"mce: corrected-error collector initialized"
+	if qs := dmesgQuestions(SystemInfo{}, CapturedCommand{Cmd: "dmesg", Output: output}); len(qs) != 0 {
+		t.Fatalf("separate weak clues produced a CPU error question: %+v", qs)
 	}
 }
 

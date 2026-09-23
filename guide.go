@@ -76,8 +76,15 @@ func runGuideStep(s *Session, step GuideStep, isLast bool) (correct, answered in
 		if s.guideQuestionKeys == nil {
 			s.guideQuestionKeys = make(map[string]bool)
 		}
+		recognizedQuestions := guideQuestions(s.System, step, *captured)
+		if len(recognizedQuestions) == 0 &&
+			strings.TrimSpace(captured.Output) != "" &&
+			step.NoRecognizedOutputMessage != "" {
+			fmt.Println()
+			fmt.Println(step.NoRecognizedOutputMessage)
+		}
 		questions := chooseUnseenGuideQuestions(
-			guideQuestions(s.System, step, *captured),
+			recognizedQuestions,
 			step.QuestionCount,
 			s.guideQuestionKeys,
 		)

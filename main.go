@@ -29,12 +29,16 @@ const (
 	maxCapturedWarningRemaining = maxCapturedItems / 10
 )
 
-var defaultCommandTimeout = 2 * time.Minute
+// The timeout is a last-resort safety cap, not the normal way to stop a
+// command. It leaves room for a password prompt and user-chosen samplers;
+// Ctrl-C handles immediate cancellation.
+var defaultCommandTimeout = time.Minute
 
 var stdin = bufio.NewReader(os.Stdin)
 var rawInputEnabled = stdinIsTerminal
 var sigintExitSuppressionDepth atomic.Int32
 var activeCommandPGID atomic.Int64
+var activeCommandInterrupts atomic.Int32
 
 type terminalKey int
 
@@ -255,6 +259,10 @@ func runCommandStreaming(cmdStr string, liveOut io.Writer) CapturedCommand {
 		if cmd.Process == nil {
 			return nil
 		}
+		// A command that attempted to read from the terminal while its process
+		// group was in the background may be stopped by SIGTTIN. Resume it before
+		// asking it to terminate so SIGTERM can be handled normally.
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGCONT)
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
 		go func(pid int) {
 			select {
@@ -276,10 +284,28 @@ func runCommandStreaming(cmdStr string, liveOut io.Writer) CapturedCommand {
 	defer releaseSigint()
 	err := cmd.Start()
 	if err == nil {
-		activeCommandPGID.Store(int64(cmd.Process.Pid))
-		err = cmd.Wait()
-		activeCommandPGID.Store(0)
+		pgid := cmd.Process.Pid
+		activeCommandInterrupts.Store(0)
+		activeCommandPGID.Store(int64(pgid))
+
+		restoreTerminal, foregroundErr := giveTerminalToCommand(os.Stdin, pgid)
+		if foregroundErr != nil {
+			_ = cmd.Cancel()
+		}
+		waitErr := cmd.Wait()
 		close(commandDone)
+		restoreErr := restoreTerminal()
+
+		activeCommandPGID.Store(0)
+		activeCommandInterrupts.Store(0)
+		switch {
+		case foregroundErr != nil:
+			err = fmt.Errorf("could not give command terminal control: %w", foregroundErr)
+		case restoreErr != nil:
+			err = fmt.Errorf("could not restore terminal control: %w", restoreErr)
+		default:
+			err = waitErr
+		}
 	}
 	if err != nil {
 		failed = true
@@ -326,6 +352,76 @@ func runCommandStreaming(cmdStr string, liveOut io.Writer) CapturedCommand {
 		fmt.Fprintln(os.Stderr, "[command failed: journalctl could not read the kernel log; try dmesg or sudo dmesg]")
 	}
 	return CapturedCommand{Cmd: cmdStr, Output: buf.String(), Failed: failed, ExitCode: exitCode}
+}
+
+// giveTerminalToCommand makes the command's process group the foreground owner
+// of a controlling terminal while it runs. Without this handoff, an uncached
+// sudo prompt (or any other terminal reader) is stopped by the kernel with
+// SIGTTIN because Setpgid placed it in a background process group.
+//
+// Non-terminal stdin and terminal-like file descriptors without job control
+// are left alone. The returned function is always safe to call.
+func giveTerminalToCommand(terminal *os.File, commandPGID int) (func() error, error) {
+	noRestore := func() error { return nil }
+	foregroundPGID, err := terminalForegroundProcessGroup(terminal.Fd())
+	if err != nil {
+		if errors.Is(err, syscall.ENOTTY) || errors.Is(err, syscall.ENXIO) {
+			return noRestore, nil
+		}
+		return noRestore, err
+	}
+
+	parentPGID := syscall.Getpgrp()
+	if foregroundPGID != parentPGID {
+		return noRestore, fmt.Errorf("use-tool process group %d is not the terminal foreground group %d", parentPGID, foregroundPGID)
+	}
+	if commandPGID == foregroundPGID {
+		return noRestore, nil
+	}
+	if err := setTerminalForegroundProcessGroup(terminal.Fd(), commandPGID); err != nil {
+		return noRestore, err
+	}
+
+	// The command can race with the handoff and receive SIGTTIN before the
+	// parent completes TIOCSPGRP. It is now safe to resume the whole group.
+	_ = syscall.Kill(-commandPGID, syscall.SIGCONT)
+
+	return func() error {
+		// Once the command owns the terminal this process is in the background.
+		// Ignore SIGTTOU only around the restoring ioctl, then return it to its
+		// normal disposition before the next prompt is displayed.
+		signal.Ignore(syscall.SIGTTOU)
+		defer signal.Reset(syscall.SIGTTOU)
+		return setTerminalForegroundProcessGroup(terminal.Fd(), foregroundPGID)
+	}, nil
+}
+
+func terminalForegroundProcessGroup(fd uintptr) (int, error) {
+	var pgid int32
+	_, _, errno := syscall.Syscall(
+		syscall.SYS_IOCTL,
+		fd,
+		uintptr(syscall.TIOCGPGRP),
+		uintptr(unsafe.Pointer(&pgid)),
+	)
+	if errno != 0 {
+		return 0, errno
+	}
+	return int(pgid), nil
+}
+
+func setTerminalForegroundProcessGroup(fd uintptr, pgid int) error {
+	value := int32(pgid)
+	_, _, errno := syscall.Syscall(
+		syscall.SYS_IOCTL,
+		fd,
+		uintptr(syscall.TIOCSPGRP),
+		uintptr(unsafe.Pointer(&value)),
+	)
+	if errno != 0 {
+		return errno
+	}
+	return nil
 }
 
 func commandTimeoutDuration() time.Duration {
@@ -1005,7 +1101,19 @@ func exitOnSigint() {
 		for range ch {
 			if sigintExitSuppressed() {
 				if pgid := activeCommandPGID.Load(); pgid > 0 {
-					_ = syscall.Kill(-int(pgid), syscall.SIGINT)
+					// Usually the terminal delivers SIGINT directly to the foreground
+					// child. This is a fallback for terminal wrappers that signal the
+					// parent instead. Resume a stopped group first, and escalate repeated
+					// interrupts so Ctrl-C cannot leave the guide wedged in cmd.Wait.
+					_ = syscall.Kill(-int(pgid), syscall.SIGCONT)
+					switch activeCommandInterrupts.Add(1) {
+					case 1:
+						_ = syscall.Kill(-int(pgid), syscall.SIGINT)
+					case 2:
+						_ = syscall.Kill(-int(pgid), syscall.SIGTERM)
+					default:
+						_ = syscall.Kill(-int(pgid), syscall.SIGKILL)
+					}
 				}
 				continue
 			}

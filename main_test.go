@@ -3,12 +3,17 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"errors"
+	"fmt"
 	"math/rand"
 	"os"
+	"os/exec"
 	"sort"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
+	"unsafe"
 )
 
 func TestSuggestCommand(t *testing.T) {
@@ -391,6 +396,171 @@ func TestCommandTimeoutDuration(t *testing.T) {
 	if got := commandTimeoutDuration(); got != defaultCommandTimeout {
 		t.Fatalf("invalid timeout = %s, want %s", got, defaultCommandTimeout)
 	}
+}
+
+func TestRunCommandTerminalJobControl(t *testing.T) {
+	if mode := os.Getenv("USE_TOOL_TEST_PTY_MODE"); mode != "" {
+		t.Setenv("USE_TOOL_COMMAND_TIMEOUT", "5s")
+		var captured CapturedCommand
+		switch mode {
+		case "cached":
+			captured = runCommand(`printf 'child-cached\n'`)
+		case "prompt":
+			captured = runCommand(`printf 'child-ready\n'; IFS= read -r value; printf 'child-read:%s\n' "$value"`)
+		case "interrupt":
+			captured = runCommand(`printf 'child-ready\n'; IFS= read -r value`)
+		default:
+			t.Fatalf("unknown PTY helper mode %q", mode)
+		}
+		fmt.Printf("helper-finished failed=%t\n", captured.Failed)
+		return
+	}
+
+	t.Run("command without prompt", func(t *testing.T) {
+		output := runPTYTestProcess(t, "cached", nil)
+		for _, want := range []string{"child-cached", "helper-finished failed=false"} {
+			if !strings.Contains(output, want) {
+				t.Fatalf("PTY output missing %q:\n%s", want, output)
+			}
+		}
+	})
+
+	t.Run("command reads terminal", func(t *testing.T) {
+		output := runPTYTestProcess(t, "prompt", []byte("hello\n"))
+		for _, want := range []string{"child-ready", "child-read:hello", "helper-finished failed=false"} {
+			if !strings.Contains(output, want) {
+				t.Fatalf("PTY output missing %q:\n%s", want, output)
+			}
+		}
+	})
+
+	t.Run("ctrl-c returns control", func(t *testing.T) {
+		output := runPTYTestProcess(t, "interrupt", []byte{3})
+		for _, want := range []string{"child-ready", "helper-finished failed=true"} {
+			if !strings.Contains(output, want) {
+				t.Fatalf("PTY output missing %q:\n%s", want, output)
+			}
+		}
+	})
+}
+
+type ptyReadResult struct {
+	output string
+	err    error
+}
+
+func runPTYTestProcess(t *testing.T, mode string, inputAfterReady []byte) string {
+	t.Helper()
+	master, slave := openTestPTY(t)
+	defer master.Close()
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestRunCommandTerminalJobControl$")
+	cmd.Env = append(os.Environ(), "USE_TOOL_TEST_PTY_MODE="+mode)
+	cmd.Stdin = slave
+	cmd.Stdout = slave
+	cmd.Stderr = slave
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
+	if err := cmd.Start(); err != nil {
+		slave.Close()
+		t.Fatalf("start PTY helper: %v", err)
+	}
+	if err := slave.Close(); err != nil {
+		t.Fatalf("close parent PTY slave: %v", err)
+	}
+
+	readDone := make(chan ptyReadResult, 1)
+	go func() {
+		var output bytes.Buffer
+		buf := make([]byte, 512)
+		inputSent := len(inputAfterReady) == 0
+		for {
+			n, err := master.Read(buf)
+			if n > 0 {
+				output.Write(buf[:n])
+				if !inputSent && strings.Contains(output.String(), "child-ready") {
+					_, writeErr := master.Write(inputAfterReady)
+					if writeErr != nil {
+						readDone <- ptyReadResult{output: output.String(), err: writeErr}
+						return
+					}
+					inputSent = true
+				}
+			}
+			if err != nil {
+				if errors.Is(err, syscall.EIO) {
+					err = nil
+				}
+				readDone <- ptyReadResult{output: output.String(), err: err}
+				return
+			}
+		}
+	}()
+
+	waitDone := make(chan error, 1)
+	go func() { waitDone <- cmd.Wait() }()
+
+	var (
+		output  ptyReadResult
+		waitErr error
+		readOK  bool
+		waitOK  bool
+	)
+	timer := time.NewTimer(10 * time.Second)
+	defer timer.Stop()
+	for !readOK || !waitOK {
+		select {
+		case output = <-readDone:
+			readOK = true
+		case waitErr = <-waitDone:
+			waitOK = true
+		case <-timer.C:
+			_ = master.Close()
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			_ = cmd.Process.Kill()
+			t.Fatalf("PTY helper timed out in mode %q", mode)
+		}
+	}
+	if output.err != nil {
+		t.Fatalf("read PTY output: %v", output.err)
+	}
+	if waitErr != nil {
+		t.Fatalf("PTY helper failed: %v\n%s", waitErr, output.output)
+	}
+	return output.output
+}
+
+func openTestPTY(t *testing.T) (*os.File, *os.File) {
+	t.Helper()
+	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|syscall.O_NOCTTY, 0)
+	if err != nil {
+		t.Fatalf("open PTY master: %v", err)
+	}
+
+	var unlock int32
+	if err := testIoctl(master.Fd(), syscall.TIOCSPTLCK, unsafe.Pointer(&unlock)); err != nil {
+		master.Close()
+		t.Fatalf("unlock PTY: %v", err)
+	}
+	var number uint32
+	if err := testIoctl(master.Fd(), syscall.TIOCGPTN, unsafe.Pointer(&number)); err != nil {
+		master.Close()
+		t.Fatalf("get PTY number: %v", err)
+	}
+
+	slave, err := os.OpenFile(fmt.Sprintf("/dev/pts/%d", number), os.O_RDWR|syscall.O_NOCTTY, 0)
+	if err != nil {
+		master.Close()
+		t.Fatalf("open PTY slave: %v", err)
+	}
+	return master, slave
+}
+
+func testIoctl(fd uintptr, request uint, value unsafe.Pointer) error {
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, fd, uintptr(request), uintptr(value))
+	if errno != 0 {
+		return errno
+	}
+	return nil
 }
 
 func TestDangerousCommandReason(t *testing.T) {
@@ -1491,6 +1661,27 @@ func TestGuideStepCommandPrintsEmptyOutputMessage(t *testing.T) {
 	}
 	if !strings.Contains(out, "Press Enter to continue...") {
 		t.Fatalf("expected pause prompt after empty-output message:\n%s", out)
+	}
+}
+
+func TestRunGuideStepExplainsNonEmptyUnrecognizedOutput(t *testing.T) {
+	oldStdin := stdin
+	defer func() { stdin = oldStdin }()
+	stdin = bufio.NewReader(strings.NewReader("printf unrelated-warning\n"))
+
+	const message = "No recognized CPU signatures; the warnings may be unrelated."
+	out := captureStdout(func() {
+		_, _, ok := runGuideStep(&Session{}, GuideStep{
+			Suggested:                 "printf unrelated-warning",
+			AcceptAny:                 true,
+			NoRecognizedOutputMessage: message,
+		}, true)
+		if !ok {
+			t.Fatal("guide step unexpectedly stopped")
+		}
+	})
+	if !strings.Contains(out, message) {
+		t.Fatalf("expected no-recognized-output explanation, got:\n%s", out)
 	}
 }
 

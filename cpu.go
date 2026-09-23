@@ -68,15 +68,18 @@ func cpuSteps(si SystemInfo) []GuideStep {
 
 	steps = append(steps, GuideStep{
 		Name:               "errors",
-		Intro:              "Step 4: kernel errors (the 'E' in USE) surface in dmesg —\nMCE events, thermal throttling, hardware faults.\nThis uses dmesg's severity filter instead of a keyword grep so unusual CPU and hardware warnings are not hidden.\n" + dmesgPermissionNote,
+		Intro:              "Step 4: kernel errors (the 'E' in USE) surface in dmesg —\nMCE events, thermal throttling, hardware faults.\nThis uses dmesg's severity filter so unusual warnings stay visible, but the output covers every subsystem; only explicit CPU/MCE/throttling signatures count as CPU evidence.\n" + dmesgPermissionNote,
 		Suggested:          "dmesg --level=err,warn | tail -20",
 		Alternatives:       journalctlAlternative(si, "journalctl -k -b -p warning --no-pager -n 30"),
 		QuestionsFn:        dmesgQuestions,
 		AcceptAny:          true,
-		EmptyOutputMessage: "No CPU, thermal, or machine-check errors found.",
-		Teaching: "Recent MCE (machine-check exception) or thermal throttling messages mean\n" +
-			"physical CPU problems; absence is the healthy case. On idle laptops you'll\n" +
-			"usually see nothing here — that's fine.",
+		EmptyOutputMessage: "No kernel warning or error lines were returned.",
+		NoRecognizedOutputMessage: "No recognized CPU hardware-error or throttling signatures were found; " +
+			"the displayed kernel warnings may belong to unrelated subsystems.",
+		Teaching: "Explicit MCE (machine-check exception) or CPU thermal-throttling messages are\n" +
+			"strong evidence of physical CPU or memory trouble. Generic kernel warnings — even\n" +
+			"ones mentioning a non-CPU thermal zone — are not CPU evidence by themselves.\n" +
+			"Corroborate recognized messages with temperatures and throttle counters.",
 	})
 
 	return steps
@@ -813,11 +816,11 @@ var cpuObservations = []Observation{
 	},
 	{
 		Name:      "dmesg_cpu_keywords",
-		Title:     "dmesg CPU/thermal/MCE",
+		Title:     "Recognized dmesg CPU/MCE/throttling",
 		Section:   "Errors",
 		Extract:   extractDmesgCpuKeywords,
 		Verdict:   verdictDmesgErrors,
-		Heuristic: "MCE / thermal / throttle messages in the kernel log = CPU hardware errors",
+		Heuristic: "explicit MCE, machine-check, CPU temperature-threshold, or CPU-throttling messages in the kernel log = CPU or memory hardware-error evidence; generic thermal-zone warnings do not count",
 	},
 }
 
@@ -1073,10 +1076,69 @@ func extractVmstatColumn(col string) func(SystemInfo, []CapturedCommand) (Value,
 	}
 }
 
+type cpuKernelLogEvent int
+
+const (
+	cpuKernelLogNone cpuKernelLogEvent = iota
+	cpuKernelLogMCE
+	cpuKernelLogThermalThrottle
+)
+
+// classifyCPUKernelLogLine deliberately recognizes only strong, line-local
+// evidence. Kernel warning logs cover every subsystem, so a generic word such
+// as "thermal" is not enough: for example, a Wi-Fi thermal-zone sensor may be
+// briefly unavailable during resume without the CPU overheating or throttling.
+func classifyCPUKernelLogLine(line string) cpuKernelLogEvent {
+	low := strings.ToLower(line)
+
+	// These are the forms emitted by the x86 thermal-throttle machinery. Keep
+	// this check before MCE because some threshold messages carry an `mce:`
+	// prefix even though the useful lesson is specifically about throttling.
+	if strings.Contains(low, "thermal_throttle") ||
+		strings.Contains(low, "cpu clock throttled") {
+		return cpuKernelLogThermalThrottle
+	}
+	hasCPUContext := strings.Contains(low, "cpu") ||
+		strings.Contains(low, "core") ||
+		strings.Contains(low, "package")
+	if hasCPUContext && strings.Contains(low, "temperature") &&
+		(strings.Contains(low, "threshold") || strings.Contains(low, "throttl")) {
+		return cpuKernelLogThermalThrottle
+	}
+
+	if strings.Contains(low, "machine check") ||
+		(strings.Contains(low, "mce:") && strings.Contains(low, "hardware error")) {
+		return cpuKernelLogMCE
+	}
+	return cpuKernelLogNone
+}
+
 func extractDmesgCpuKeywords(si SystemInfo, caps []CapturedCommand) (Value, bool) {
-	return extractKernelLogKeywords(caps,
-		[]string{"mce", "machine check", "thermal", "throttl"},
-		"CPU/thermal/MCE keywords")
+	seen := false
+	matched := 0
+	totalLines := 0
+	for _, c := range caps {
+		if !isKernelLogCommand(c.Cmd) {
+			continue
+		}
+		seen = true
+		for _, line := range strings.Split(c.Output, "\n") {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			totalLines++
+			if classifyCPUKernelLogLine(line) != cpuKernelLogNone {
+				matched++
+			}
+		}
+	}
+	if !seen {
+		return Value{}, false
+	}
+	return Value{
+		Number: float64(matched),
+		Text:   fmt.Sprintf("%d/%d lines matched recognized CPU/MCE/throttling signatures", matched, totalLines),
+	}, true
 }
 
 // ----- Recall question generators -----
@@ -1094,9 +1156,18 @@ func clamp(x, lo, hi float64) float64 {
 // ----- Synthesis rules -----
 
 func dmesgQuestions(si SystemInfo, c CapturedCommand) []Question {
-	low := strings.ToLower(c.Output)
 	tool := kernelLogQuestionTool(c.Cmd)
-	if strings.Contains(low, "machine check") || strings.Contains(low, "mce:") {
+	foundMCE := false
+	foundThermalThrottle := false
+	for _, line := range strings.Split(c.Output, "\n") {
+		switch classifyCPUKernelLogLine(line) {
+		case cpuKernelLogMCE:
+			foundMCE = true
+		case cpuKernelLogThermalThrottle:
+			foundThermalThrottle = true
+		}
+	}
+	if foundMCE {
 		return []Question{{
 			Stem:    fmt.Sprintf("Your `%s` output mentions a machine-check (MCE) event. What does this usually mean?", tool),
 			Correct: "A hardware-level CPU or memory error reported by the processor",
@@ -1107,7 +1178,7 @@ func dmesgQuestions(si SystemInfo, c CapturedCommand) []Question {
 			},
 		}}
 	}
-	if strings.Contains(low, "thermal") || strings.Contains(low, "throttl") {
+	if foundThermalThrottle {
 		return []Question{{
 			Stem:    fmt.Sprintf("Your `%s` output mentions thermal throttling. What is the immediate effect on the CPU?", tool),
 			Correct: "The CPU clocks down to reduce heat, lowering effective performance",
@@ -1182,7 +1253,7 @@ var cpuCommands = []CommandRef{
 	{
 		Cmd:          "dmesg --level=err,warn | tail -30",
 		Section:      "Errors",
-		Summary:      "Recent kernel errors and warnings.\nLook for MCE, thermal throttling, hardware faults.\nUses severity filtering instead of keyword grep so unusual CPU/hardware warnings stay visible.\n" + dmesgPermissionNote,
+		Summary:      "Recent kernel errors and warnings.\nLook for MCE, thermal throttling, hardware faults.\nUses severity filtering instead of keyword grep so unusual warnings stay visible. Output covers every subsystem; generic thermal-zone warnings are not CPU-throttling evidence.\n" + dmesgPermissionNote,
 		DiagnoseRank: 1,
 	},
 	{

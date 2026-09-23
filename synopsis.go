@@ -91,7 +91,7 @@ func cpuSynopsis(si SystemInfo, snap Snapshot) []SynopsisIssue {
 	if v, ok := snap.Values["dmesg_cpu_keywords"]; ok && textCountPositive(v.Text) {
 		issues = append(issues, SynopsisIssue{
 			Section:  "Errors",
-			Summary:  "kernel CPU, thermal, or machine-check messages were seen",
+			Summary:  "recognized kernel CPU hardware-error or throttling messages were seen",
 			Evidence: v.Text,
 		})
 	}

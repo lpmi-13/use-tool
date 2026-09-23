@@ -38,9 +38,15 @@ type GuideStep struct {
 	QuestionCount int
 	// AcceptAny accepts output that yields no questions, but only after the
 	// learner has run one of the step's expected commands.
-	AcceptAny          bool
+	AcceptAny bool
+	// EmptyOutputMessage is shown when the accepted command returned no output.
 	EmptyOutputMessage string
-	Teaching           string
+	// NoRecognizedOutputMessage is shown when an accepted command returned
+	// output but QuestionsFn found no recognized signal in it. This lets broad
+	// diagnostic commands distinguish unrelated output from a clean, empty
+	// result without turning that output into a false positive.
+	NoRecognizedOutputMessage string
+	Teaching                  string
 	// Filter, if set, rewrites the captured command output before it is
 	// shown to the learner and stored for questions. Used to drop noise
 	// (e.g. loopback and container veth interfaces) so the step focuses on

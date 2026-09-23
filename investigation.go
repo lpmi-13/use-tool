@@ -53,6 +53,11 @@ type Question struct {
 	Stem        string
 	Correct     string
 	Distractors []string
+	// Concepts identifies the knowledge being checked independently of the
+	// command's spelling for it. Guide mode uses these tags to avoid asking the
+	// same thing twice in one walkthrough (for example mpstat's %steal and
+	// sar -u's %steal). A question can cover more than one concept.
+	Concepts []string
 }
 
 type QuestionResult struct {

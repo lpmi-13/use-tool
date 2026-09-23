@@ -354,8 +354,9 @@ func ipLinkColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 	}
 	return []Question{
 		{
-			Stem:    "In `ip -s link` RX counters, what does `bytes` represent?",
-			Correct: "Running total of bytes received by the interface since the counter was reset",
+			Stem:     "In `ip -s link` RX counters, what does `bytes` represent?",
+			Correct:  "Running total of bytes received by the interface since the counter was reset",
+			Concepts: []string{"network-receive-volume"},
 			Distractors: []string{
 				"Current receive throughput in bytes per second",
 				"Bytes waiting in the receive queue right now",
@@ -363,8 +364,9 @@ func ipLinkColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 			},
 		},
 		{
-			Stem:    "In `ip -s link` RX counters, what does `packets` represent?",
-			Correct: "Running total of packets received by the interface since the counter was reset",
+			Stem:     "In `ip -s link` RX counters, what does `packets` represent?",
+			Correct:  "Running total of packets received by the interface since the counter was reset",
+			Concepts: []string{"network-receive-packets"},
 			Distractors: []string{
 				"Current receive packets per second",
 				"Packets currently queued for userspace",
@@ -372,8 +374,9 @@ func ipLinkColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 			},
 		},
 		{
-			Stem:    "In `ip -s link` RX counters, what does `errors` represent?",
-			Correct: "Running total of receive-side packet errors reported by the interface",
+			Stem:     "In `ip -s link` RX counters, what does `errors` represent?",
+			Correct:  "Running total of receive-side packet errors reported by the interface",
+			Concepts: []string{"network-receive-errors"},
 			Distractors: []string{
 				"Application-level socket errors",
 				"Packets intentionally dropped by firewall rules only",
@@ -381,8 +384,9 @@ func ipLinkColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 			},
 		},
 		{
-			Stem:    "In `ip -s link` RX counters, what does `dropped` represent?",
-			Correct: "Running total of received packets dropped before delivery up the stack",
+			Stem:     "In `ip -s link` RX counters, what does `dropped` represent?",
+			Correct:  "Running total of received packets dropped before delivery up the stack",
+			Concepts: []string{"network-receive-drops"},
 			Distractors: []string{
 				"Packets dropped by remote peers",
 				"Packets retransmitted after loss",
@@ -390,8 +394,9 @@ func ipLinkColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 			},
 		},
 		{
-			Stem:    "In `ip -s link` RX counters, what does `overrun` represent?",
-			Correct: "Running total of receive FIFO overruns where packets arrived faster than the NIC or driver could drain them",
+			Stem:     "In `ip -s link` RX counters, what does `overrun` represent?",
+			Correct:  "Running total of receive FIFO overruns where packets arrived faster than the NIC or driver could drain them",
+			Concepts: []string{"network-receive-fifo-errors"},
 			Distractors: []string{
 				"Packets larger than the interface MTU",
 				"Packets dropped by the transmit queue",
@@ -399,8 +404,9 @@ func ipLinkColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 			},
 		},
 		{
-			Stem:    "In `ip -s link` RX counters, what does `mcast` represent?",
-			Correct: "Running total of multicast packets received by the interface",
+			Stem:     "In `ip -s link` RX counters, what does `mcast` represent?",
+			Correct:  "Running total of multicast packets received by the interface",
+			Concepts: []string{"network-receive-multicast"},
 			Distractors: []string{
 				"Packets sent to the interface's MAC address only",
 				"Packets dropped because of checksum errors",
@@ -408,8 +414,9 @@ func ipLinkColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 			},
 		},
 		{
-			Stem:    "In `ip -s link` TX counters, what does `bytes` represent?",
-			Correct: "Running total of bytes transmitted by the interface since the counter was reset",
+			Stem:     "In `ip -s link` TX counters, what does `bytes` represent?",
+			Correct:  "Running total of bytes transmitted by the interface since the counter was reset",
+			Concepts: []string{"network-transmit-volume"},
 			Distractors: []string{
 				"Current transmit throughput in bytes per second",
 				"Bytes currently waiting in the transmit queue",
@@ -417,8 +424,9 @@ func ipLinkColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 			},
 		},
 		{
-			Stem:    "In `ip -s link` TX counters, what does `packets` represent?",
-			Correct: "Running total of packets transmitted by the interface since the counter was reset",
+			Stem:     "In `ip -s link` TX counters, what does `packets` represent?",
+			Correct:  "Running total of packets transmitted by the interface since the counter was reset",
+			Concepts: []string{"network-transmit-packets"},
 			Distractors: []string{
 				"Current transmit packets per second",
 				"Packets currently queued in TCP send buffers",
@@ -426,8 +434,9 @@ func ipLinkColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 			},
 		},
 		{
-			Stem:    "In `ip -s link` TX counters, what does `dropped` represent?",
-			Correct: "Running total of outgoing packets dropped before transmission",
+			Stem:     "In `ip -s link` TX counters, what does `dropped` represent?",
+			Correct:  "Running total of outgoing packets dropped before transmission",
+			Concepts: []string{"network-transmit-drops"},
 			Distractors: []string{
 				"Incoming packets dropped by the peer",
 				"TCP segments retransmitted after timeout",
@@ -435,8 +444,9 @@ func ipLinkColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 			},
 		},
 		{
-			Stem:    "In `ip -s link` TX counters, what does `carrier` represent?",
-			Correct: "Running total of transmit carrier errors reported by the interface",
+			Stem:     "In `ip -s link` TX counters, what does `carrier` represent?",
+			Correct:  "Running total of transmit carrier errors reported by the interface",
+			Concepts: []string{"network-transmit-carrier-errors"},
 			Distractors: []string{
 				"The current negotiated carrier speed",
 				"The number of carrier-grade NAT translations",
@@ -462,8 +472,9 @@ func sarDevColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 
 var sarDevQuestionPicks = []columnQuestionPick{
 	{
-		Column:  "IFACE",
-		Correct: "The NIC or virtual link name for the row",
+		Column:   "IFACE",
+		Correct:  "The NIC or virtual link name for the row",
+		Concepts: []string{"network-interface-identity"},
 		Distractors: []string{
 			"The peer host name for the traffic",
 			"The socket protocol family",
@@ -471,8 +482,9 @@ var sarDevQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "rxpck/s",
-		Correct: "Packets received per second during the sample interval",
+		Column:   "rxpck/s",
+		Correct:  "Packets received per second during the sample interval",
+		Concepts: []string{"network-receive-packets"},
 		Distractors: []string{
 			"Kilobytes received per second",
 			"Packets received since boot",
@@ -480,8 +492,9 @@ var sarDevQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "txpck/s",
-		Correct: "Packets transmitted per second during the sample interval",
+		Column:   "txpck/s",
+		Correct:  "Packets transmitted per second during the sample interval",
+		Concepts: []string{"network-transmit-packets"},
 		Distractors: []string{
 			"Kilobytes transmitted per second",
 			"Packets transmitted since boot",
@@ -489,8 +502,9 @@ var sarDevQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "rxkB/s",
-		Correct: "Receive throughput in kilobytes per second during the sample interval",
+		Column:   "rxkB/s",
+		Correct:  "Receive throughput in kilobytes per second during the sample interval",
+		Concepts: []string{"network-receive-volume"},
 		Distractors: []string{
 			"Receive packets per second",
 			"Kilobytes received since boot",
@@ -498,8 +512,9 @@ var sarDevQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "txkB/s",
-		Correct: "Transmit throughput in kilobytes per second during the sample interval",
+		Column:   "txkB/s",
+		Correct:  "Transmit throughput in kilobytes per second during the sample interval",
+		Concepts: []string{"network-transmit-volume"},
 		Distractors: []string{
 			"Transmit packets per second",
 			"Kilobytes transmitted since boot",
@@ -525,8 +540,9 @@ var sarDevQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "rxmcst/s",
-		Correct: "Multicast packets received per second",
+		Column:   "rxmcst/s",
+		Correct:  "Multicast packets received per second",
+		Concepts: []string{"network-receive-multicast"},
 		Distractors: []string{
 			"Multicast packets transmitted per second",
 			"Packets received from the most active peer",
@@ -560,8 +576,9 @@ func sarEdevColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 
 var sarEdevQuestionPicks = []columnQuestionPick{
 	{
-		Column:  "IFACE",
-		Correct: "The NIC or virtual link name for the row",
+		Column:   "IFACE",
+		Correct:  "The NIC or virtual link name for the row",
+		Concepts: []string{"network-interface-identity"},
 		Distractors: []string{
 			"The remote endpoint for the errors",
 			"The IP protocol being reported",
@@ -569,8 +586,9 @@ var sarEdevQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "rxerr/s",
-		Correct: "Receive errors per second during the sample interval",
+		Column:   "rxerr/s",
+		Correct:  "Receive errors per second during the sample interval",
+		Concepts: []string{"network-receive-errors"},
 		Distractors: []string{
 			"Receive packets per second",
 			"Receive drops since boot",
@@ -578,8 +596,9 @@ var sarEdevQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "txerr/s",
-		Correct: "Transmit errors per second during the sample interval",
+		Column:   "txerr/s",
+		Correct:  "Transmit errors per second during the sample interval",
+		Concepts: []string{"network-transmit-errors"},
 		Distractors: []string{
 			"Transmit packets per second",
 			"Transmit drops since boot",
@@ -596,8 +615,9 @@ var sarEdevQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "rxdrop/s",
-		Correct: "Received packets dropped per second before delivery up the stack",
+		Column:   "rxdrop/s",
+		Correct:  "Received packets dropped per second before delivery up the stack",
+		Concepts: []string{"network-receive-drops"},
 		Distractors: []string{
 			"Packets retransmitted by TCP per second",
 			"Receive packets with checksum errors per second",
@@ -605,8 +625,9 @@ var sarEdevQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "txdrop/s",
-		Correct: "Outgoing packets dropped per second before transmission",
+		Column:   "txdrop/s",
+		Correct:  "Outgoing packets dropped per second before transmission",
+		Concepts: []string{"network-transmit-drops"},
 		Distractors: []string{
 			"Transmit packets with checksum errors per second",
 			"TCP segments retransmitted per second",
@@ -614,8 +635,9 @@ var sarEdevQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "txcarr/s",
-		Correct: "Transmit carrier errors per second",
+		Column:   "txcarr/s",
+		Correct:  "Transmit carrier errors per second",
+		Concepts: []string{"network-transmit-carrier-errors"},
 		Distractors: []string{
 			"Transmit packets carried successfully per second",
 			"Carrier speed changes per second",
@@ -632,8 +654,9 @@ var sarEdevQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "rxfifo/s",
-		Correct: "Receive FIFO overrun errors per second",
+		Column:   "rxfifo/s",
+		Correct:  "Receive FIFO overrun errors per second",
+		Concepts: []string{"network-receive-fifo-errors"},
 		Distractors: []string{
 			"Receive queue length sampled once per second",
 			"Packets received from FIFO sockets per second",
@@ -641,8 +664,9 @@ var sarEdevQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "txfifo/s",
-		Correct: "Transmit FIFO errors per second",
+		Column:   "txfifo/s",
+		Correct:  "Transmit FIFO errors per second",
+		Concepts: []string{"network-transmit-fifo-errors"},
 		Distractors: []string{
 			"Transmit queue length sampled once per second",
 			"Packets transmitted through FIFO sockets per second",
@@ -837,8 +861,9 @@ func procNetDevColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 	}
 	return []Question{
 		{
-			Stem:    "In `/proc/net/dev`, in the `Receive` section, what does the `bytes` column represent?",
-			Correct: "Running total of bytes received by the interface",
+			Stem:     "In `/proc/net/dev`, in the `Receive` section, what does the `bytes` column represent?",
+			Correct:  "Running total of bytes received by the interface",
+			Concepts: []string{"network-receive-volume"},
 			Distractors: []string{
 				"Current receive throughput in bytes per second",
 				"Bytes currently queued in socket buffers",
@@ -846,8 +871,9 @@ func procNetDevColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 			},
 		},
 		{
-			Stem:    "In `/proc/net/dev`, in the `Receive` section, what does the `errs` column represent?",
-			Correct: "Running total of receive errors for the interface",
+			Stem:     "In `/proc/net/dev`, in the `Receive` section, what does the `errs` column represent?",
+			Correct:  "Running total of receive errors for the interface",
+			Concepts: []string{"network-receive-errors"},
 			Distractors: []string{
 				"TCP errors reported by applications",
 				"Receive packets dropped by firewall rules only",
@@ -855,8 +881,9 @@ func procNetDevColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 			},
 		},
 		{
-			Stem:    "In `/proc/net/dev`, in the `Receive` section, what does the `drop` column represent?",
-			Correct: "Running total of received packets dropped before delivery",
+			Stem:     "In `/proc/net/dev`, in the `Receive` section, what does the `drop` column represent?",
+			Correct:  "Running total of received packets dropped before delivery",
+			Concepts: []string{"network-receive-drops"},
 			Distractors: []string{
 				"TCP retransmitted packets",
 				"Packets dropped by the remote peer",
@@ -864,8 +891,9 @@ func procNetDevColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 			},
 		},
 		{
-			Stem:    "In `/proc/net/dev`, in the `Transmit` section, what does the `bytes` column represent?",
-			Correct: "Running total of bytes transmitted by the interface",
+			Stem:     "In `/proc/net/dev`, in the `Transmit` section, what does the `bytes` column represent?",
+			Correct:  "Running total of bytes transmitted by the interface",
+			Concepts: []string{"network-transmit-volume"},
 			Distractors: []string{
 				"Current transmit throughput in bytes per second",
 				"Bytes waiting in the qdisc",
@@ -873,8 +901,9 @@ func procNetDevColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 			},
 		},
 		{
-			Stem:    "In `/proc/net/dev`, in the `Transmit` section, what does the `drop` column represent?",
-			Correct: "Running total of outgoing packets dropped before transmission",
+			Stem:     "In `/proc/net/dev`, in the `Transmit` section, what does the `drop` column represent?",
+			Correct:  "Running total of outgoing packets dropped before transmission",
+			Concepts: []string{"network-transmit-drops"},
 			Distractors: []string{
 				"Incoming packets dropped by the peer",
 				"TCP connections dropped by applications",

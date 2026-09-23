@@ -166,6 +166,9 @@ type Session struct {
 	Investigation *Investigation
 	System        SystemInfo
 	Captured      []CapturedCommand
+	// guideQuestionKeys records concepts already presented during this guided
+	// walkthrough so later steps can select a genuinely different check.
+	guideQuestionKeys map[string]bool
 	// kernelLogBlocks counts how many times this session has seen a
 	// permission-blocked dmesg or journalctl call. After the second strike
 	// we emit a one-shot note that the host is hiding kernel logs across

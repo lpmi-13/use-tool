@@ -175,8 +175,9 @@ func meminfoColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 
 var meminfoQuestionPicks = []columnQuestionPick{
 	{
-		Column:  "MemTotal",
-		Correct: "Total usable RAM visible to the kernel, in kilobytes",
+		Column:   "MemTotal",
+		Correct:  "Total usable RAM visible to the kernel, in kilobytes",
+		Concepts: []string{"memory-total"},
 		Distractors: []string{
 			"Total RAM currently free for new allocations",
 			"Total memory used by user-space processes only",
@@ -184,8 +185,9 @@ var meminfoQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "MemFree",
-		Correct: "Currently unused RAM, not counting reclaimable page cache and buffers",
+		Column:   "MemFree",
+		Correct:  "Currently unused RAM, not counting reclaimable page cache and buffers",
+		Concepts: []string{"memory-free"},
 		Distractors: []string{
 			"Memory available for new allocations without swapping",
 			"Memory used by filesystem cache",
@@ -193,8 +195,9 @@ var meminfoQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "MemAvailable",
-		Correct: "The kernel's estimate of RAM usable for new allocations without swapping",
+		Column:   "MemAvailable",
+		Correct:  "The kernel's estimate of RAM usable for new allocations without swapping",
+		Concepts: []string{"memory-available"},
 		Distractors: []string{
 			"Completely unused RAM only",
 			"Free swap space plus free RAM",
@@ -202,8 +205,9 @@ var meminfoQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "Buffers",
-		Correct: "Memory used for block-device I/O staging and filesystem metadata",
+		Column:   "Buffers",
+		Correct:  "Memory used for block-device I/O staging and filesystem metadata",
+		Concepts: []string{"memory-buffers"},
 		Distractors: []string{
 			"Memory used for executable code pages",
 			"Memory used by TCP socket queues only",
@@ -211,8 +215,9 @@ var meminfoQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "Cached",
-		Correct: "File-backed pages that are mostly reclaimable under memory pressure",
+		Column:   "Cached",
+		Correct:  "File-backed pages that are mostly reclaimable under memory pressure",
+		Concepts: []string{"memory-page-cache"},
 		Distractors: []string{
 			"Private anonymous memory owned by processes",
 			"Swap space used to store disk blocks",
@@ -312,8 +317,9 @@ func freeOutputDetected(output string) bool {
 
 var freeQuestionPicks = []columnQuestionPick{
 	{
-		Column:  "total",
-		Correct: "Total usable physical memory the kernel can see",
+		Column:   "total",
+		Correct:  "Total usable physical memory the kernel can see",
+		Concepts: []string{"memory-total"},
 		Distractors: []string{
 			"Total memory across RAM plus swap",
 			"Total memory currently allocated by user processes",
@@ -330,8 +336,9 @@ var freeQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "free",
-		Correct: "Currently unused RAM from MemFree, not counting reclaimable buffers or page cache",
+		Column:   "free",
+		Correct:  "Currently unused RAM from MemFree, not counting reclaimable buffers or page cache",
+		Concepts: []string{"memory-free"},
 		Distractors: []string{
 			"Memory the kernel estimates is available for new allocations without swapping",
 			"Memory that has never been touched by any process",
@@ -348,8 +355,9 @@ var freeQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "buff/cache",
-		Correct: "Kernel I/O staging plus file-backed pages, most of which is reclaimable under pressure",
+		Column:   "buff/cache",
+		Correct:  "Kernel I/O staging plus file-backed pages, most of which is reclaimable under pressure",
+		Concepts: []string{"memory-buffers", "memory-page-cache"},
 		Distractors: []string{
 			"Memory permanently reserved by the kernel for I/O staging",
 			"Memory used as write-back storage for swap",
@@ -357,8 +365,9 @@ var freeQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "available",
-		Correct: "The kernel's estimate of memory usable for new allocations without swapping (including reclaimable cache)",
+		Column:   "available",
+		Correct:  "The kernel's estimate of memory usable for new allocations without swapping (including reclaimable cache)",
+		Concepts: []string{"memory-available"},
 		Distractors: []string{
 			"Completely unused memory only",
 			"Free memory plus free swap",
@@ -408,8 +417,9 @@ func availablePSIQuestionPicks(output, resource string) []columnQuestionPick {
 			},
 		},
 		{
-			Column:  "avg10",
-			Correct: "The recent 10-second average stall time, reported as a percentage of wall-clock time",
+			Column:   "avg10",
+			Correct:  "The recent 10-second average stall time, reported as a percentage of wall-clock time",
+			Concepts: []string{"psi-average-window"},
 			Distractors: []string{
 				"The cumulative stall count from the last 10 tasks",
 				"The 10-minute moving average of resource utilization",
@@ -417,8 +427,9 @@ func availablePSIQuestionPicks(output, resource string) []columnQuestionPick {
 			},
 		},
 		{
-			Column:  "avg60",
-			Correct: "The recent 60-second average stall time, reported as a percentage of wall-clock time",
+			Column:   "avg60",
+			Correct:  "The recent 60-second average stall time, reported as a percentage of wall-clock time",
+			Concepts: []string{"psi-average-window"},
 			Distractors: []string{
 				"The 60-minute moving average of resource utilization",
 				"The cumulative number of stalls in the last 60 seconds",
@@ -426,8 +437,9 @@ func availablePSIQuestionPicks(output, resource string) []columnQuestionPick {
 			},
 		},
 		{
-			Column:  "avg300",
-			Correct: "The recent 300-second average stall time, reported as a percentage of wall-clock time",
+			Column:   "avg300",
+			Correct:  "The recent 300-second average stall time, reported as a percentage of wall-clock time",
+			Concepts: []string{"psi-average-window"},
 			Distractors: []string{
 				"The 300-millisecond latency percentile for stalled tasks",
 				"The total number of stalled tasks sampled",
@@ -512,8 +524,9 @@ func sarWStemFor(column string) string {
 
 var sarWQuestionPicks = []columnQuestionPick{
 	{
-		Column:  "pswpin/s",
-		Correct: "Pages moved from the swap area back to RAM per second during the sample interval",
+		Column:   "pswpin/s",
+		Correct:  "Pages moved from the swap area back to RAM per second during the sample interval",
+		Concepts: []string{"memory-swap-in-rate"},
 		Distractors: []string{
 			"Total pages moved back to RAM since boot",
 			"Pages of page cache reclaimed per second",
@@ -521,8 +534,9 @@ var sarWQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "pswpout/s",
-		Correct: "Pages moved from RAM to the swap area per second during the sample interval",
+		Column:   "pswpout/s",
+		Correct:  "Pages moved from RAM to the swap area per second during the sample interval",
+		Concepts: []string{"memory-swap-out-rate"},
 		Distractors: []string{
 			"Total pages moved from RAM to backing storage since boot",
 			"Pages of page cache evicted per second",
@@ -570,8 +584,9 @@ var topMemQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "RES",
-		Correct: "The portion of the process's address space currently backed by RAM (top's name for RSS)",
+		Column:   "RES",
+		Correct:  "The portion of the process's address space currently backed by RAM (top's name for RSS)",
+		Concepts: []string{"process-resident-memory"},
 		Distractors: []string{
 			"Memory reserved by the process but never touched",
 			"The process's private anonymous memory only",
@@ -618,8 +633,9 @@ var psRSSQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "RSS",
-		Correct: "Memory currently backed by RAM for the process, reported in kilobytes by this ps format",
+		Column:   "RSS",
+		Correct:  "Memory currently backed by RAM for the process, reported in kilobytes by this ps format",
+		Concepts: []string{"process-resident-memory"},
 		Distractors: []string{
 			"Private memory only, not counting shared libraries",
 			"Total virtual address space reserved by the process",

@@ -192,6 +192,7 @@ type columnQuestionPick struct {
 	Column      string
 	Correct     string
 	Distractors []string
+	Concepts    []string
 }
 
 func columnQuestionsFromPicks(picks []columnQuestionPick, stemFor func(string) string) []Question {
@@ -204,6 +205,7 @@ func columnQuestionsFromPicks(picks []columnQuestionPick, stemFor func(string) s
 			Stem:        stemFor(pick.Column),
 			Correct:     pick.Correct,
 			Distractors: pick.Distractors,
+			Concepts:    pick.Concepts,
 		})
 	}
 	return qs
@@ -235,8 +237,9 @@ func filterColumnQuestionPicks(picks []columnQuestionPick, columns ...string) []
 
 var vmstatQuestionPicks = []columnQuestionPick{
 	{
-		Column:  "r",
-		Correct: "The number of runnable processes (in the run-queue, including those running)",
+		Column:   "r",
+		Correct:  "The number of runnable processes (in the run-queue, including those running)",
+		Concepts: []string{"scheduler-runnable-entities"},
 		Distractors: []string{
 			"The number of processes blocked waiting on I/O",
 			"Free memory in kilobytes",
@@ -262,8 +265,9 @@ var vmstatQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "free",
-		Correct: "Amount of idle memory, in kilobytes",
+		Column:   "free",
+		Correct:  "Amount of idle memory, in kilobytes",
+		Concepts: []string{"memory-free"},
 		Distractors: []string{
 			"Estimated memory available without swapping",
 			"Amount of memory used for filesystem cache",
@@ -271,8 +275,9 @@ var vmstatQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "buff",
-		Correct: "Amount of memory used as buffers, in kilobytes",
+		Column:   "buff",
+		Correct:  "Amount of memory used as buffers, in kilobytes",
+		Concepts: []string{"memory-buffers"},
 		Distractors: []string{
 			"Amount of memory used as page cache",
 			"Number of block-device writes per second",
@@ -280,8 +285,9 @@ var vmstatQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "cache",
-		Correct: "Amount of memory used as page cache, in kilobytes",
+		Column:   "cache",
+		Correct:  "Amount of memory used as page cache, in kilobytes",
+		Concepts: []string{"memory-page-cache"},
 		Distractors: []string{
 			"Amount of memory used as buffers",
 			"Amount of virtual memory swapped out",
@@ -289,8 +295,9 @@ var vmstatQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "si",
-		Correct: "Pages swapped in from swap to memory per second",
+		Column:   "si",
+		Correct:  "Pages swapped in from swap to memory per second",
+		Concepts: []string{"memory-swap-in-rate"},
 		Distractors: []string{
 			"Pages swapped out from memory to swap per second",
 			"Software interrupts per second",
@@ -298,8 +305,9 @@ var vmstatQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "so",
-		Correct: "Pages swapped out from memory to swap per second",
+		Column:   "so",
+		Correct:  "Pages swapped out from memory to swap per second",
+		Concepts: []string{"memory-swap-out-rate"},
 		Distractors: []string{
 			"Pages swapped in from swap to memory per second",
 			"System calls per second",
@@ -343,8 +351,9 @@ var vmstatQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "us",
-		Correct: "Percent of CPU time spent running application code outside the kernel",
+		Column:   "us",
+		Correct:  "Percent of CPU time spent running application code outside the kernel",
+		Concepts: []string{"cpu-user-time"},
 		Distractors: []string{
 			"Percent of CPU time spent running kernel code",
 			"Percent of CPU time spent idle",
@@ -352,8 +361,9 @@ var vmstatQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "sy",
-		Correct: "Percent of CPU time spent running kernel code",
+		Column:   "sy",
+		Correct:  "Percent of CPU time spent running kernel code",
+		Concepts: []string{"cpu-system-time"},
 		Distractors: []string{
 			"Percent of CPU time spent running user-space code",
 			"Percent of CPU time spent idle while waiting on I/O",
@@ -361,8 +371,9 @@ var vmstatQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "id",
-		Correct: "Percent of CPU time with no runnable work",
+		Column:   "id",
+		Correct:  "Percent of CPU time with no runnable work",
+		Concepts: []string{"cpu-idle-time"},
 		Distractors: []string{
 			"Percent of CPU time spent waiting on I/O",
 			"Percent of CPU time spent in the kernel",
@@ -370,8 +381,9 @@ var vmstatQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "wa",
-		Correct: "Percent of CPU time spent idle while waiting on outstanding I/O",
+		Column:   "wa",
+		Correct:  "Percent of CPU time spent idle while waiting on outstanding I/O",
+		Concepts: []string{"cpu-iowait-time"},
 		Distractors: []string{
 			"Percent of CPU time spent in the kernel",
 			"Number of threads waiting on a wakeup",
@@ -379,8 +391,9 @@ var vmstatQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "st",
-		Correct: "Percent of CPU time unavailable to this guest because the hypervisor was running other virtual machines",
+		Column:   "st",
+		Correct:  "Percent of CPU time unavailable to this guest because the hypervisor was running other virtual machines",
+		Concepts: []string{"cpu-steal-time"},
 		Distractors: []string{
 			"Percent of CPU time spent waiting on local disk I/O",
 			"Percent of CPU time spent servicing software interrupts",
@@ -407,8 +420,9 @@ func mpstatColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 
 var mpstatQuestionPicks = []columnQuestionPick{
 	{
-		Column:  "%usr",
-		Correct: "Percent of CPU time spent running application code outside the kernel",
+		Column:   "%usr",
+		Correct:  "Percent of CPU time spent running application code outside the kernel",
+		Concepts: []string{"cpu-user-time"},
 		Distractors: []string{
 			"Percent of CPU time spent in the kernel",
 			"Percent of CPU time spent idle",
@@ -416,8 +430,9 @@ var mpstatQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "%sys",
-		Correct: "Percent of CPU time spent running kernel code",
+		Column:   "%sys",
+		Correct:  "Percent of CPU time spent running kernel code",
+		Concepts: []string{"cpu-system-time"},
 		Distractors: []string{
 			"Percent of CPU time spent running user-space code",
 			"Percent of CPU time spent idle",
@@ -425,8 +440,9 @@ var mpstatQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "%iowait",
-		Correct: "Percent of CPU time with no runnable work while a disk I/O request was outstanding",
+		Column:   "%iowait",
+		Correct:  "Percent of CPU time with no runnable work while a disk I/O request was outstanding",
+		Concepts: []string{"cpu-iowait-time"},
 		Distractors: []string{
 			"Percent of CPU time spent processing I/O interrupts",
 			"Percent of time disks were saturated",
@@ -452,8 +468,9 @@ var mpstatQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "%steal",
-		Correct: "Percent of CPU time unavailable to this guest because the hypervisor was running other virtual machines",
+		Column:   "%steal",
+		Correct:  "Percent of CPU time unavailable to this guest because the hypervisor was running other virtual machines",
+		Concepts: []string{"cpu-steal-time"},
 		Distractors: []string{
 			"Percent of CPU time spent in software interrupts",
 			"Percent of CPU time spent waiting for local disk I/O",
@@ -461,8 +478,9 @@ var mpstatQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "%idle",
-		Correct: "Percent of CPU time with no runnable work and no outstanding disk I/O request",
+		Column:   "%idle",
+		Correct:  "Percent of CPU time with no runnable work and no outstanding disk I/O request",
+		Concepts: []string{"cpu-idle-time"},
 		Distractors: []string{
 			"Percent of CPU time with no runnable work because disk I/O was outstanding",
 			"Percent of CPU time available after subtracting user-space time only",
@@ -553,7 +571,8 @@ func procLoadavgQuestions(si SystemInfo, c CapturedCommand) []Question {
 				"Your `/proc/loadavg` line included the field `%s/%s`.\n"+
 					"What do those two numbers represent?",
 				running, total),
-			Correct: "Currently runnable kernel scheduling entities, over the total number of scheduling entities (threads)",
+			Correct:  "Currently runnable kernel scheduling entities, over the total number of scheduling entities (threads)",
+			Concepts: []string{"scheduler-runnable-entities"},
 			Distractors: []string{
 				"The 1-minute load average expressed as a fraction of NumCPU",
 				"Running processes, over the configured kernel.pid_max",
@@ -656,8 +675,9 @@ func sarUStemFor(column string) string {
 
 var sarUQuestionPicks = []columnQuestionPick{
 	{
-		Column:  "%user",
-		Correct: "Percent of CPU time spent running regular-priority application code outside the kernel",
+		Column:   "%user",
+		Correct:  "Percent of CPU time spent running regular-priority application code outside the kernel",
+		Concepts: []string{"cpu-user-time"},
 		Distractors: []string{
 			"Percent of CPU time spent in kernel code on behalf of applications",
 			"Percent of CPU time available to non-root accounts",
@@ -674,8 +694,9 @@ var sarUQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "%system",
-		Correct: "Percent of CPU time spent running kernel code",
+		Column:   "%system",
+		Correct:  "Percent of CPU time spent running kernel code",
+		Concepts: []string{"cpu-system-time"},
 		Distractors: []string{
 			"Percent of CPU time spent on systemd-managed services only",
 			"Percent of CPU time spent running user-space code",
@@ -683,8 +704,9 @@ var sarUQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "%iowait",
-		Correct: "Percent of CPU time with no runnable work while a disk I/O request was outstanding",
+		Column:   "%iowait",
+		Correct:  "Percent of CPU time with no runnable work while a disk I/O request was outstanding",
+		Concepts: []string{"cpu-iowait-time"},
 		Distractors: []string{
 			"Percent of CPU time spent actively handling I/O interrupts",
 			"Latency in seconds before each I/O operation completes",
@@ -692,8 +714,9 @@ var sarUQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "%steal",
-		Correct: "Percent of CPU time unavailable to this guest because the hypervisor was running other virtual machines",
+		Column:   "%steal",
+		Correct:  "Percent of CPU time unavailable to this guest because the hypervisor was running other virtual machines",
+		Concepts: []string{"cpu-steal-time"},
 		Distractors: []string{
 			"Percent of CPU time taken by higher-priority local processes",
 			"Percent of CPU time spent servicing software interrupts",
@@ -701,8 +724,9 @@ var sarUQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "%idle",
-		Correct: "Percent of CPU time with no runnable work and no outstanding disk I/O request",
+		Column:   "%idle",
+		Correct:  "Percent of CPU time with no runnable work and no outstanding disk I/O request",
+		Concepts: []string{"cpu-idle-time"},
 		Distractors: []string{
 			"Percent of CPU cores currently powered down",
 			"Percent of CPU time with no runnable work because disk I/O was outstanding",

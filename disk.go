@@ -180,8 +180,9 @@ func procPartitionsStemFor(column string) string {
 
 var procPartitionsQuestionPicks = []columnQuestionPick{
 	{
-		Column:  "major",
-		Correct: "The kernel major device number, identifying which driver owns the device",
+		Column:   "major",
+		Correct:  "The kernel major device number, identifying which driver owns the device",
+		Concepts: []string{"disk-major-device-number"},
 		Distractors: []string{
 			"The capacity of the device in major units (e.g. terabytes)",
 			"The partition's index within the disk, 1-based",
@@ -189,8 +190,9 @@ var procPartitionsQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "minor",
-		Correct: "The kernel minor device number, separating instances within a driver (e.g. sda=0, sda1=1)",
+		Column:   "minor",
+		Correct:  "The kernel minor device number, separating instances within a driver (e.g. sda=0, sda1=1)",
+		Concepts: []string{"disk-minor-device-number"},
 		Distractors: []string{
 			"A minor version number for the partition table format",
 			"The disk's index within its bus",
@@ -198,8 +200,9 @@ var procPartitionsQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "#blocks",
-		Correct: "The capacity of the device or partition counted in 1024-byte units",
+		Column:   "#blocks",
+		Correct:  "The capacity of the device or partition counted in 1024-byte units",
+		Concepts: []string{"disk-device-capacity"},
 		Distractors: []string{
 			"The number of 512-byte sectors in the device",
 			"The current number of allocated filesystem allocation units",
@@ -207,8 +210,9 @@ var procPartitionsQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "name",
-		Correct: "The kernel block-device name (sda, sda1, nvme0n1, dm-0, …)",
+		Column:   "name",
+		Correct:  "The kernel block-device name (sda, sda1, nvme0n1, dm-0, …)",
+		Concepts: []string{"disk-device-identity"},
 		Distractors: []string{
 			"The mount point where the device is currently mounted",
 			"The filesystem label set with `e2label` or `xfs_admin`",
@@ -241,8 +245,9 @@ func sarDStemFor(column string) string {
 
 var sarDQuestionPicks = []columnQuestionPick{
 	{
-		Column:  "DEV",
-		Correct: "The block device, often shown as `dev<major>-<minor>` (e.g. `dev8-0` for sda)",
+		Column:   "DEV",
+		Correct:  "The block device, often shown as `dev<major>-<minor>` (e.g. `dev8-0` for sda)",
+		Concepts: []string{"disk-device-identity", "disk-major-device-number", "disk-minor-device-number"},
 		Distractors: []string{
 			"The device driver module name",
 			"The mount point currently using the device",
@@ -259,8 +264,9 @@ var sarDQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "rkB/s",
-		Correct: "Kilobytes read from the device per second during the sample interval",
+		Column:   "rkB/s",
+		Correct:  "Kilobytes read from the device per second during the sample interval",
+		Concepts: []string{"disk-read-rate"},
 		Distractors: []string{
 			"Read requests per second, ignoring request size",
 			"Total kilobytes read since the sar process started",
@@ -268,8 +274,9 @@ var sarDQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "wkB/s",
-		Correct: "Kilobytes written to the device per second during the sample interval",
+		Column:   "wkB/s",
+		Correct:  "Kilobytes written to the device per second during the sample interval",
+		Concepts: []string{"disk-write-rate"},
 		Distractors: []string{
 			"Write requests per second, ignoring request size",
 			"Total kilobytes written since the sar process started",
@@ -295,8 +302,9 @@ var sarDQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "aqu-sz",
-		Correct: "Average number of I/O requests outstanding to the device (queued plus in service)",
+		Column:   "aqu-sz",
+		Correct:  "Average number of I/O requests outstanding to the device (queued plus in service)",
+		Concepts: []string{"disk-queue-depth"},
 		Distractors: []string{
 			"Average request size in kilobytes",
 			"Average time each request spent in the queue, in milliseconds",
@@ -304,8 +312,9 @@ var sarDQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "avgqu-sz",
-		Correct: "Average number of outstanding requests (older sysstat output for `aqu-sz`)",
+		Column:   "avgqu-sz",
+		Correct:  "Average number of outstanding requests (older sysstat output for `aqu-sz`)",
+		Concepts: []string{"disk-queue-depth"},
 		Distractors: []string{
 			"Average request size in sectors",
 			"Average queueing latency in milliseconds",
@@ -313,8 +322,9 @@ var sarDQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "await",
-		Correct: "Average request latency in milliseconds, including queueing and service time",
+		Column:   "await",
+		Correct:  "Average request latency in milliseconds, including queueing and service time",
+		Concepts: []string{"disk-request-latency"},
 		Distractors: []string{
 			"Average wait before the request was queued (queueing time only)",
 			"Average request size in kilobytes",
@@ -331,8 +341,9 @@ var sarDQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "%util",
-		Correct: "Fraction of wall-clock time the device had at least one I/O in flight",
+		Column:   "%util",
+		Correct:  "Fraction of wall-clock time the device had at least one I/O in flight",
+		Concepts: []string{"disk-busy-time"},
 		Distractors: []string{
 			"Fraction of device IOPS capacity in use",
 			"Fraction of throughput used relative to the bus bandwidth",
@@ -375,8 +386,9 @@ var iostatQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "r_await",
-		Correct: "Average read request latency in milliseconds, including queueing and service time",
+		Column:   "r_await",
+		Correct:  "Average read request latency in milliseconds, including queueing and service time",
+		Concepts: []string{"disk-request-latency"},
 		Distractors: []string{
 			"Average read request size in kilobytes",
 			"Read requests completed per second",
@@ -384,8 +396,9 @@ var iostatQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "w_await",
-		Correct: "Average write request latency in milliseconds, including queueing and service time",
+		Column:   "w_await",
+		Correct:  "Average write request latency in milliseconds, including queueing and service time",
+		Concepts: []string{"disk-request-latency"},
 		Distractors: []string{
 			"Average write request size in kilobytes",
 			"Write requests completed per second",
@@ -393,8 +406,9 @@ var iostatQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "await",
-		Correct: "Average request latency in milliseconds, including queueing and service time",
+		Column:   "await",
+		Correct:  "Average request latency in milliseconds, including queueing and service time",
+		Concepts: []string{"disk-request-latency"},
 		Distractors: []string{
 			"Average request size in kilobytes",
 			"Average number of requests outstanding",
@@ -402,8 +416,9 @@ var iostatQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "aqu-sz",
-		Correct: "Average number of I/O requests outstanding to the device (queued plus in service)",
+		Column:   "aqu-sz",
+		Correct:  "Average number of I/O requests outstanding to the device (queued plus in service)",
+		Concepts: []string{"disk-queue-depth"},
 		Distractors: []string{
 			"Average request size in kilobytes",
 			"Average time each request spent in queue, in milliseconds",
@@ -411,8 +426,9 @@ var iostatQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "avgqu-sz",
-		Correct: "Average number of I/O requests outstanding to the device (queued plus in service)",
+		Column:   "avgqu-sz",
+		Correct:  "Average number of I/O requests outstanding to the device (queued plus in service)",
+		Concepts: []string{"disk-queue-depth"},
 		Distractors: []string{
 			"Average request size in sectors",
 			"Average request latency in milliseconds",
@@ -420,8 +436,9 @@ var iostatQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "%util",
-		Correct: "The fraction of wall-clock time when at least one I/O request was in flight",
+		Column:   "%util",
+		Correct:  "The fraction of wall-clock time when at least one I/O request was in flight",
+		Concepts: []string{"disk-busy-time"},
 		Distractors: []string{
 			"The fraction of the device's IOPS capacity currently in use",
 			"The percentage of disk space currently allocated",
@@ -448,8 +465,9 @@ func lsblkColumnQuestions(si SystemInfo, c CapturedCommand) []Question {
 
 var lsblkQuestionPicks = []columnQuestionPick{
 	{
-		Column:  "NAME",
-		Correct: "The kernel block-device name, with tree indentation showing parent/child relationships",
+		Column:   "NAME",
+		Correct:  "The kernel block-device name, with tree indentation showing parent/child relationships",
+		Concepts: []string{"disk-device-identity"},
 		Distractors: []string{
 			"The filesystem label mounted on the device",
 			"The hardware model string for the disk",
@@ -457,8 +475,9 @@ var lsblkQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "MAJ:MIN",
-		Correct: "The kernel major and minor device numbers",
+		Column:   "MAJ:MIN",
+		Correct:  "The kernel major and minor device numbers",
+		Concepts: []string{"disk-major-device-number", "disk-minor-device-number"},
 		Distractors: []string{
 			"The major and minor filesystem version",
 			"The PCI bus and slot numbers",
@@ -475,8 +494,9 @@ var lsblkQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "SIZE",
-		Correct: "The apparent capacity of the block device or partition",
+		Column:   "SIZE",
+		Correct:  "The apparent capacity of the block device or partition",
+		Concepts: []string{"disk-device-capacity"},
 		Distractors: []string{
 			"The filesystem space currently used",
 			"The amount of dirty writeback data",
@@ -544,8 +564,9 @@ var pidstatDQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "kB_rd/s",
-		Correct: "Kilobytes per second the process caused to be read from storage",
+		Column:   "kB_rd/s",
+		Correct:  "Kilobytes per second the process caused to be read from storage",
+		Concepts: []string{"disk-read-rate"},
 		Distractors: []string{
 			"Kilobytes the process has read since it started",
 			"Kilobytes per second read from memory cache only",
@@ -553,8 +574,9 @@ var pidstatDQuestionPicks = []columnQuestionPick{
 		},
 	},
 	{
-		Column:  "kB_wr/s",
-		Correct: "Kilobytes per second the process caused to be written to storage",
+		Column:   "kB_wr/s",
+		Correct:  "Kilobytes per second the process caused to be written to storage",
+		Concepts: []string{"disk-write-rate"},
 		Distractors: []string{
 			"Kilobytes the process has written since it started",
 			"Kilobytes per second written to memory cache only",

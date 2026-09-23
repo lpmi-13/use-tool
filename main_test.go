@@ -870,6 +870,185 @@ func TestChooseGuideQuestionsRandomizesQuestionOrder(t *testing.T) {
 	}
 }
 
+func TestChooseUnseenGuideQuestionsBlocksRepeatedConcepts(t *testing.T) {
+	oldRand := appRand
+	defer func() { appRand = oldRand }()
+	appRand = rand.New(rand.NewSource(1))
+
+	seen := map[string]bool{}
+	first := Question{
+		Stem:     "What does mpstat %steal mean?",
+		Correct:  "mpstat wording",
+		Concepts: []string{"cpu-steal-time"},
+	}
+	if got := chooseUnseenGuideQuestions([]Question{first}, 1, seen); len(got) != 1 {
+		t.Fatalf("first selection returned %d questions, want 1", len(got))
+	}
+
+	later := []Question{
+		{Stem: "What does sar %steal mean?", Correct: "different wording", Concepts: []string{"cpu-steal-time"}},
+		{Stem: "What does sar %nice mean?", Correct: "nice time", Concepts: []string{"cpu-nice-time"}},
+	}
+	got := chooseUnseenGuideQuestions(later, 2, seen)
+	if len(got) != 1 || got[0].Stem != later[1].Stem {
+		t.Fatalf("later selection = %#v, want only the unseen nice-time question", got)
+	}
+}
+
+func TestChooseGuideQuestionsAvoidsSimilarQuestionsWithinOneStep(t *testing.T) {
+	questions := []Question{
+		{Stem: "read await", Correct: "read latency", Concepts: []string{"disk-request-latency"}},
+		{Stem: "write await", Correct: "write latency", Concepts: []string{"disk-request-latency"}},
+		{Stem: "queue depth", Correct: "outstanding requests", Concepts: []string{"disk-queue-depth"}},
+	}
+	got := chooseGuideQuestions(questions, len(questions))
+	if len(got) != 2 {
+		t.Fatalf("selected %d questions, want one latency question plus queue depth: %#v", len(got), got)
+	}
+}
+
+func TestRunGuideStepCarriesQuestionConceptsAcrossSteps(t *testing.T) {
+	oldStdin := stdin
+	oldRaw := rawInputEnabled
+	defer func() {
+		stdin = oldStdin
+		rawInputEnabled = oldRaw
+	}()
+	stdin = bufio.NewReader(strings.NewReader("echo first\n1\necho second\n"))
+	rawInputEnabled = func() bool { return false }
+
+	questionFor := func(stem string) func(SystemInfo, CapturedCommand) []Question {
+		return func(SystemInfo, CapturedCommand) []Question {
+			return []Question{{
+				Stem:        stem,
+				Correct:     "The shared idea",
+				Distractors: []string{"Something else"},
+				Concepts:    []string{"shared-concept"},
+			}}
+		}
+	}
+	s := &Session{}
+	first := GuideStep{Suggested: "echo first", QuestionsFn: questionFor("first check")}
+	second := GuideStep{Suggested: "echo second", QuestionsFn: questionFor("second check")}
+
+	var firstAnswered, secondAnswered int
+	out := captureStdout(func() {
+		_, firstAnswered, _ = runGuideStep(s, first, true)
+		_, secondAnswered, _ = runGuideStep(s, second, true)
+	})
+	if firstAnswered != 1 || secondAnswered != 0 {
+		t.Fatalf("answered counts = %d then %d, want 1 then 0\n%s", firstAnswered, secondAnswered, out)
+	}
+	if checks := strings.Count(out, "--- Check ---"); checks != 1 {
+		t.Fatalf("printed %d checks, want 1\n%s", checks, out)
+	}
+}
+
+func TestGuideQuestionConceptAuditAcrossResources(t *testing.T) {
+	pidstatDOutput := `Linux 6.1.0  10/05/2024
+14:00:00       UID       PID   kB_rd/s   kB_wr/s kB_ccwr/s iodelay  Command
+14:00:01      1000      1234     12.50    400.00      0.00       2  postgres
+`
+
+	tests := []struct {
+		name          string
+		first, second Question
+	}{
+		{
+			name:   "cpu steal across mpstat and sar",
+			first:  mustFindQuestion(t, mpstatColumnQuestions(SystemInfo{}, CapturedCommand{Output: sampleMpstat}), "`%steal`"),
+			second: mustFindQuestion(t, sarUColumnQuestions(SystemInfo{}, CapturedCommand{Output: sampleSarU}), "`%steal`"),
+		},
+		{
+			name:   "cpu user time across mpstat and sar",
+			first:  mustFindQuestion(t, mpstatColumnQuestions(SystemInfo{}, CapturedCommand{Output: sampleMpstat}), "`%usr`"),
+			second: mustFindQuestion(t, sarUColumnQuestions(SystemInfo{}, CapturedCommand{Output: sampleSarU}), "`%user`"),
+		},
+		{
+			name:   "cpu system time across mpstat and sar",
+			first:  mustFindQuestion(t, mpstatColumnQuestions(SystemInfo{}, CapturedCommand{Output: sampleMpstat}), "`%sys`"),
+			second: mustFindQuestion(t, sarUColumnQuestions(SystemInfo{}, CapturedCommand{Output: sampleSarU}), "`%system`"),
+		},
+		{
+			name:   "cpu iowait across mpstat and sar",
+			first:  mustFindQuestion(t, mpstatColumnQuestions(SystemInfo{}, CapturedCommand{Output: sampleMpstat}), "`%iowait`"),
+			second: mustFindQuestion(t, sarUColumnQuestions(SystemInfo{}, CapturedCommand{Output: sampleSarU}), "`%iowait`"),
+		},
+		{
+			name:   "cpu idle across mpstat and sar",
+			first:  mustFindQuestion(t, mpstatColumnQuestions(SystemInfo{}, CapturedCommand{Output: sampleMpstat}), "`%idle`"),
+			second: mustFindQuestion(t, sarUColumnQuestions(SystemInfo{}, CapturedCommand{Output: sampleSarU}), "`%idle`"),
+		},
+		{
+			name:   "cpu runnable entities across loadavg and vmstat",
+			first:  mustFindQuestion(t, procLoadavgQuestions(SystemInfo{}, CapturedCommand{Output: "0.42 0.31 0.28 1/234 5678\n"}), "`1/234`"),
+			second: mustFindQuestion(t, vmstatColumnQuestions(SystemInfo{}, CapturedCommand{Output: sampleVmstat}), "`r`"),
+		},
+		{
+			name:   "memory free across meminfo and vmstat",
+			first:  mustFindQuestion(t, meminfoColumnQuestions(SystemInfo{}, CapturedCommand{Output: sampleMeminfo}), "`MemFree`"),
+			second: mustFindQuestion(t, vmstatColumnQuestions(SystemInfo{}, CapturedCommand{Output: sampleVmstat}), "`free`"),
+		},
+		{
+			name:   "memory buffers across meminfo and vmstat",
+			first:  mustFindQuestion(t, meminfoColumnQuestions(SystemInfo{}, CapturedCommand{Output: sampleMeminfo}), "`Buffers`"),
+			second: mustFindQuestion(t, vmstatColumnQuestions(SystemInfo{}, CapturedCommand{Output: sampleVmstat}), "`buff`"),
+		},
+		{
+			name:   "memory swap-in across vmstat and sar",
+			first:  mustFindQuestion(t, vmstatColumnQuestions(SystemInfo{}, CapturedCommand{Output: sampleVmstat}), "`si`"),
+			second: mustFindQuestion(t, sarWColumnQuestions(SystemInfo{}, CapturedCommand{Output: sampleSarW}), "`pswpin/s`"),
+		},
+		{
+			name:   "disk device identity across partitions and sar",
+			first:  mustFindQuestion(t, procPartitionsColumnQuestions(SystemInfo{}, CapturedCommand{Output: sampleProcPartitions}), "`name`"),
+			second: mustFindQuestion(t, sarDColumnQuestions(SystemInfo{}, CapturedCommand{Output: sampleSarD}), "`DEV`"),
+		},
+		{
+			name:   "disk read rate across sar and pidstat",
+			first:  mustFindQuestion(t, sarDColumnQuestions(SystemInfo{}, CapturedCommand{Output: sampleSarD}), "`rkB/s`"),
+			second: mustFindQuestion(t, pidstatDColumnQuestions(SystemInfo{}, CapturedCommand{Output: pidstatDOutput}), "`kB_rd/s`"),
+		},
+		{
+			name:   "disk read and write await in one iostat report",
+			first:  mustFindQuestion(t, iostatColumnQuestions(SystemInfo{}, CapturedCommand{Output: sampleIostatModern}), "`r_await`"),
+			second: mustFindQuestion(t, iostatColumnQuestions(SystemInfo{}, CapturedCommand{Output: sampleIostatModern}), "`w_await`"),
+		},
+		{
+			name:   "PSI average windows in one pressure report",
+			first:  mustFindQuestion(t, psiMemoryColumnQuestions(SystemInfo{}, CapturedCommand{Output: samplePSIMemory}), "`avg10`"),
+			second: mustFindQuestion(t, psiMemoryColumnQuestions(SystemInfo{}, CapturedCommand{Output: samplePSIMemory}), "`avg60`"),
+		},
+		{
+			name:   "network receive volume across counters and rate",
+			first:  mustFindQuestion(t, ipLinkColumnQuestions(SystemInfo{}, CapturedCommand{Output: sampleIpLink}), "RX counters, what does `bytes`"),
+			second: mustFindQuestion(t, sarDevColumnQuestions(SystemInfo{}, CapturedCommand{Output: sampleSarDev}), "`rxkB/s`"),
+		},
+		{
+			name:   "network interface identity across sar reports",
+			first:  mustFindQuestion(t, sarDevColumnQuestions(SystemInfo{}, CapturedCommand{Output: sampleSarDev}), "`IFACE`"),
+			second: mustFindQuestion(t, sarEdevColumnQuestions(SystemInfo{}, CapturedCommand{Output: sampleSarEdev}), "`IFACE`"),
+		},
+		{
+			name:   "network receive drops across counters and rate",
+			first:  mustFindQuestion(t, ipLinkColumnQuestions(SystemInfo{}, CapturedCommand{Output: sampleIpLink}), "RX counters, what does `dropped`"),
+			second: mustFindQuestion(t, sarEdevColumnQuestions(SystemInfo{}, CapturedCommand{Output: sampleSarEdev}), "`rxdrop/s`"),
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			seen := map[string]bool{}
+			if got := chooseUnseenGuideQuestions([]Question{tc.first}, 1, seen); len(got) != 1 {
+				t.Fatalf("first concept was not selectable: %#v", got)
+			}
+			if got := chooseUnseenGuideQuestions([]Question{tc.second}, 1, seen); len(got) != 0 {
+				t.Fatalf("overlapping later question was still selectable: %#v", got)
+			}
+		})
+	}
+}
+
 func TestRandomizedQuestionOptionsMovesCorrectAnswer(t *testing.T) {
 	oldRand := appRand
 	defer func() { appRand = oldRand }()
@@ -1536,6 +1715,15 @@ func findQuestionByStemFragment(qs []Question, fragment string) (Question, bool)
 		}
 	}
 	return Question{}, false
+}
+
+func mustFindQuestion(t *testing.T, qs []Question, fragment string) Question {
+	t.Helper()
+	q, ok := findQuestionByStemFragment(qs, fragment)
+	if !ok {
+		t.Fatalf("expected a question whose stem contains %q; got %v", fragment, stems(qs))
+	}
+	return q
 }
 
 func questionAnswerTexts(q Question) []string {

@@ -73,7 +73,14 @@ func runGuideStep(s *Session, step GuideStep, isLast bool) (correct, answered in
 	captured := guideStepCommand(s, step)
 	hadQuestions := false
 	if captured != nil {
-		questions := chooseGuideQuestions(guideQuestions(s.System, step, *captured), step.QuestionCount)
+		if s.guideQuestionKeys == nil {
+			s.guideQuestionKeys = make(map[string]bool)
+		}
+		questions := chooseUnseenGuideQuestions(
+			guideQuestions(s.System, step, *captured),
+			step.QuestionCount,
+			s.guideQuestionKeys,
+		)
 		if len(questions) > 0 {
 			hadQuestions = true
 			for _, q := range questions {
@@ -156,18 +163,70 @@ func guideStepExpectsCommand(step GuideStep, actual string) bool {
 }
 
 func chooseGuideQuestions(questions []Question, count int) []Question {
+	return chooseUnseenGuideQuestions(questions, count, nil)
+}
+
+// chooseUnseenGuideQuestions chooses a random subset while excluding concepts
+// that have already been presented. It also prevents two questions selected
+// for the same step from covering the same concept. When seen is non-nil it is
+// updated with every selected question, carrying the suppression across guide
+// steps. Exact matching answers are a safety net for untagged question pools.
+func chooseUnseenGuideQuestions(questions []Question, count int, seen map[string]bool) []Question {
 	if len(questions) == 0 {
 		return nil
 	}
 	if count <= 0 {
 		count = 1
 	}
-	if count > len(questions) {
-		count = len(questions)
+	if seen == nil {
+		seen = make(map[string]bool)
 	}
-	chosen := append([]Question(nil), questions...)
-	appRand.Shuffle(len(chosen), func(i, j int) { chosen[i], chosen[j] = chosen[j], chosen[i] })
-	return chosen[:count]
+	candidates := append([]Question(nil), questions...)
+	appRand.Shuffle(len(candidates), func(i, j int) { candidates[i], candidates[j] = candidates[j], candidates[i] })
+	chosen := make([]Question, 0, min(count, len(candidates)))
+	for _, q := range candidates {
+		keys := guideQuestionKeys(q)
+		duplicate := false
+		for _, key := range keys {
+			if seen[key] {
+				duplicate = true
+				break
+			}
+		}
+		if duplicate {
+			continue
+		}
+		chosen = append(chosen, q)
+		for _, key := range keys {
+			seen[key] = true
+		}
+		if len(chosen) == count {
+			break
+		}
+	}
+	return chosen
+}
+
+func guideQuestionKeys(q Question) []string {
+	var keys []string
+	for _, concept := range q.Concepts {
+		if normalized := normalizeGuideQuestionKey(concept); normalized != "" {
+			keys = append(keys, "concept:"+normalized)
+		}
+	}
+	if normalized := normalizeGuideQuestionKey(q.Correct); normalized != "" {
+		keys = append(keys, "answer:"+normalized)
+	}
+	if len(keys) == 0 {
+		if normalized := normalizeGuideQuestionKey(q.Stem); normalized != "" {
+			keys = append(keys, "stem:"+normalized)
+		}
+	}
+	return keys
+}
+
+func normalizeGuideQuestionKey(s string) string {
+	return strings.ToLower(strings.Join(strings.Fields(s), " "))
 }
 
 func pauseGuide() bool {

@@ -1258,6 +1258,44 @@ func TestRandomizedQuestionOptionsMovesCorrectAnswer(t *testing.T) {
 	}
 }
 
+func TestRandomizedQuestionOptionsLimitsCorrectPositionStreak(t *testing.T) {
+	oldRand := appRand
+	defer func() { appRand = oldRand }()
+	appRand = rand.New(rand.NewSource(1))
+
+	q := Question{
+		Correct:     "correct",
+		Distractors: []string{"wrong-1", "wrong-2", "wrong-3"},
+	}
+	history := answerPositionHistory{}
+	lastPosition, streak := -1, 0
+	for i := 0; i < 100; i++ {
+		options := randomizedQuestionOptionsWithHistory(q, &history)
+		correctPosition := -1
+		for position, option := range options {
+			if option == q.Correct {
+				correctPosition = position
+				break
+			}
+		}
+		if correctPosition < 0 {
+			t.Fatalf("iteration %d: correct answer missing from %v", i, options)
+		}
+		if correctPosition == lastPosition {
+			streak++
+		} else {
+			lastPosition = correctPosition
+			streak = 1
+		}
+		if streak > 2 {
+			t.Fatalf("iteration %d: correct position %d repeated %d times", i, correctPosition, streak)
+		}
+		if history.last != correctPosition || history.streak != streak {
+			t.Fatalf("iteration %d: history = %+v, want position %d streak %d", i, history, correctPosition, streak)
+		}
+	}
+}
+
 func TestWideColumnGuideStepsAskThreeHeaderQuestions(t *testing.T) {
 	cases := []struct {
 		name     string

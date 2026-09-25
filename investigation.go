@@ -72,6 +72,11 @@ type QuestionResult struct {
 	Skipped bool
 }
 
+type answerPositionHistory struct {
+	last   int
+	streak int
+}
+
 type questionCommandRunner func(string) CapturedCommand
 
 // stepVariant is one of several interchangeable commands a single guide
@@ -257,13 +262,51 @@ func askQuestion(q Question) QuestionResult {
 // apply to every question generator rather than relying on each guide step to
 // randomize its own correct-answer position.
 func randomizedQuestionOptions(q Question) []string {
+	return randomizedQuestionOptionsWithHistory(q, nil)
+}
+
+// randomizedQuestionOptionsWithHistory preserves a random answer order while
+// preventing a session from putting the correct answer in the same numbered
+// slot more than twice consecutively. A nil history leaves each shuffle
+// independent, as used by callers that do not represent a guided session.
+func randomizedQuestionOptionsWithHistory(q Question, history *answerPositionHistory) []string {
 	options := append([]string{q.Correct}, q.Distractors...)
 	appRand.Shuffle(len(options), func(i, j int) { options[i], options[j] = options[j], options[i] })
+	if history == nil || len(options) == 0 {
+		return options
+	}
+
+	correctPosition := 0
+	for i, option := range options {
+		if option == q.Correct {
+			correctPosition = i
+			break
+		}
+	}
+	if len(options) > 1 && history.streak >= 2 && correctPosition == history.last {
+		newPosition := appRand.Intn(len(options) - 1)
+		if newPosition >= correctPosition {
+			newPosition++
+		}
+		options[correctPosition], options[newPosition] = options[newPosition], options[correctPosition]
+		correctPosition = newPosition
+	}
+
+	if history.streak > 0 && correctPosition == history.last {
+		history.streak++
+	} else {
+		history.last = correctPosition
+		history.streak = 1
+	}
 	return options
 }
 
 func askQuestionWithCommandRunner(q Question, run questionCommandRunner) QuestionResult {
-	options := randomizedQuestionOptions(q)
+	return askQuestionWithCommandRunnerAndHistory(q, run, nil)
+}
+
+func askQuestionWithCommandRunnerAndHistory(q Question, run questionCommandRunner, history *answerPositionHistory) QuestionResult {
+	options := randomizedQuestionOptionsWithHistory(q, history)
 	fmt.Println()
 	fmt.Println("--- Check ---")
 	fmt.Println(q.Stem)

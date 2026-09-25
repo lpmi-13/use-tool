@@ -91,7 +91,7 @@ func runGuideStep(s *Session, step GuideStep, isLast bool) (correct, answered in
 		if len(questions) > 0 {
 			hadQuestions = true
 			for _, q := range questions {
-				result := askQuestionWithCommandRunner(q, s.runAndCapture)
+				result := askQuestionWithCommandRunnerAndHistory(q, s.runAndCapture, &s.guideAnswerPositions)
 				if result.Quit {
 					return correct, answered, false
 				}

@@ -143,7 +143,7 @@ func memoryTopConsumerVariants() []stepVariant {
 			Teaching: "RSS is resident memory in pages. Note: shared pages (libc, mmaped\n" +
 				"binaries) are double-counted across processes, so summing RSS can\n" +
 				"exceed real memory used. For accurate per-process accounting, look\n" +
-				"at PSS via `smem` or /proc/<pid>/smaps_rollup.",
+				"at PSS (proportional set size) in /proc/<pid>/smaps_rollup.",
 		},
 		{
 			Cmd:         "top -bn1 -o %MEM | head -20",
@@ -1291,9 +1291,9 @@ var memoryCommands = []CommandRef{
 		Summary: "Top-RSS processes right now.\nNote: shared pages double-count across processes.",
 	},
 	{
-		Cmd:     "smem -tk",
+		Cmd:     "grep -H '^Pss:' /proc/[0-9]*/smaps_rollup 2>/dev/null | sort -k2 -rn | head",
 		Section: "Utilization",
-		Summary: "Per-process memory with PSS (proportional set size).\nMore accurate per-process numbers than RSS. (smem package.)",
+		Summary: "Top processes by PSS (proportional set size), straight from the kernel.\nShared pages are split across sharers, so these sum correctly unlike RSS.\nRun as root to see all processes; map PIDs to names with `ps -p <pid>`.",
 	},
 	{
 		Cmd:          "vmstat 1 N",

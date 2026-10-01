@@ -13,21 +13,16 @@ type SynopsisIssue struct {
 }
 
 func printSynopsis(inv *Investigation, si SystemInfo, snap Snapshot) {
-	fmt.Println("--- USE summary ---")
+	tutorln(bold("USE summary"))
 	issues := synopsisIssues(inv, si, snap)
 	if len(issues) == 0 {
-		fmt.Printf("No high-level USE issues found from captured %s observations.\n", inv.Name)
-		if len(snap.NotCaptured) > 0 {
-			fmt.Println("Uncaptured checks are left out of this summary.")
-		}
-		fmt.Println()
-		return
+		printProse(fmt.Sprintf("No high-level USE issues found from captured %s observations.", inv.Name), nil)
 	}
 	for _, issue := range issues {
-		fmt.Printf("%s: %s. Evidence: %s.\n", issue.Section, issue.Summary, issue.Evidence)
+		printProse(fmt.Sprintf("%s: %s. Evidence: %s.", issue.Section, issue.Summary, issue.Evidence), nil)
 	}
 	if len(snap.NotCaptured) > 0 {
-		fmt.Println("Uncaptured checks are left out of this summary.")
+		tutorln(faint("Uncaptured checks are left out of this summary."))
 	}
 	fmt.Println()
 }

@@ -35,28 +35,106 @@ func cmdGuide(args []string) {
 		os.Exit(2)
 	}
 	requireInteractive("guide")
+	enableGutter()
 	si := detectSystem()
 	s := &Session{Investigation: inv, System: si}
 
-	fmt.Printf("\n=== %s — guided walkthrough ===\n", inv.Title)
-	fmt.Println(inv.Description)
-	fmt.Printf("\nDetected system: %d logical CPU%s.\n", si.NumCPU, plural(si.NumCPU))
-	fmt.Println("At each step, run the suggested command (or an alternative if shown). Type `skip` to move on, `exit` to quit.")
-	fmt.Println("During a check, answer with a number; use `$ <command>` to inspect more data first.")
+	fmt.Println()
+	tutorln(bold(inv.Title + " — guided walkthrough"))
+	printProse(inv.Description, nil)
+	tutorf("Detected system: %d logical CPU%s.\n", si.NumCPU, plural(si.NumCPU))
+	fmt.Println()
+	printProse("At each step, run the suggested command (or an alternative if shown). Type `skip` to move on, `exit` to quit.\n"+
+		"During a check, answer with a number; use `$ <command>` to inspect more data first.", faint)
 
 	steps := inv.StepsFn(si)
+	states := make([]guideStepState, len(steps))
 	score, total := 0, 0
 	for i, step := range steps {
-		printGuideStepHeader(i+1, len(steps), step)
+		states[i] = stepCurrent
+		s.guideStep, s.guideTotal = i+1, len(steps)
+		setWindowTitle(fmt.Sprintf("%s: %s, step %d/%d", appName, inv.Name, i+1, len(steps)))
+		printGuideStepHeader(i+1, len(steps), step, guideProgressLine(steps, states))
 		correct, answered, ok := runGuideStep(s, step, i == len(steps)-1)
 		score += correct
 		total += answered
+		states[i] = stepDone
+		if s.guideStepSkipped {
+			states[i] = stepSkipped
+		}
 		if !ok {
+			restoreWindowTitle()
 			return
 		}
 	}
 
 	finishGuide(s, score, total)
+	restoreWindowTitle()
+}
+
+// exitGuide leaves the walkthrough from deep inside a step.
+func exitGuide() {
+	tutorln("Exiting.")
+	restoreWindowTitle()
+	os.Exit(0)
+}
+
+type guideStepState int
+
+const (
+	stepPending guideStepState = iota
+	stepCurrent
+	stepDone
+	stepSkipped
+)
+
+// guideDimensionOrder is the order step progress is grouped in.
+var guideDimensionOrder = []string{"Orientation", "Utilization", "Saturation", "Errors"}
+
+// guideProgressLine groups step progress by USE dimension, e.g.
+// "Utilization ✓✓  Saturation ●○  Errors ○". ✓ is done, – skipped, ● the
+// current step and ○ still to come.
+func guideProgressLine(steps []GuideStep, states []guideStepState) string {
+	marks := map[string]string{}
+	order := append([]string(nil), guideDimensionOrder...)
+	for i, step := range steps {
+		dim := step.Dimension
+		if dim == "" {
+			dim = "Other"
+		}
+		if !containsString(order, dim) {
+			order = append(order, dim)
+		}
+		var mark string
+		switch states[i] {
+		case stepDone:
+			mark = "✓"
+		case stepSkipped:
+			mark = "–"
+		case stepCurrent:
+			mark = accent("●")
+		default:
+			mark = faint("○")
+		}
+		marks[dim] += mark
+	}
+	var groups []string
+	for _, dim := range order {
+		if marks[dim] == "" {
+			continue
+		}
+		groups = append(groups, faint(dim)+" "+marks[dim])
+	}
+	return strings.Join(groups, "  ")
+}
+
+func containsString(xs []string, want string) bool {
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
+	return false
 }
 
 // runGuideStep drives a single guided-walkthrough step: it captures the
@@ -71,6 +149,7 @@ func cmdGuide(args []string) {
 // and ok=false when the learner quit or closed input (the caller should stop).
 func runGuideStep(s *Session, step GuideStep, isLast bool) (correct, answered int, ok bool) {
 	captured := guideStepCommand(s, step)
+	s.guideStepSkipped = captured == nil
 	hadQuestions := false
 	if captured != nil {
 		if s.guideQuestionKeys == nil {
@@ -81,7 +160,7 @@ func runGuideStep(s *Session, step GuideStep, isLast bool) (correct, answered in
 			strings.TrimSpace(captured.Output) != "" &&
 			step.NoRecognizedOutputMessage != "" {
 			fmt.Println()
-			fmt.Println(step.NoRecognizedOutputMessage)
+			printProse(step.NoRecognizedOutputMessage, nil)
 		}
 		questions := chooseUnseenGuideQuestions(
 			recognizedQuestions,
@@ -91,7 +170,7 @@ func runGuideStep(s *Session, step GuideStep, isLast bool) (correct, answered in
 		if len(questions) > 0 {
 			hadQuestions = true
 			for _, q := range questions {
-				result := askQuestionWithCommandRunnerAndHistory(q, s.runAndCapture, &s.guideAnswerPositions)
+				result := askQuestionWithFocus(q, s.runAndCapture, &s.guideAnswerPositions, columnFocusLines(q.Stem, *captured))
 				if result.Quit {
 					return correct, answered, false
 				}
@@ -107,8 +186,8 @@ func runGuideStep(s *Session, step GuideStep, isLast bool) (correct, answered in
 
 	if step.Teaching != "" {
 		fmt.Println()
-		fmt.Println("--- Teaching note ---")
-		fmt.Println(step.Teaching)
+		tutorln(bold("Teaching note"))
+		printProse(step.Teaching, nil)
 	}
 
 	// Pause only when this step showed questions, matching the prior behaviour.
@@ -125,25 +204,52 @@ func finishGuide(s *Session, score, total int) {
 		return
 	}
 
-	fmt.Println("\n--- Snapshot of what you observed ---")
+	tutorln(bold("Snapshot of what you observed"))
 	snap := s.Snapshot()
 	snap.Print()
 	printSynopsis(s.Investigation, s.System, snap)
 
+	tutorln(bold("Walkthrough complete"))
 	if total > 0 {
-		fmt.Printf("=== Walkthrough complete: %d / %d on the inline questions ===\n", score, total)
+		tutorf("Score: %d/%d checks correct.\n", score, total)
 	} else {
-		fmt.Println("=== Walkthrough complete ===")
+		tutorln("Score: no checks answered.")
+	}
+	name := "<resource>"
+	if s.Investigation != nil && s.Investigation.Name != "" {
+		name = s.Investigation.Name
+	}
+	printHanging("Next: ", fmt.Sprintf("run `use-tool practice %s`, gather evidence your own way, then `diagnose` to test your judgement.", name), nil)
+	fmt.Println()
+}
+
+func printGuideStepHeader(n, total int, step GuideStep, progress string) {
+	title := step.Title
+	if title == "" {
+		title = step.Name
+	}
+	fmt.Println()
+	tutorln(bold(fmt.Sprintf("Step %d/%d  %s", n, total, title)))
+	if progress != "" {
+		tutorln(progress)
+	}
+	if step.Intro != "" {
+		printProse(step.Intro, nil)
+	}
+	tutorf("Suggested: %s\n", step.Suggested)
+	for _, alt := range step.Alternatives {
+		tutorln(faint("Alternative: " + alt))
 	}
 }
 
-func printGuideStepHeader(n, total int, step GuideStep) {
-	fmt.Printf("\n--- Step %d/%d: %s ---\n", n, total, step.Name)
-	fmt.Println(step.Intro)
-	fmt.Printf("Suggested: %s\n", step.Suggested)
-	for _, alt := range step.Alternatives {
-		fmt.Printf("Alternative: %s\n", alt)
+// guidePrompt is the shell prompt for the walkthrough, showing the position
+// when it is known.
+func guidePrompt(s *Session) string {
+	label := "[guide]"
+	if s != nil && s.guideTotal > 0 {
+		label = fmt.Sprintf("[guide %d/%d]", s.guideStep, s.guideTotal)
 	}
+	return accent(label) + " $ "
 }
 
 func guideQuestions(si SystemInfo, step GuideStep, captured CapturedCommand) []Question {
@@ -237,14 +343,14 @@ func normalizeGuideQuestionKey(s string) string {
 }
 
 func pauseGuide() bool {
-	fmt.Print("\nPress Enter to continue...")
+	tutorf("\n%s", faint("Press Enter to continue..."))
 	line, ok := readLine()
-	fmt.Println()
 	if !ok {
+		fmt.Println()
 		return false
 	}
 	if isExitCommand(line) {
-		fmt.Println("Exiting.")
+		tutorln("Exiting.")
 		return false
 	}
 	return true
@@ -252,13 +358,12 @@ func pauseGuide() bool {
 
 func guideStepCommand(s *Session, step GuideStep) *CapturedCommand {
 	for {
-		line, status := readPrompt("[guide] $ ")
+		line, status := readPrompt(guidePrompt(s))
 		if status == lineReadClosed {
 			return nil
 		}
 		if status == lineReadInterrupted {
-			fmt.Println("Exiting.")
-			os.Exit(0)
+			exitGuide()
 		}
 		if line == "" {
 			continue
@@ -273,11 +378,10 @@ func guideStepCommand(s *Session, step GuideStep) *CapturedCommand {
 			return nil
 		}
 		if line == "exit" || line == "quit" {
-			fmt.Println("Exiting.")
-			os.Exit(0)
+			exitGuide()
 		}
 		if isLikelyChoiceAnswer(line) {
-			fmt.Printf("(That looks like a multiple-choice answer (`%s`), but we're at a shell prompt — not a `Choice:` prompt yet.\n  Run a command (try `%s`), or type `skip`.)\n", line, step.Suggested)
+			printProse(fmt.Sprintf("(`%s` looks like an answer, but this is the shell prompt; the `Choice` prompt comes after a command runs. Run a command (try `%s`), or type `skip`.)", line, step.Suggested), nil)
 			continue
 		}
 		if !confirmShellCommand(line) {
@@ -285,16 +389,20 @@ func guideStepCommand(s *Session, step GuideStep) *CapturedCommand {
 		}
 		c := s.runAndCaptureFiltered(line, step.Filter)
 		if c.Failed {
-			fmt.Println("(Command failed; fix it and try again, or `skip`.)")
+			tutorln("(Command failed; fix it and try again, or `skip`.)")
 			continue
+		}
+		if step.Filter == nil && c.Output != "" && !strings.HasSuffix(c.Output, "\n") {
+			fmt.Println()
 		}
 		if !guideStepExpectsCommand(step, c.Cmd) {
 			printUnrecognizedGuideOutput(c, step)
 			continue
 		}
 		if strings.TrimSpace(c.Output) == "" && step.EmptyOutputMessage != "" {
-			fmt.Println(step.EmptyOutputMessage)
+			tutorln(step.EmptyOutputMessage)
 			if !pauseGuide() {
+				restoreWindowTitle()
 				os.Exit(0)
 			}
 		}
@@ -317,6 +425,9 @@ func printUnrecognizedGuideOutput(c CapturedCommand, step GuideStep) {
 		fmt.Println()
 	case step.Filter != nil && !strings.HasSuffix(c.Output, "\n"):
 		fmt.Println()
+	case step.Filter == nil && !strings.HasSuffix(c.Output, "\n"):
+		// guideStepCommand already ended the unterminated output line.
+		fmt.Println()
 	case strings.HasSuffix(c.Output, "\n\n"):
 		// The command already left a blank line.
 	case strings.HasSuffix(c.Output, "\n"):
@@ -324,5 +435,92 @@ func printUnrecognizedGuideOutput(c CapturedCommand, step GuideStep) {
 	default:
 		fmt.Print("\n\n")
 	}
-	fmt.Printf("(That command didn't produce output this step recognizes — try `%s`, or `skip`.)\n\n", step.Suggested)
+	printProse(fmt.Sprintf("(That command didn't produce output this step recognizes — try `%s`, or `skip`.)", step.Suggested), nil)
+	fmt.Println()
+}
+
+// columnFocusLines points at the table column a check asks about by repeating
+// the header line from the learner's own captured output with that column
+// underlined. Only the header is repeated, never a data row, so the focus
+// shows where to look without showing the answer. It needs colour (underline
+// is the whole point) and returns nil when no header line names a backticked
+// column from the stem, or when the line would not fit beside the rail.
+func columnFocusLines(stem string, c CapturedCommand) []string {
+	if !ui.color || !ui.gutter {
+		return nil
+	}
+	columns := map[string]bool{}
+	for _, token := range backtickedTokens(stem) {
+		if strings.ContainsAny(token, " \t") || token == baseCmd(c.Cmd) {
+			continue
+		}
+		columns[token] = true
+	}
+	if len(columns) == 0 {
+		return nil
+	}
+	output := string(sanitizeTerminalBytes([]byte(c.Output)))
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimRight(line, " \r")
+		fields := strings.Fields(line)
+		if len(fields) < 4 {
+			continue
+		}
+		hit := false
+		for _, f := range fields {
+			if columns[f] {
+				hit = true
+				break
+			}
+		}
+		if !hit {
+			continue
+		}
+		if visibleWidth(line)+2 > selectorTerminalWidth()-gutterWidth() {
+			return nil
+		}
+		return []string{"  " + underlineFields(line, columns)}
+	}
+	return nil
+}
+
+// backtickedTokens returns the `quoted` spans of s.
+func backtickedTokens(s string) []string {
+	var out []string
+	for {
+		start := strings.IndexByte(s, '`')
+		if start < 0 {
+			return out
+		}
+		end := strings.IndexByte(s[start+1:], '`')
+		if end < 0 {
+			return out
+		}
+		out = append(out, s[start+1:start+1+end])
+		s = s[start+1+end+1:]
+	}
+}
+
+// underlineFields underlines whole whitespace-separated fields of line that
+// are in want, keeping the line's original spacing.
+func underlineFields(line string, want map[string]bool) string {
+	var b strings.Builder
+	for i := 0; i < len(line); {
+		if line[i] == ' ' || line[i] == '\t' {
+			b.WriteByte(line[i])
+			i++
+			continue
+		}
+		j := i
+		for j < len(line) && line[j] != ' ' && line[j] != '\t' {
+			j++
+		}
+		field := line[i:j]
+		if want[field] {
+			field = underline(field)
+		}
+		b.WriteString(field)
+		i = j
+	}
+	return b.String()
 }

@@ -32,8 +32,10 @@ func memorySteps(si SystemInfo) []GuideStep {
 
 	steps := []GuideStep{
 		{
-			Name: "baseline",
-			Intro: "Step 1: get a baseline of total, used, available memory and swap.\n" +
+			Name:      "baseline",
+			Title:     "Memory baseline",
+			Dimension: "Utilization",
+			Intro: "Get a baseline of total, used, available memory and swap.\n" +
 				"The kernel exposes this via /proc/meminfo; `free` summarises the same data.",
 			Suggested:        baselinePick.Cmd,
 			ExpectedCommands: stepVariantCommands(baselineVariants),
@@ -45,8 +47,10 @@ func memorySteps(si SystemInfo) []GuideStep {
 				"two can differ by many gigabytes on a busy server.",
 		},
 		{
-			Name: "swap-activity",
-			Intro: "Step 2: look at paging rates. Non-zero swap-in / swap-out activity\n" +
+			Name:      "swap-activity",
+			Title:     "Paging activity",
+			Dimension: "Saturation",
+			Intro: "Look at paging rates. Non-zero swap-in / swap-out activity\n" +
 				"means the working set is bigger than RAM.",
 			Suggested:        swapPick.Cmd,
 			ExpectedCommands: stepVariantCommands(swapVariants),
@@ -58,7 +62,9 @@ func memorySteps(si SystemInfo) []GuideStep {
 	if si.HasMemoryPSI {
 		steps = append(steps, GuideStep{
 			Name:          "pressure",
-			Intro:         "Step 3: PSI reports the time-share of tasks stalled on memory.\nLinux 4.20+ with PSI enabled in the kernel.",
+			Title:         "Memory pressure (PSI)",
+			Dimension:     "Saturation",
+			Intro:         "PSI reports the time-share of tasks stalled on memory.\nLinux 4.20+ with PSI enabled in the kernel.",
 			Suggested:     "cat /proc/pressure/memory",
 			QuestionsFn:   psiMemoryColumnQuestions,
 			QuestionCount: 3,
@@ -70,7 +76,9 @@ func memorySteps(si SystemInfo) []GuideStep {
 	}
 	steps = append(steps, GuideStep{
 		Name:             "top-consumers",
-		Intro:            "Step 4: who's actually using memory?",
+		Title:            "Top consumers",
+		Dimension:        "Utilization",
+		Intro:            "Who's actually using memory?",
 		Suggested:        topPick.Cmd,
 		ExpectedCommands: stepVariantCommands(topVariants),
 		QuestionsFn:      combineVariantQuestions(topVariants),
@@ -80,7 +88,9 @@ func memorySteps(si SystemInfo) []GuideStep {
 	})
 	steps = append(steps, GuideStep{
 		Name:               "errors",
-		Intro:              "Step 5: kernel memory errors mean OOM kills.\nEven if the system is fine *now*, recent OOM events explain flapping services.\n" + dmesgPermissionNote,
+		Title:              "OOM kills",
+		Dimension:          "Errors",
+		Intro:              "Kernel memory errors mean OOM kills.\nEven if the system is fine *now*, recent OOM events explain flapping services.\n" + dmesgPermissionNote,
 		Suggested:          "dmesg -T | grep -iE 'killed process|out of memory|oom-killer' | tail",
 		Alternatives:       journalctlAlternative(si, "journalctl -k -b --no-pager | grep -iE 'killed process|out of memory|oom-killer' | tail"),
 		QuestionsFn:        oomQuestions,

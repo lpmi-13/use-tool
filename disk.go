@@ -35,7 +35,9 @@ func diskSteps(si SystemInfo) []GuideStep {
 	steps := []GuideStep{
 		{
 			Name:             "devices",
-			Intro:            "Step 1: get a sense of what block devices the system has.",
+			Title:            "Block devices",
+			Dimension:        "Orientation",
+			Intro:            "Get a sense of what block devices the system has.",
 			Suggested:        devicePick.Cmd,
 			ExpectedCommands: stepVariantCommands(deviceVariants),
 			QuestionsFn:      combineVariantQuestions(deviceVariants),
@@ -44,8 +46,10 @@ func diskSteps(si SystemInfo) []GuideStep {
 			Teaching:         devicePick.Teaching,
 		},
 		{
-			Name: "throughput",
-			Intro: "Step 2: per-device throughput, queue depth, and latency.\n" +
+			Name:      "throughput",
+			Title:     "Throughput, queue depth and latency",
+			Dimension: "Utilization",
+			Intro: "Per-device throughput, queue depth, and latency.\n" +
 				"Look for high queue depth (`aqu-sz` / `avgqu-sz`) or high await/svctm —\n" +
 				"those are the saturation signals.",
 			Suggested:        throughputPick.Cmd,
@@ -58,7 +62,9 @@ func diskSteps(si SystemInfo) []GuideStep {
 	if si.HasIOPSI {
 		steps = append(steps, GuideStep{
 			Name:          "pressure",
-			Intro:         "Step 3: PSI reports time-share of tasks stalled on I/O.",
+			Title:         "I/O pressure (PSI)",
+			Dimension:     "Saturation",
+			Intro:         "PSI reports time-share of tasks stalled on I/O.",
 			Suggested:     "cat /proc/pressure/io",
 			QuestionsFn:   psiIOColumnQuestions,
 			QuestionCount: 3,
@@ -69,7 +75,9 @@ func diskSteps(si SystemInfo) []GuideStep {
 	}
 	steps = append(steps, GuideStep{
 		Name:          "attribution",
-		Intro:         "Step 4: which processes are doing the I/O?",
+		Title:         "Per-process I/O",
+		Dimension:     "Utilization",
+		Intro:         "Which processes are doing the I/O?",
 		Suggested:     "pidstat -d 1 3",
 		QuestionsFn:   pidstatDColumnQuestions,
 		QuestionCount: 3,
@@ -86,7 +94,9 @@ func diskSteps(si SystemInfo) []GuideStep {
 	})
 	steps = append(steps, GuideStep{
 		Name:               "errors",
-		Intro:              "Step 5: kernel I/O errors. Filesystem-level errors are the smoking\ngun for failing media.\n" + dmesgPermissionNote,
+		Title:              "Kernel I/O errors",
+		Dimension:          "Errors",
+		Intro:              "Kernel I/O errors. Filesystem-level errors are the smoking\ngun for failing media.\n" + dmesgPermissionNote,
 		Suggested:          dmesgErrorCmd,
 		Alternatives:       journalctlAlternative(si, journalctlErrorCmd),
 		QuestionsFn:        diskDmesgQuestions,

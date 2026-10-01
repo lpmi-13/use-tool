@@ -126,7 +126,7 @@ func TestRenderMenuSelectorIncludesOptionsAndHelp(t *testing.T) {
 		"choose",
 		"  1. guide",
 		"> 2. practice",
-		"Up/k, Down/j",
+		"↑/k, ↓/j",
 		"Enter",
 	} {
 		if !strings.Contains(got, want) {
@@ -436,7 +436,8 @@ func TestRunCommandTerminalJobControl(t *testing.T) {
 
 	t.Run("ctrl-c returns control", func(t *testing.T) {
 		output := runPTYTestProcess(t, "interrupt", []byte{3})
-		for _, want := range []string{"child-ready", "helper-finished failed=true"} {
+		// The command printed before it was stopped, so its output is kept.
+		for _, want := range []string{"child-ready", "stopped with Ctrl-C; output kept", "helper-finished failed=false"} {
 			if !strings.Contains(output, want) {
 				t.Fatalf("PTY output missing %q:\n%s", want, output)
 			}
@@ -670,7 +671,7 @@ func TestRunAndCaptureTreatsGrepNoMatchesAsEmptySuccess(t *testing.T) {
 	if !strings.Contains(stderr, "[no matching lines]") {
 		t.Fatalf("expected no-match hint in stderr, got:\n%s", stderr)
 	}
-	if strings.Contains(stderr, "command exited with status 1") {
+	if strings.Contains(stderr, "[exit 1, ") {
 		t.Fatalf("stderr still reports no-match grep as command failure:\n%s", stderr)
 	}
 }
@@ -688,7 +689,7 @@ func TestRunAndCaptureKeepsRealGrepErrorsFailed(t *testing.T) {
 	if len(s.Captured) != 0 {
 		t.Fatalf("captured failed grep command: %+v", s.Captured)
 	}
-	if !strings.Contains(stderr, "[command exited with status 2]") {
+	if !strings.Contains(stderr, "[exit 2, ") {
 		t.Fatalf("expected real grep error status in stderr, got:\n%s", stderr)
 	}
 }
@@ -1109,7 +1110,7 @@ func TestRunGuideStepCarriesQuestionConceptsAcrossSteps(t *testing.T) {
 	if firstAnswered != 1 || secondAnswered != 0 {
 		t.Fatalf("answered counts = %d then %d, want 1 then 0\n%s", firstAnswered, secondAnswered, out)
 	}
-	if checks := strings.Count(out, "--- Check ---"); checks != 1 {
+	if checks := strings.Count(out, "Choice (1-2, skip, $ cmd): "); checks != 1 {
 		t.Fatalf("printed %d checks, want 1\n%s", checks, out)
 	}
 }
@@ -1737,11 +1738,11 @@ func TestGuidePausesBeforeFinalSummary(t *testing.T) {
 	})
 
 	pauseAt := strings.Index(out, "Press Enter to continue...")
-	summaryAt := strings.Index(out, "--- Snapshot of what you observed ---")
+	summaryAt := strings.Index(out, "Snapshot of what you observed")
 	if pauseAt < 0 || summaryAt < 0 || pauseAt >= summaryAt {
 		t.Fatalf("expected pause before final summary:\n%s", out)
 	}
-	if !strings.Contains(out, "=== Walkthrough complete: 7 / 7 on the inline questions ===") {
+	if !strings.Contains(out, "Walkthrough complete\nScore: 7/7 checks correct.\n") {
 		t.Fatalf("expected completion score after final pause:\n%s", out)
 	}
 }
@@ -1791,8 +1792,11 @@ func TestGuideStepShowsTeachingNoteBeforePause(t *testing.T) {
 		t.Fatalf("answered = %d, want 1:\n%s", answered, out)
 	}
 
-	feedbackAt := strings.Index(out, "--- Feedback ---")
-	teachingAt := strings.Index(out, "--- Teaching note ---")
+	feedbackAt := strings.Index(out, "✓ Correct.")
+	if feedbackAt < 0 {
+		feedbackAt = strings.Index(out, "✗ Not quite.")
+	}
+	teachingAt := strings.Index(out, "Teaching note\n")
 	pauseAt := strings.Index(out, "Press Enter to continue...")
 	if feedbackAt < 0 || teachingAt < 0 || pauseAt < 0 {
 		t.Fatalf("expected feedback, teaching note, and pause all present:\n%s", out)
@@ -1825,7 +1829,7 @@ func TestGuideFinalStepDefersPauseToSummary(t *testing.T) {
 	if !ok {
 		t.Fatalf("runGuideStep returned ok=false, want true:\n%s", out)
 	}
-	if !strings.Contains(out, "--- Teaching note ---") {
+	if !strings.Contains(out, "Teaching note\n") {
 		t.Fatalf("expected the teaching note on the final step:\n%s", out)
 	}
 	if strings.Contains(out, "Press Enter to continue...") {
@@ -1893,7 +1897,7 @@ func TestGuideStepHeaderPrintsAlternativesCompactly(t *testing.T) {
 			Intro:        "Intro text.",
 			Suggested:    "dmesg -T | tail",
 			Alternatives: []string{"journalctl -k -b --no-pager -n 30"},
-		})
+		}, "")
 	})
 	if !strings.Contains(out, "Suggested: dmesg -T | tail") {
 		t.Fatalf("expected suggested command in output:\n%s", out)
@@ -1984,4 +1988,96 @@ func captureStderr(fn func()) string {
 	buf.ReadFrom(r)
 	r.Close()
 	return buf.String()
+}
+
+func TestSamplerDuration(t *testing.T) {
+	for _, tc := range []struct {
+		cmd  string
+		want time.Duration
+		ok   bool
+	}{
+		{"vmstat 5 20", 100 * time.Second, true},
+		{"vmstat -w 1 5", 5 * time.Second, true},
+		{"sar -n DEV 1 3", 3 * time.Second, true},
+		{"iostat -xz 2 10 | grep -vE '^loop'", 20 * time.Second, true},
+		{"sudo pidstat -d 1 3", 3 * time.Second, true},
+		{"pidstat -p 1234 1 5", 5 * time.Second, true},
+		{"mpstat -P 0 1 3", 3 * time.Second, true},
+		{"pidstat -p 1234 5", 0, false},
+		{"vmstat 1", 0, false},
+		{"vmstat", 0, false},
+		{"sleep 100 20", 0, false},
+	} {
+		got, ok := samplerDuration(tc.cmd)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("samplerDuration(%q) = %s, %t; want %s, %t", tc.cmd, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
+func TestCommandTimeoutForExtendsLongSamplers(t *testing.T) {
+	if got := commandTimeoutFor("vmstat 5 20", time.Minute); got != 130*time.Second {
+		t.Fatalf("vmstat 5 20 timeout = %s, want 2m10s", got)
+	}
+	if got := commandTimeoutFor("vmstat 1 5", time.Minute); got != time.Minute {
+		t.Fatalf("short sampler timeout = %s, want the default", got)
+	}
+	if got := commandTimeoutFor("vmstat 1", time.Minute); got != time.Minute {
+		t.Fatalf("sampler without a count timeout = %s, want the default", got)
+	}
+	if got := commandTimeoutFor("vmstat 5 20", 0); got != 0 {
+		t.Fatalf("disabled timeout = %s, want it to stay disabled", got)
+	}
+}
+
+func TestTimedOutCommandKeepsItsOutput(t *testing.T) {
+	t.Setenv("USE_TOOL_COMMAND_TIMEOUT", "300ms")
+	s := &Session{}
+	var c CapturedCommand
+	stderr := captureStderr(func() {
+		captureStdout(func() {
+			c = s.runAndCapture(`printf 'sample 1\n'; sleep 5`)
+		})
+	})
+	if c.Failed || len(s.Captured) != 1 || !strings.Contains(c.Output, "sample 1") {
+		t.Fatalf("timed-out command with output was not kept: %+v, captured %d", c, len(s.Captured))
+	}
+	if !strings.Contains(stderr, "[stopped after 300ms; output kept") {
+		t.Fatalf("missing stopped note:\n%s", stderr)
+	}
+}
+
+func TestTimedOutCommandWithoutOutputFails(t *testing.T) {
+	t.Setenv("USE_TOOL_COMMAND_TIMEOUT", "300ms")
+	s := &Session{}
+	var c CapturedCommand
+	stderr := captureStderr(func() {
+		c = s.runAndCapture("sleep 5")
+	})
+	if !c.Failed || len(s.Captured) != 0 {
+		t.Fatalf("silent timed-out command should fail: %+v", c)
+	}
+	if !strings.Contains(stderr, "[stopped after 300ms; no output]") {
+		t.Fatalf("missing stopped note:\n%s", stderr)
+	}
+}
+
+func TestStoppedByInterrupt(t *testing.T) {
+	if !stoppedByInterrupt(nil, true) {
+		t.Fatal("a forwarded interrupt should count as stopped by the user")
+	}
+	for _, tc := range []struct {
+		script string
+		want   bool
+	}{
+		{"kill -INT $$", true},
+		{"exit 130", true},
+		{"exit 2", false},
+		{"kill -TERM $$", false},
+	} {
+		err := exec.Command("sh", "-c", tc.script).Run()
+		if got := stoppedByInterrupt(err, false); got != tc.want {
+			t.Errorf("stoppedByInterrupt(%q) = %t, want %t (err %v)", tc.script, got, tc.want, err)
+		}
+	}
 }

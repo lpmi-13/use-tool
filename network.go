@@ -35,7 +35,9 @@ func networkSteps(si SystemInfo) []GuideStep {
 	return []GuideStep{
 		{
 			Name:             "interfaces",
-			Intro:            "Step 1: get familiar with the interfaces and their since-boot counters.",
+			Title:            "Interfaces",
+			Dimension:        "Orientation",
+			Intro:            "Get familiar with the interfaces and their since-boot counters.",
 			Suggested:        interfacePick.Cmd,
 			ExpectedCommands: stepVariantCommands(interfaceVariants),
 			QuestionsFn:      combineVariantQuestions(interfaceVariants),
@@ -46,7 +48,9 @@ func networkSteps(si SystemInfo) []GuideStep {
 		},
 		{
 			Name:          "throughput",
-			Intro:         "Step 2: measure per-interface throughput as a rate (utilization).\nsar samples once per second; compare against ethtool-reported link speed.",
+			Title:         "Interface throughput",
+			Dimension:     "Utilization",
+			Intro:         "Measure per-interface throughput as a rate (utilization).\nsar samples once per second; compare against ethtool-reported link speed.",
 			Suggested:     "sar -n DEV 1 3",
 			QuestionsFn:   sarDevColumnQuestions,
 			QuestionCount: 3,
@@ -65,7 +69,9 @@ func networkSteps(si SystemInfo) []GuideStep {
 		},
 		{
 			Name:          "drops",
-			Intro:         "Step 3: look for saturation at the interface level — drops and overruns.",
+			Title:         "Drops and overruns",
+			Dimension:     "Saturation",
+			Intro:         "Look for saturation at the interface level — drops and overruns.",
 			Suggested:     "sar -n EDEV 1 3",
 			QuestionsFn:   sarEdevColumnQuestions,
 			QuestionCount: 3,
@@ -77,7 +83,9 @@ func networkSteps(si SystemInfo) []GuideStep {
 		},
 		{
 			Name:             "tcp",
-			Intro:            "Step 4: protocol-level signals — TCP retransmits and listen overflows.",
+			Title:            "TCP retransmits and overflows",
+			Dimension:        "Saturation",
+			Intro:            "Protocol-level signals — TCP retransmits and listen overflows.",
 			Suggested:        "netstat -s",
 			Alternatives:     []string{"ss -tin"},
 			ExpectedCommands: stepVariantCommands(networkTCPVariants()),
@@ -93,7 +101,9 @@ func networkSteps(si SystemInfo) []GuideStep {
 		},
 		{
 			Name:          "sockets",
-			Intro:         "Step 5: socket summary — what's currently established and what's listening.",
+			Title:         "Socket summary",
+			Dimension:     "Utilization",
+			Intro:         "Socket summary — what's currently established and what's listening.",
 			Suggested:     "ss -s",
 			QuestionsFn:   ssSummaryColumnQuestions,
 			QuestionCount: 3,
@@ -105,7 +115,9 @@ func networkSteps(si SystemInfo) []GuideStep {
 		},
 		{
 			Name:               "errors",
-			Intro:              "Step 6: kernel network errors — link state changes and NIC issues.\n" + dmesgPermissionNote,
+			Title:              "Link and NIC errors",
+			Dimension:          "Errors",
+			Intro:              "Kernel network errors — link state changes and NIC issues.\n" + dmesgPermissionNote,
 			Suggested:          "dmesg -T | grep -iE 'link is down|link up|carrier|nic|ethernet' | tail",
 			Alternatives:       journalctlAlternative(si, "journalctl -k -b --no-pager | grep -iE 'link is down|link up|carrier|nic|ethernet' | tail"),
 			QuestionsFn:        networkDmesgQuestions,

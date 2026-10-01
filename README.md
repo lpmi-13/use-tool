@@ -120,6 +120,12 @@ use-tool list
 Inside `practice` mode you can also run `report`, `commands`, `diagnose`,
 `help`, and `exit` as REPL builtins.
 
+On an interactive terminal, use-tool marks its own text with a `│` rail so
+it stands apart from real command output, which is never restyled. Colour
+uses the 16 basic ANSI colours, so your terminal theme decides the shades.
+Turn it off with `--no-color`, `NO_COLOR=1`, or `USE_TOOL_COLOR=never`;
+force it on with `USE_TOOL_COLOR=always`. Piped output is plain.
+
 ## Project layout
 
 ```
@@ -136,6 +142,7 @@ memory.go          Memory-specific: same shape as cpu.go
 disk.go            Disk I/O-specific: same shape as cpu.go
 network.go         Network-specific: same shape as cpu.go
 guide.go           guided walkthrough flow
+style.go           colour detection, text styles, the rail, prose wrapping
 practice.go        free-form REPL flow
 *_test.go          unit tests for parsers, extractors, diagnosis, prompts
 ```

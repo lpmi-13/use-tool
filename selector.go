@@ -150,28 +150,29 @@ func redrawMenuSelector(title string, options []menuOption, selected int, showHe
 
 func renderMenuSelector(title string, options []menuOption, selected int, showHelp bool) int {
 	width := selectorTerminalWidth()
-	lines := printSelectorLine(title, width, true)
+	lines := printSelectorLine(bold(title), width, true)
 	for i, option := range options {
-		cursor := " "
-		if i == selected {
-			cursor = ">"
-		}
-		line := fmt.Sprintf("%s %d. %-10s %s", cursor, i+1, option.Label, option.Summary)
-		lines += printSelectorLine(line, width, true)
+		row := selectorRow(fmt.Sprintf("%d. %-10s", i+1, option.Label), i == selected)
+		lines += printSelectorLine(row+" "+faint(option.Summary), width, true)
 	}
 	return lines + printSelectorHelp(menuSelectorHelp(len(options), showHelp), width)
 }
 
 func menuSelectorHelp(optionCount int, showHelp bool) []string {
 	if !showHelp {
-		return []string{fmt.Sprintf("Up/k Down/j move | 1-%d jump | Enter choose | q quit | ? help", optionCount)}
+		return shortHelp([]helpKey{
+			{"↑/k ↓/j", "move"},
+			{fmt.Sprintf("1-%d", optionCount), "jump"},
+			{"Enter", "choose"},
+			{"q", "quit"},
+			{"?", "help"},
+		})
 	}
-	return []string{
-		"Keys:",
-		"  Up/k, Down/j  move between options",
-		fmt.Sprintf("  1-%d           jump to an option", optionCount),
-		"  Enter         choose the highlighted option",
-		"  q             quit",
-		"  ?             hide help",
-	}
+	return fullHelp([]helpKey{
+		{"↑/k, ↓/j", "move between options"},
+		{fmt.Sprintf("1-%d", optionCount), "jump to an option"},
+		{"Enter", "choose the highlighted option"},
+		{"q", "quit"},
+		{"?", "hide help"},
+	})
 }

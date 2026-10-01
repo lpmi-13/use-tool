@@ -25,7 +25,13 @@ type Investigation struct {
 }
 
 type GuideStep struct {
-	Name         string
+	Name string
+	// Title is the human-readable step name shown in the step header.
+	Title string
+	// Dimension is the USE dimension the step mainly examines
+	// ("Utilization", "Saturation", "Errors"), or "Orientation" for a step
+	// that surveys the resource first. The guide groups progress by it.
+	Dimension    string
 	Intro        string
 	Suggested    string
 	Alternatives []string
@@ -306,38 +312,42 @@ func askQuestionWithCommandRunner(q Question, run questionCommandRunner) Questio
 }
 
 func askQuestionWithCommandRunnerAndHistory(q Question, run questionCommandRunner, history *answerPositionHistory) QuestionResult {
+	return askQuestionWithFocus(q, run, history, nil)
+}
+
+// askQuestionWithFocus asks q and grades the answer. focus lines, when given,
+// are shown under the stem to point at the part of the learner's own output
+// the question is about.
+func askQuestionWithFocus(q Question, run questionCommandRunner, history *answerPositionHistory, focus []string) QuestionResult {
 	options := randomizedQuestionOptionsWithHistory(q, history)
+	canRun := run != nil
 	fmt.Println()
-	fmt.Println("--- Check ---")
-	fmt.Println(q.Stem)
-	for i, o := range options {
-		fmt.Printf("  %d. %s\n", i+1, o)
-	}
+	printQuestion(q.Stem, options, focus)
 	for {
-		fmt.Print("Choice: ")
+		tutorf("Choice (%s): ", choiceHint(len(options), canRun))
 		line, ok := readLine()
 		if !ok {
 			return QuestionResult{Quit: true}
 		}
 		if isExitCommand(line) {
-			fmt.Println("Exiting.")
+			tutorln("Exiting.")
 			return QuestionResult{Quit: true}
 		}
 		if strings.TrimSpace(line) == "skip" {
-			fmt.Println("(Skipped.)")
+			tutorln(faint("– Skipped."))
 			return QuestionResult{Skipped: true}
 		}
 		if cmd, ok := stripCopiedShellPrompt(line); ok {
 			if cmd == "" {
-				fmt.Printf("Type a command after `$`, or pick a number 1-%d.\n", len(options))
+				tutorf("Type a command after `$`. %s\n", choiceRetry(len(options), canRun))
 				continue
 			}
-			if run == nil {
-				fmt.Printf("Pick a number 1-%d.\n", len(options))
+			if !canRun {
+				tutorln(choiceRetry(len(options), canRun))
 				continue
 			}
 			if !confirmShellCommand(cmd) {
-				fmt.Printf("Pick a number 1-%d, or inspect more data with `$ <command>`.\n", len(options))
+				tutorln(choiceRetry(len(options), canRun))
 				continue
 			}
 			c := run(cmd)
@@ -345,29 +355,69 @@ func askQuestionWithCommandRunnerAndHistory(q Question, run questionCommandRunne
 				fmt.Println()
 			}
 			if c.Failed {
-				fmt.Printf("(Command failed; try another `$ <command>`, or pick a number 1-%d.)\n", len(options))
+				tutorf("(Command failed.) %s\n", choiceRetry(len(options), canRun))
 				continue
 			}
-			fmt.Printf("(Ran `%s`; now pick a number 1-%d.)\n", cmd, len(options))
+			// The output may have pushed the question off screen; show it again
+			// next to the prompt.
+			fmt.Println()
+			printQuestion(q.Stem, options, nil)
 			continue
 		}
 		n, err := strconv.Atoi(line)
 		if err != nil || n < 1 || n > len(options) {
-			fmt.Printf("Pick a number 1-%d.\n", len(options))
+			tutorln(choiceRetry(len(options), canRun))
 			continue
 		}
 		chosen := options[n-1]
 		fmt.Println()
-		fmt.Println("--- Feedback ---")
-		fmt.Printf("Your answer: %s\n", chosen)
 		if chosen == q.Correct {
-			fmt.Println("Result: correct")
+			tutorln(good("✓") + " Correct.")
 			return QuestionResult{Correct: true}
 		}
-		fmt.Println("Result: not quite")
-		fmt.Printf("Correct answer: %s\n", q.Correct)
+		answer := q.Correct
+		if !strings.HasSuffix(answer, ".") && !strings.HasSuffix(answer, "?") && !strings.HasSuffix(answer, "!") {
+			answer += "."
+		}
+		printHangingStyled(bad("✗")+" ",
+			styledText{Text: "Not quite. The answer is"},
+			styledText{Text: answer, Style: bold},
+		)
 		return QuestionResult{}
 	}
+}
+
+// printQuestion shows a check: the stem in bold, optional focus lines, and the
+// numbered options with wrapped lines aligned under the option text.
+func printQuestion(stem string, options []string, focus []string) {
+	printProse(stem, bold)
+	for _, line := range focus {
+		tutorln(line)
+	}
+	for i, o := range options {
+		printHanging(fmt.Sprintf("  %d. ", i+1), o, nil)
+	}
+}
+
+// choiceHint lists what the Choice prompt accepts, e.g. "1-4, skip, $ cmd".
+func choiceHint(optionCount int, canRun bool) string {
+	return strings.Join(choiceInputs(optionCount, canRun), ", ")
+}
+
+// choiceRetry is the error shown for an invalid answer. It uses the same
+// wording as the prompt and says how to recover.
+func choiceRetry(optionCount int, canRun bool) string {
+	inputs := choiceInputs(optionCount, canRun)
+	last := len(inputs) - 1
+	return "Choose " + strings.Join(inputs[:last], ", ") + ", or " + inputs[last] + "."
+}
+
+func choiceInputs(optionCount int, canRun bool) []string {
+	inputs := []string{fmt.Sprintf("1-%d", optionCount), "skip"}
+	if canRun {
+		inputs = append(inputs, "$ cmd")
+	}
+	return inputs
 }
 
 func isExitCommand(line string) bool {
@@ -700,8 +750,9 @@ func pickRandom[T any](xs []T) T {
 }
 
 func printCommands(inv *Investigation, si SystemInfo) {
-	fmt.Printf("\n%s — command reference\n", inv.Title)
-	fmt.Println(strings.Repeat("=", 60))
+	fmt.Println()
+	tutorln(bold(inv.Title + " — command reference"))
+	tutorln(strings.Repeat("=", 60))
 	bySection := map[string][]CommandRef{}
 	for _, c := range inv.Commands {
 		bySection[c.Section] = append(bySection[c.Section], c)
@@ -711,19 +762,26 @@ func printCommands(inv *Investigation, si SystemInfo) {
 		if !ok {
 			continue
 		}
-		fmt.Printf("\n%s\n%s\n", sec, strings.Repeat("-", len(sec)))
+		fmt.Println()
+		tutorln(bold(sec))
+		tutorln(strings.Repeat("-", len(sec)))
 		for _, c := range cmds {
 			status := commandStatus(c, si)
 			if status != "" && c.HideWhenUnavailable {
 				continue
 			}
+			fmt.Println()
 			if status == "" {
-				fmt.Printf("\n  %s\n", c.Cmd)
+				tutorf("  %s\n", c.Cmd)
 			} else {
-				fmt.Printf("\n  %s  [%s]\n", c.Cmd, status)
+				tutorf("  %s  %s\n", c.Cmd, faint("["+status+"]"))
 			}
 			for _, line := range strings.Split(c.Summary, "\n") {
-				fmt.Printf("      %s\n", line)
+				if line == "" {
+					fmt.Println()
+					continue
+				}
+				tutorf("      %s\n", line)
 			}
 		}
 	}

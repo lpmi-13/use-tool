@@ -28,7 +28,9 @@ func cpuSteps(si SystemInfo) []GuideStep {
 	steps := []GuideStep{
 		{
 			Name:             "loadavg",
-			Intro:            "Step 1: Load averages and recent run-queue counters give a coarse\npicture of CPU pressure over 1-, 5-, and 15-minute windows.",
+			Title:            "Load averages",
+			Dimension:        "Saturation",
+			Intro:            "Load averages and recent run-queue counters give a coarse\npicture of CPU pressure over 1-, 5-, and 15-minute windows.",
 			Suggested:        loadavgPick.Cmd,
 			ExpectedCommands: stepVariantCommands(loadavgVariants),
 			QuestionsFn:      combineVariantQuestions(loadavgVariants),
@@ -43,7 +45,9 @@ func cpuSteps(si SystemInfo) []GuideStep {
 	if si.HasMpstat {
 		steps = append(steps, GuideStep{
 			Name:          "per-cpu",
-			Intro:         "Step 2: mpstat breaks down utilization per logical CPU.\nThis tells \"all cores busy\" apart from \"one core pegged.\"",
+			Title:         "Per-CPU utilization",
+			Dimension:     "Utilization",
+			Intro:         "`mpstat` breaks down utilization per logical CPU.\nThis tells \"all cores busy\" apart from \"one core pegged.\"",
 			Suggested:     "mpstat -P ALL 1 3",
 			QuestionsFn:   mpstatColumnQuestions,
 			QuestionCount: 3,
@@ -56,8 +60,10 @@ func cpuSteps(si SystemInfo) []GuideStep {
 	runqueuePick := pickStepVariant(si, runqueueVariants)
 
 	steps = append(steps, GuideStep{
-		Name: "runqueue",
-		Intro: "Step 3: look at saturation signals — run-queue length, CPU stall pressure,\n" +
+		Name:      "runqueue",
+		Title:     "Run queue and stalls",
+		Dimension: "Saturation",
+		Intro: "Look at saturation signals — run-queue length, CPU stall pressure,\n" +
 			"or the idle-vs-wait breakdown — over a few short samples.",
 		Suggested:        runqueuePick.Cmd,
 		ExpectedCommands: stepVariantCommands(runqueueVariants),
@@ -68,7 +74,9 @@ func cpuSteps(si SystemInfo) []GuideStep {
 
 	steps = append(steps, GuideStep{
 		Name:               "errors",
-		Intro:              "Step 4: kernel errors (the 'E' in USE) surface in dmesg —\nMCE events, thermal throttling, hardware faults.\nThis uses dmesg's severity filter so unusual warnings stay visible, but the output covers every subsystem; only explicit CPU/MCE/throttling signatures count as CPU evidence.\n" + dmesgPermissionNote,
+		Title:              "Kernel CPU errors",
+		Dimension:          "Errors",
+		Intro:              "Kernel errors (the 'E' in USE) surface in dmesg —\nMCE events, thermal throttling, hardware faults.\nThis uses dmesg's severity filter so unusual warnings stay visible, but the output covers every subsystem; only explicit CPU/MCE/throttling signatures count as CPU evidence.\n" + dmesgPermissionNote,
 		Suggested:          "dmesg --level=err,warn | tail -20",
 		Alternatives:       journalctlAlternative(si, "journalctl -k -b -p warning --no-pager -n 30"),
 		QuestionsFn:        dmesgQuestions,

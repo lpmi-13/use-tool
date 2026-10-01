@@ -228,30 +228,30 @@ func commandContributesObservation(inv *Investigation, si SystemInfo, c Captured
 
 func (s Snapshot) Print() {
 	fmt.Println()
-	fmt.Println(strings.Repeat("=", 60))
+	tutorln(faint(strings.Repeat("=", 60)))
 	if len(s.Sources) == 0 {
 		if s.CapturedCount == 0 {
-			fmt.Println("No commands captured yet.")
+			tutorln("No commands captured yet.")
 		} else {
-			fmt.Println("No USE-relevant data captured yet.")
+			tutorln("No USE-relevant data captured yet.")
 		}
 		fmt.Println()
 		return
 	}
-	fmt.Printf("Captured from: %s\n", strings.Join(s.Sources, "; "))
+	printProse("Captured from: "+strings.Join(s.Sources, "; "), faint)
 	fmt.Println()
 	titleWidth := s.itemTitleWidth()
 	for _, sec := range s.Sections {
-		fmt.Println(sec.Title)
+		tutorln(bold(sec.Title))
 		for _, it := range sec.Items {
-			fmt.Printf("  %-*s %s\n", titleWidth, it.Title, formatValue(it.Value))
+			tutorf("  %s %s\n", padRight(it.Title, titleWidth), formatValue(it.Value))
 		}
 		fmt.Println()
 	}
 	if len(s.NotCaptured) > 0 {
-		fmt.Println("Not captured (no data yet):")
+		tutorln(faint("Not captured (no data yet):"))
 		for _, o := range s.NotCaptured {
-			fmt.Printf("  %s\n", o.Title)
+			tutorln(faint("  " + o.Title))
 		}
 		fmt.Println()
 	}
@@ -261,8 +261,8 @@ func (s Snapshot) itemTitleWidth() int {
 	width := 0
 	for _, sec := range s.Sections {
 		for _, it := range sec.Items {
-			if len(it.Title) > width {
-				width = len(it.Title)
+			if w := visibleWidth(it.Title); w > width {
+				width = w
 			}
 		}
 	}

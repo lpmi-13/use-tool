@@ -266,12 +266,14 @@ func practiceDiagnose(s *Session) bool {
 	byResource := candidatesByResource(s.Investigation, snap)
 	resources := resourcesWithSignals(byResource)
 	if len(resources) == 0 {
-		fmt.Println("\nNo USE-relevant signals captured yet. Run some commands first")
-		fmt.Println("(try `commands` for the cheatsheet), then `diagnose` again.")
+		fmt.Println()
+		tutorln("No USE-relevant signals captured yet. Run some commands first")
+		tutorln("(try `commands` for the cheatsheet), then `diagnose` again.")
 		return false
 	}
 
-	fmt.Printf("\n=== Diagnose: %s ===\n", s.Investigation.Title)
+	fmt.Println()
+	tutorln(bold("Diagnose: " + s.Investigation.Title))
 	multiResource := len(resources) > 1
 
 	var grades []dimensionGrade
@@ -280,17 +282,19 @@ func practiceDiagnose(s *Session) bool {
 		// Per-resource header when iterating more than one; otherwise the
 		// session title alone is the header (preserves single-resource UX).
 		if multiResource {
-			fmt.Printf("\n--- %s ---\n", resource)
-			fmt.Printf("You've observed these %s signals this session:\n", resource)
+			fmt.Println()
+			tutorln(bold(resource))
+			tutorf("You've observed these %s signals this session:\n", resource)
 		} else {
-			fmt.Println("Signals you've observed this session:")
+			tutorln("Signals you've observed this session:")
 		}
 		for i, obs := range candidates {
-			fmt.Printf("  [%d] %s = %s\n", i+1, obs.Title, formatValue(snap.Values[obs.Name]))
+			printHanging(fmt.Sprintf("  [%d] ", i+1), obs.Title+" = "+formatValue(snap.Values[obs.Name]), nil)
 		}
 		if !multiResource {
-			fmt.Println("\nFor each USE dimension, give your verdict, then cite the evidence")
-			fmt.Println("that supports it (the bracketed numbers above, comma-separated; `none` if none).")
+			fmt.Println()
+			printProse("For each USE dimension, give your verdict, then cite the evidence\n"+
+				"that supports it (the bracketed numbers above, comma-separated; `none` if none).", nil)
 		}
 
 		// Look up the per-resource investigation so DiagnoseNotes fire only at
@@ -310,11 +314,12 @@ func practiceDiagnose(s *Session) bool {
 				// "not enough data" answer. Carry any DiagnoseNote forward
 				// (e.g. Network Utilization's inferrability caveat) so the
 				// learner still sees *why* the dimension is skipped.
-				skipMsg := fmt.Sprintf("\n%s — no captured signal, skipping.", labelFor(resource, dim, multiResource))
+				skipMsg := fmt.Sprintf("%s — no captured signal, skipping.", labelFor(resource, dim, multiResource))
 				if note := notesInv.DiagnoseNotes[dim]; note != "" {
 					skipMsg += " " + note
 				}
-				fmt.Println(skipMsg)
+				fmt.Println()
+				printProse(skipMsg, nil)
 				continue
 			}
 			claim, quit := askClaim(labelFor(resource, dim, multiResource), dim, notesInv.DiagnoseNotes[dim])
@@ -339,6 +344,7 @@ func practiceDiagnose(s *Session) bool {
 	}
 
 	printDiagnoseFeedback(grades, multiResource)
+	printDiagnoseSummary(s.Investigation, resources, grades)
 	return true
 }
 
@@ -423,21 +429,22 @@ func askClaim(label, dim, note string) (claim string, quit bool) {
 		return chosen, false
 	}
 	for {
-		fmt.Printf("\n%s — your verdict?\n", label)
+		fmt.Println()
+		tutorln(bold(label + " — your verdict?"))
 		if note != "" {
-			fmt.Printf("  Note: %s\n", note)
+			printHanging("  Note: ", note, nil)
 		}
 		for i, o := range opts {
-			fmt.Printf("  %d. %s\n", i+1, o)
+			tutorf("  %d. %s\n", i+1, o)
 		}
-		fmt.Print("Choice: ")
+		tutorf("Choice (1-%d, exit): ", len(opts))
 		line, ok := readLine()
 		if !ok || isExitCommand(line) {
 			return "", true
 		}
 		n, err := strconv.Atoi(strings.TrimSpace(line))
 		if err != nil || n < 1 || n > len(opts) {
-			fmt.Printf("Pick a number 1-%d.\n", len(opts))
+			tutorf("Choose 1-%d, or exit.\n", len(opts))
 			continue
 		}
 		chosen := opts[n-1]
@@ -459,7 +466,7 @@ func askEvidence(candidates []Observation, snap Snapshot) (names []string, quit 
 		return names, false
 	}
 	for {
-		fmt.Print("Evidence: ")
+		tutorf("Evidence (1-%d comma-separated, none, exit): ", len(candidates))
 		line, ok := readLine()
 		if !ok || isExitCommand(line) {
 			return nil, true
@@ -470,7 +477,7 @@ func askEvidence(candidates []Observation, snap Snapshot) (names []string, quit 
 		}
 		idxs, err := parseIndexList(line, len(candidates))
 		if err != nil {
-			fmt.Printf("Enter numbers 1-%d separated by commas, or `none`.\n", len(candidates))
+			tutorf("Choose numbers 1-%d separated by commas, none, or exit.\n", len(candidates))
 			continue
 		}
 		for _, i := range idxs {
@@ -639,65 +646,116 @@ func moveSelection(selected, count int, key terminalKey) int {
 
 func renderClaimSelector(label, note string, opts []string, selected int, showHelp bool) int {
 	width := selectorTerminalWidth()
-	lines := printSelectorLine(fmt.Sprintf("%s — your verdict?", label), width, true)
+	lines := printSelectorLine(bold(label+" — your verdict?"), width, true)
 	if note != "" {
 		lines += printSelectorLine("  Note: "+note, width, true)
 	}
 	for i, o := range opts {
-		cursor := " "
-		if i == selected {
-			cursor = ">"
-		}
-		lines += printSelectorLine(fmt.Sprintf("%s %d. %s", cursor, i+1, o), width, true)
+		lines += printSelectorLine(selectorRow(fmt.Sprintf("%d. %s", i+1, o), i == selected), width, true)
 	}
 	return lines + printSelectorHelp(claimSelectorHelp(len(opts), showHelp), width)
 }
 
+// selectorRow renders one selectable row: the highlighted row gets the >
+// cursor and reverse video, so it reads with colour off too.
+func selectorRow(text string, highlighted bool) string {
+	if highlighted {
+		return "> " + reverse(text)
+	}
+	return "  " + text
+}
+
 func renderEvidenceSelector(candidates []Observation, snap Snapshot, selected int, checked []bool, showHelp bool) int {
 	width := selectorTerminalWidth()
-	lines := printSelectorLine("Evidence — choose supporting signals", width, true)
+	lines := printSelectorLine(bold("Evidence — choose supporting signals"), width, true)
 	for i, obs := range candidates {
 		cursor := " "
 		if i == selected {
 			cursor = ">"
 		}
-		box := " "
+		box := "[ ]"
 		if i < len(checked) && checked[i] {
-			box = "x"
+			box = good("[✓]")
 		}
-		line := fmt.Sprintf("%s [%s] [%d] %s = %s", cursor, box, i+1, obs.Title, formatValue(snap.Values[obs.Name]))
+		label := fmt.Sprintf("[%d] %s", i+1, obs.Title)
+		if i == selected {
+			label = reverse(label)
+		}
+		line := fmt.Sprintf("%s %s %s = %s", cursor, box, label, faint(formatValue(snap.Values[obs.Name])))
 		lines += printSelectorLine(line, width, true)
 	}
 	return lines + printSelectorHelp(evidenceSelectorHelp(len(candidates), showHelp), width)
 }
 
+// helpKey is one entry in a selector's help: the key in normal weight and
+// what it does in faint.
+type helpKey struct {
+	Key, Desc string
+}
+
+// shortHelp renders the one-line help shown under a selector.
+func shortHelp(keys []helpKey) []string {
+	parts := make([]string, len(keys))
+	for i, k := range keys {
+		parts[i] = k.Key + " " + faint(k.Desc)
+	}
+	return []string{strings.Join(parts, " | ")}
+}
+
+// fullHelp renders the expanded help, one key per line with the
+// descriptions aligned.
+func fullHelp(keys []helpKey) []string {
+	width := 0
+	for _, k := range keys {
+		if w := visibleWidth(k.Key); w > width {
+			width = w
+		}
+	}
+	lines := []string{"Keys:"}
+	for _, k := range keys {
+		lines = append(lines, "  "+padRight(k.Key, width)+"  "+faint(k.Desc))
+	}
+	return lines
+}
+
 func claimSelectorHelp(optionCount int, showHelp bool) []string {
 	if !showHelp {
-		return []string{fmt.Sprintf("↑/k ↓/j move | 1-%d jump | Enter choose | q quit | ? help", optionCount)}
+		return shortHelp([]helpKey{
+			{"↑/k ↓/j", "move"},
+			{fmt.Sprintf("1-%d", optionCount), "jump"},
+			{"Enter", "choose"},
+			{"q", "quit"},
+			{"?", "help"},
+		})
 	}
-	return []string{
-		"Keys:",
-		"  ↑/k, ↓/j  move between verdicts",
-		fmt.Sprintf("  1-%d       jump to a verdict", optionCount),
-		"  Enter     choose the highlighted verdict",
-		"  q         quit diagnose",
-		"  ?         hide help",
-	}
+	return fullHelp([]helpKey{
+		{"↑/k, ↓/j", "move between verdicts"},
+		{fmt.Sprintf("1-%d", optionCount), "jump to a verdict"},
+		{"Enter", "choose the highlighted verdict"},
+		{"q", "quit diagnose"},
+		{"?", "hide help"},
+	})
 }
 
 func evidenceSelectorHelp(candidateCount int, showHelp bool) []string {
 	if !showHelp {
-		return []string{fmt.Sprintf("↑/k ↓/j move | Space/1-%d toggle | n clear | Enter submit | q quit | ? help", candidateCount)}
+		return shortHelp([]helpKey{
+			{"↑/k ↓/j", "move"},
+			{fmt.Sprintf("Space/1-%d", candidateCount), "toggle"},
+			{"n", "clear"},
+			{"Enter", "submit"},
+			{"q", "quit"},
+			{"?", "help"},
+		})
 	}
-	return []string{
-		"Keys:",
-		"  ↑/k, ↓/j  move between signals",
-		fmt.Sprintf("  Space     toggle highlighted signal; 1-%d toggles by number", candidateCount),
-		"  n         clear all selected signals",
-		"  Enter     submit selected signals; submit none selected for `none`",
-		"  q         quit diagnose",
-		"  ?         hide help",
-	}
+	return fullHelp([]helpKey{
+		{"↑/k, ↓/j", "move between signals"},
+		{"Space", fmt.Sprintf("toggle highlighted signal; 1-%d toggles by number", candidateCount)},
+		{"n", "clear all selected signals"},
+		{"Enter", "submit selected signals; submit none selected for `none`"},
+		{"q", "quit diagnose"},
+		{"?", "hide help"},
+	})
 }
 
 func printSelectorHelp(lines []string, width int) int {
@@ -708,7 +766,11 @@ func printSelectorHelp(lines []string, width int) int {
 	return rows
 }
 
+// printSelectorLine prints one selector line (on the rail when it is active)
+// and returns how many terminal rows it occupies, so the selector can be
+// cleared and redrawn in place.
 func printSelectorLine(line string, width int, newline bool) int {
+	line = gutterize(line)
 	if newline {
 		fmt.Println(line)
 	} else {
@@ -721,26 +783,11 @@ func visualLineRows(line string, width int) int {
 	if width <= 0 {
 		width = 80
 	}
-	cols := displayColumns(line)
+	cols := visibleWidth(line)
 	if cols == 0 {
 		return 1
 	}
 	return (cols + width - 1) / width
-}
-
-func displayColumns(s string) int {
-	cols := 0
-	for _, r := range s {
-		if r == '\t' {
-			cols += 4
-			continue
-		}
-		if r < 0x20 || r == 0x7f {
-			continue
-		}
-		cols++
-	}
-	return cols
 }
 
 func detectTerminalWidth() int {
@@ -786,13 +833,15 @@ func parseIndexList(s string, max int) ([]int, error) {
 }
 
 func printDiagnoseFeedback(grades []dimensionGrade, multiResource bool) {
-	fmt.Println("\n--- Diagnosis feedback ---")
+	fmt.Println()
+	tutorln(bold("Diagnosis feedback"))
 	var prevResource string
 	for _, g := range grades {
 		// In multi-resource mode, restart the section per resource so the
 		// learner sees a clear CPU / Memory / Disk / Network breakdown.
 		if multiResource && g.Resource != prevResource {
-			fmt.Printf("\n--- %s ---\n", g.Resource)
+			fmt.Println()
+			tutorln(bold(g.Resource))
 			prevResource = g.Resource
 		}
 		fmt.Println()
@@ -801,10 +850,10 @@ func printDiagnoseFeedback(grades []dimensionGrade, multiResource bool) {
 			header = g.Resource + " " + g.Dimension
 		}
 		if g.Claim == "" {
-			fmt.Println(header)
-			fmt.Println("  Verdict:    not enough data")
+			tutorln(bold(header))
+			tutorln("  Verdict:    not enough data")
 			fmt.Println()
-			fmt.Println("  Note:")
+			tutorln("  Note:")
 			if g.HasData {
 				printWrappedFeedback("    ", "Actually, you did capture a signal here. Re-run `report` and look again.")
 			} else {
@@ -813,33 +862,33 @@ func printDiagnoseFeedback(grades []dimensionGrade, multiResource bool) {
 			continue
 		}
 
-		fmt.Println(header)
-		fmt.Printf("  Verdict:    %s\n", g.Claim)
-		fmt.Printf("  Assessment: %s\n", g.assessment())
+		tutorln(bold(header))
+		tutorf("  Verdict:    %s\n", g.Claim)
+		printHanging("  Assessment: ", g.assessment(), assessmentStyle(g))
 		fmt.Println()
-		fmt.Println("  Evidence:")
+		tutorln("  Evidence:")
 		if len(g.Cited) == 0 {
-			fmt.Println("    (none cited)")
+			tutorln("    (none cited)")
 		}
 		for _, c := range g.Cited {
 			fmt.Println()
 			switch c.Verdict {
 			case citeSupports:
-				fmt.Printf("    ✓ %s\n", c.Title)
+				tutorf("    %s %s\n", good("✓"), c.Title)
 				printWrappedFeedback("      ", "Supports this verdict.")
 				printEvidenceValue(c)
 				printEvidenceHeuristic(c.Heuristic)
 			case citeContradicts:
-				fmt.Printf("    ✗ %s\n", c.Title)
+				tutorf("    %s %s\n", bad("✗"), c.Title)
 				printWrappedFeedback("      ", fmt.Sprintf("Reads %q, which points the other way.", labelForSignal(g.Dimension, c.Reads)))
 				printEvidenceValue(c)
 				printEvidenceHeuristic(c.Heuristic)
 			case citeWrongDimension:
-				fmt.Printf("    ✗ %s\n", c.Title)
+				tutorf("    %s %s\n", bad("✗"), c.Title)
 				printWrappedFeedback("      ", fmt.Sprintf("Wrong USE dimension: this is not a %s signal.", strings.ToLower(g.Dimension)))
 				printEvidenceValue(c)
 			case citeNoSignal:
-				fmt.Printf("    – %s\n", c.Title)
+				tutorf("    %s %s\n", warn("–"), c.Title)
 				printWrappedFeedback("      ", "Carries no diagnostic reading.")
 				printEvidenceValue(c)
 				if c.Heuristic != "" {
@@ -857,15 +906,112 @@ func printDiagnoseFeedback(grades []dimensionGrade, multiResource bool) {
 		}
 		if g.HasData && !g.Accurate {
 			fmt.Println()
-			fmt.Println("  Note:")
+			tutorln("  Note:")
 			printWrappedFeedback("    ", fmt.Sprintf("Strongest %s signal reads %q.", strings.ToLower(g.Dimension), labelForSignal(g.Dimension, g.DataReads)))
 		} else if !g.HasData {
 			fmt.Println()
-			fmt.Println("  Note:")
+			tutorln("  Note:")
 			printWrappedFeedback("    ", fmt.Sprintf("You claimed %q but captured no %s signal. This is closer to \"not enough data\".", g.Claim, strings.ToLower(g.Dimension)))
 		}
 	}
 	fmt.Println()
+}
+
+// assessmentStyle colours an assessment by how well the evidence holds up.
+// The words carry the meaning; the colour only reinforces it.
+func assessmentStyle(g dimensionGrade) func(string) string {
+	switch {
+	case g.SupportSources >= 2 && g.Contradicts == 0:
+		return good
+	case g.Supports >= 1:
+		return warn
+	default:
+		return bad
+	}
+}
+
+// printDiagnoseSummary ends diagnose with a resource × USE grid, like the
+// checklist table in Gregg's USE method write-ups: ✓ where the verdict
+// matched what the learner captured, ✗ where it didn't, and · where the
+// dimension wasn't assessed. A count and one suggestion follow.
+func printDiagnoseSummary(inv *Investigation, resources []string, grades []dimensionGrade) {
+	byCell := map[string]dimensionGrade{}
+	for _, g := range grades {
+		byCell[g.Resource+"/"+g.Dimension] = g
+	}
+	labelWidth := 0
+	for _, r := range resources {
+		if w := visibleWidth(r); w > labelWidth {
+			labelWidth = w
+		}
+	}
+
+	tutorln(bold("Summary"))
+	tutorln(padRight("", labelWidth) + "  U  S  E")
+	matched, assessed := 0, 0
+	for _, r := range resources {
+		row := padRight(r, labelWidth)
+		for _, dim := range useDimensions {
+			g, ok := byCell[r+"/"+dim]
+			switch {
+			case !ok:
+				row += "  " + faint("·")
+			case g.Accurate:
+				row += "  " + good("✓")
+				matched++
+				assessed++
+			default:
+				row += "  " + bad("✗")
+				assessed++
+			}
+		}
+		tutorln(row)
+	}
+	tutorln(faint("✓ matches your data  ✗ doesn't  · not assessed"))
+	fmt.Println()
+	if assessed > 0 {
+		tutorf("%d of %d verdict%s matched what you captured.\n", matched, assessed, plural(assessed))
+	}
+	printHanging("Next: ", diagnoseNextStep(inv, resources, grades, byCell), nil)
+	fmt.Println()
+}
+
+// diagnoseNextStep suggests one thing to try after diagnose, most useful
+// first: revisit a verdict that missed, firm up a thin one, fill a gap, then
+// widen the scope.
+func diagnoseNextStep(inv *Investigation, resources []string, grades []dimensionGrade, byCell map[string]dimensionGrade) string {
+	name := "<resource>"
+	if inv != nil {
+		name = inv.Name
+	}
+	multi := len(resources) > 1
+	for _, g := range grades {
+		if !g.Accurate {
+			return fmt.Sprintf("run `use-tool practice %s` again and look harder at %s before you commit to a verdict.",
+				name, labelFor(g.Resource, g.Dimension, multi))
+		}
+	}
+	for _, g := range grades {
+		if g.Claim != "" && g.SupportSources < 2 && len(g.NextCommands) > 0 {
+			return fmt.Sprintf("back up your %s verdict with a second signal, e.g. `%s`.",
+				labelFor(g.Resource, g.Dimension, multi), g.NextCommands[0].Cmd)
+		}
+	}
+	for _, r := range resources {
+		for _, dim := range useDimensions {
+			if _, ok := byCell[r+"/"+dim]; !ok {
+				label := strings.ToLower(dim)
+				if multi {
+					label = r + " " + label
+				}
+				return fmt.Sprintf("capture a %s signal next time; `commands` lists what shows it.", label)
+			}
+		}
+	}
+	if inv != nil && inv.Name != "system" {
+		return "try `use-tool practice system` to diagnose every resource at once."
+	}
+	return "run it again while the system is under load and see which verdicts change."
 }
 
 func printUncitedEvidenceHints(g dimensionGrade) bool {
@@ -879,9 +1025,9 @@ func printUncitedEvidenceHints(g dimensionGrade) bool {
 		return false
 	}
 	fmt.Println()
-	fmt.Println("  Other relevant evidence you captured:")
+	tutorln("  Other relevant evidence you captured:")
 	for _, c := range relevant {
-		fmt.Printf("    • %s\n", c.Title)
+		tutorf("    • %s\n", c.Title)
 		switch c.Verdict {
 		case citeSupports:
 			printWrappedFeedback("      ", fmt.Sprintf("Reads %q and would support this verdict.", labelForSignal(g.Dimension, c.Reads)))
@@ -894,9 +1040,9 @@ func printUncitedEvidenceHints(g dimensionGrade) bool {
 
 func printNextCommandHints(cmds []CommandRef) {
 	fmt.Println()
-	fmt.Println("  To gather more supporting evidence:")
+	tutorln("  To gather more supporting evidence:")
 	for _, c := range cmds {
-		fmt.Printf("    • %s\n", c.Cmd)
+		tutorf("    • %s\n", c.Cmd)
 		if summary := firstSummaryLine(c.Summary); summary != "" {
 			printWrappedFeedback("      ", summary)
 		}
@@ -1030,8 +1176,12 @@ func printEvidenceHeuristic(heuristic string) {
 }
 
 func printWrappedFeedback(indent, text string) {
-	for _, line := range wrapText(text, 86-len(indent)) {
-		fmt.Println(indent + line)
+	width := 86
+	if ui.rich {
+		width = proseWidth()
+	}
+	for _, line := range wrapText(text, width-len(indent)) {
+		tutorln(indent + line)
 	}
 }
 
@@ -1046,7 +1196,7 @@ func wrapText(text string, width int) []string {
 	var lines []string
 	line := words[0]
 	for _, word := range words[1:] {
-		if len(line)+1+len(word) > width {
+		if visibleWidth(line)+1+visibleWidth(word) > width {
 			lines = append(lines, line)
 			line = word
 			continue

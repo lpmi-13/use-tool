@@ -19,23 +19,40 @@ func cmdPractice(args []string) {
 		os.Exit(1)
 	}
 	requireInteractive("practice")
+	enableGutter()
 	si := detectSystem()
 	s := &Session{Investigation: inv, System: si}
 
-	fmt.Printf("\n=== %s — practice mode ===\n", inv.Title)
-	fmt.Println(inv.Description)
-	fmt.Printf("\nDetected system: %d logical CPU%s.\n", si.NumCPU, plural(si.NumCPU))
-	fmt.Println("Shell commands run on this live system.")
-	fmt.Println("Builtins: `report` (snapshot of what you've gathered), `commands` (cheatsheet),")
-	fmt.Println("          `diagnose` (check the system's USE state from what you saw), `help`, `exit`.")
+	setWindowTitle(fmt.Sprintf("%s: practice %s", appName, inv.Name))
+	fmt.Println()
+	tutorln(bold(inv.Title + " — practice mode"))
+	printProse(inv.Description, nil)
+	tutorf("Detected system: %d logical CPU%s.\n", si.NumCPU, plural(si.NumCPU))
+	fmt.Println()
+	tutorln("Shell commands run on this live system.")
+	printPracticeHelp()
 	fmt.Println()
 
 	practiceLoop(s)
+	restoreWindowTitle()
+}
+
+func printPracticeHelp() {
+	tutorln("Builtins:")
+	for _, b := range []helpKey{
+		{"report", "snapshot of what you've gathered"},
+		{"commands", "cheatsheet of relevant commands"},
+		{"diagnose", "check the system's USE state from what you saw"},
+		{"help", "show this list"},
+		{"exit", "quit"},
+	} {
+		tutorln("  " + padRight(b.Key, 9) + faint(b.Desc))
+	}
 }
 
 func practiceLoop(s *Session) {
 	for {
-		line, status := readPrompt("[practice] $ ")
+		line, status := readPrompt(accent("[practice]") + " $ ")
 		if status != lineReadOK {
 			return
 		}
@@ -52,7 +69,8 @@ func practiceLoop(s *Session) {
 		case "exit", "quit":
 			return
 		case "help":
-			fmt.Println("Run any shell command on this live system. Builtins: report, commands, diagnose, help, exit.")
+			tutorln("Run any shell command on this live system.")
+			printPracticeHelp()
 		case "report":
 			s.Snapshot().Print()
 		case "commands":

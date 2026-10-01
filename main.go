@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -28,6 +29,10 @@ const (
 	maxCapturedItems            = 100     // per-session command-history cap
 	maxCapturedWarningRemaining = maxCapturedItems / 10
 )
+
+// slowCommandThreshold is how long a successful command may run before its
+// duration is worth mentioning after the output.
+const slowCommandThreshold = 10 * time.Second
 
 // The timeout is a last-resort safety cap, not the normal way to stop a
 // command. It leaves room for a password prompt and user-chosen samplers;
@@ -72,7 +77,7 @@ const (
 func main() {
 	exitOnSigint()
 
-	args := os.Args[1:]
+	args := configureUI(os.Args[1:])
 	if len(args) == 0 {
 		cmd, err := chooseSubcommand()
 		if err != nil {
@@ -132,6 +137,10 @@ Usage:
   use-tool version              Print version
   use-tool help                 This message
 
+Options:
+  --no-color                    Turn off colour (also NO_COLOR=1 or USE_TOOL_COLOR=never;
+                                USE_TOOL_COLOR=always forces it on)
+
 Available resources: %s
 `, appName, currentVersion(), strings.Join(resourceNames(), ", "))
 	os.Exit(code)
@@ -176,6 +185,10 @@ type Session struct {
 	// guideAnswerPositions keeps consecutive checks from placing the correct
 	// answer in the same numbered slot more than twice in a row.
 	guideAnswerPositions answerPositionHistory
+	// guideStep and guideTotal are the walkthrough position shown in the
+	// prompt; guideStepSkipped records whether the current step was skipped.
+	guideStep, guideTotal int
+	guideStepSkipped      bool
 	// kernelLogBlocks counts how many times this session has seen a
 	// permission-blocked dmesg or journalctl call. After the second strike
 	// we emit a one-shot note that the host is hiding kernel logs across
@@ -244,11 +257,11 @@ func runCommand(cmdStr string) CapturedCommand {
 // Stderr always streams to os.Stderr so genuine errors surface immediately.
 func runCommandStreaming(cmdStr string, liveOut io.Writer) CapturedCommand {
 	if reason, ok := commandPreflightFailure(cmdStr); ok {
-		fmt.Fprintf(os.Stderr, "[command not run: %s]\n", reason)
+		noteLine(os.Stderr, "command not run: "+reason)
 		return CapturedCommand{Cmd: cmdStr, Failed: true, ExitCode: -1}
 	}
 
-	timeout := commandTimeoutDuration()
+	timeout := commandTimeoutFor(cmdStr, commandTimeoutDuration())
 	ctx := context.Background()
 	var cancel context.CancelFunc
 	if timeout > 0 {
@@ -285,6 +298,8 @@ func runCommandStreaming(cmdStr string, liveOut io.Writer) CapturedCommand {
 	exitCode := 0
 	releaseSigint := suppressSigintExit()
 	defer releaseSigint()
+	started := time.Now()
+	forwardedInterrupt := false
 	err := cmd.Start()
 	if err == nil {
 		pgid := cmd.Process.Pid
@@ -299,6 +314,7 @@ func runCommandStreaming(cmdStr string, liveOut io.Writer) CapturedCommand {
 		close(commandDone)
 		restoreErr := restoreTerminal()
 
+		forwardedInterrupt = activeCommandInterrupts.Load() > 0
 		activeCommandPGID.Store(0)
 		activeCommandInterrupts.Store(0)
 		switch {
@@ -315,24 +331,42 @@ func runCommandStreaming(cmdStr string, liveOut io.Writer) CapturedCommand {
 		if buf.Len() > 0 && !bytes.HasSuffix(buf.Bytes(), []byte("\n")) {
 			fmt.Fprintln(os.Stderr)
 		}
-		if ctx.Err() == context.DeadlineExceeded {
+		// A sampler stopped by the timeout or by Ctrl-C has still printed real
+		// samples. Keep them as a normal capture rather than discarding them.
+		timedOut := ctx.Err() == context.DeadlineExceeded
+		interrupted := !timedOut && stoppedByInterrupt(err, forwardedInterrupt)
+		if timedOut || interrupted {
 			exitCode = -1
-			fmt.Fprintf(os.Stderr, "[command timed out after %s]\n", timeout)
-			return CapturedCommand{Cmd: cmdStr, Output: buf.String(), Failed: failed, ExitCode: exitCode}
+			how := "with Ctrl-C"
+			if timedOut {
+				how = fmt.Sprintf("after %s", timeout)
+			}
+			if strings.TrimSpace(buf.String()) == "" {
+				noteLine(os.Stderr, "stopped "+how+"; no output")
+				return CapturedCommand{Cmd: cmdStr, Output: buf.String(), Failed: true, ExitCode: exitCode}
+			}
+			note := "stopped " + how + "; output kept"
+			if timedOut {
+				note += " (USE_TOOL_COMMAND_TIMEOUT sets the limit)"
+			}
+			noteLine(os.Stderr, note)
+			return CapturedCommand{Cmd: cmdStr, Output: buf.String(), ExitCode: exitCode}
 		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() >= 0 {
 			exitCode = exitErr.ExitCode()
 			if isNoMatchGrepExit(cmdStr, exitCode, buf.String()) {
 				failed = false
-				fmt.Fprintln(os.Stderr, "[no matching lines]")
+				noteLine(os.Stderr, "no matching lines")
 			} else {
-				fmt.Fprintf(os.Stderr, "[command exited with status %d]\n", exitCode)
+				noteLine(os.Stderr, fmt.Sprintf("exit %d, %s", exitCode, formatElapsed(time.Since(started))))
 			}
 		} else {
 			exitCode = -1
-			fmt.Fprintf(os.Stderr, "[command failed: %v]\n", err)
+			noteLine(os.Stderr, fmt.Sprintf("command failed: %v", err))
 		}
+	} else if elapsed := time.Since(started); elapsed >= slowCommandThreshold {
+		noteLine(os.Stderr, fmt.Sprintf("exit 0, %s", formatElapsed(elapsed)))
 	}
 	if isDmesgPermissionFailure(buf.String()) {
 		if !failed {
@@ -342,7 +376,7 @@ func runCommandStreaming(cmdStr string, liveOut io.Writer) CapturedCommand {
 		if buf.Len() > 0 && !bytes.HasSuffix(buf.Bytes(), []byte("\n")) {
 			fmt.Fprintln(os.Stderr)
 		}
-		fmt.Fprintf(os.Stderr, "[command failed: %s]\n", dmesgPermissionFailureMessage(haveCmd("journalctl")))
+		noteLine(os.Stderr, "command failed: "+dmesgPermissionFailureMessage(haveCmd("journalctl")))
 	}
 	if isJournalctlFailure(cmdStr, buf.String()) {
 		if !failed {
@@ -352,9 +386,82 @@ func runCommandStreaming(cmdStr string, liveOut io.Writer) CapturedCommand {
 		if buf.Len() > 0 && !bytes.HasSuffix(buf.Bytes(), []byte("\n")) {
 			fmt.Fprintln(os.Stderr)
 		}
-		fmt.Fprintln(os.Stderr, "[command failed: journalctl could not read the kernel log; try dmesg or sudo dmesg]")
+		noteLine(os.Stderr, "command failed: journalctl could not read the kernel log; try dmesg or sudo dmesg")
 	}
 	return CapturedCommand{Cmd: cmdStr, Output: buf.String(), Failed: failed, ExitCode: exitCode}
+}
+
+// stoppedByInterrupt reports whether a command ended because the user
+// pressed Ctrl-C: it was killed by SIGINT, its shell reported 130
+// (128+SIGINT), or use-tool forwarded the interrupt to it.
+func stoppedByInterrupt(err error, forwarded bool) bool {
+	if forwarded {
+		return true
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return false
+	}
+	if exitErr.ExitCode() == 130 {
+		return true
+	}
+	status, ok := exitErr.Sys().(syscall.WaitStatus)
+	return ok && status.Signaled() && status.Signal() == syscall.SIGINT
+}
+
+// samplerCommands take trailing "interval [count]" arguments.
+var samplerCommands = map[string]bool{
+	"vmstat": true, "mpstat": true, "iostat": true, "sar": true, "pidstat": true,
+}
+
+// samplerDuration estimates how long a sampling command such as
+// `vmstat 5 20` or `sar -n DEV 1 3` runs: interval × count. It reports false
+// for other commands and for samplers without a count, which run until
+// stopped.
+func samplerDuration(cmdStr string) (time.Duration, bool) {
+	fields := commandFields(cmdStr)
+	if len(fields) == 0 || !samplerCommands[commandName(fields[0])] {
+		return 0, false
+	}
+	// The trailing run of numbers holds interval and count, possibly after
+	// a numeric option value like `pidstat -p 1234 1 5` or `mpstat -P 0 1 3`.
+	start := len(fields)
+	for start > 1 && isGuideSamplingNumber(fields[start-1]) {
+		start--
+	}
+	numbers := fields[start:]
+	if prev := fields[start-1]; (prev == "-p" || prev == "-P") && len(numbers) > 0 {
+		numbers = numbers[1:]
+	}
+	if len(numbers) < 2 {
+		return 0, false
+	}
+	interval, err1 := strconv.ParseFloat(numbers[len(numbers)-2], 64)
+	count, err2 := strconv.ParseFloat(numbers[len(numbers)-1], 64)
+	if err1 != nil || err2 != nil || interval <= 0 || count <= 0 {
+		return 0, false
+	}
+	return time.Duration(interval * count * float64(time.Second)), true
+}
+
+// samplerTimeoutMargin is the slack added to a sampler's own run time.
+const samplerTimeoutMargin = 30 * time.Second
+
+// commandTimeoutFor extends the safety timeout for a sampler that asked to
+// run longer than it, so `vmstat 5 20` is not cut off at the default cap.
+// A disabled timeout (0) stays disabled.
+func commandTimeoutFor(cmdStr string, timeout time.Duration) time.Duration {
+	if timeout <= 0 {
+		return timeout
+	}
+	if d, ok := samplerDuration(cmdStr); ok && d+samplerTimeoutMargin > timeout {
+		return d + samplerTimeoutMargin
+	}
+	return timeout
+}
+
+func formatElapsed(d time.Duration) string {
+	return fmt.Sprintf("%.1fs", d.Seconds())
 }
 
 // giveTerminalToCommand makes the command's process group the foreground owner
@@ -656,10 +763,7 @@ func (s *Session) runAndCaptureFiltered(cmdStr string, filter func(CapturedComma
 			s.kernelLogBlocks++
 			if s.kernelLogBlocks >= 2 && !s.kernelLogBlockNoted {
 				s.kernelLogBlockNoted = true
-				fmt.Fprintln(os.Stderr, "[note: both dmesg and journalctl -k are blocked for this user on this host")
-				fmt.Fprintln(os.Stderr, "       (usually kernel.dmesg_restrict=1). The 'Errors' leg of USE")
-				fmt.Fprintln(os.Stderr, "       can't be checked without permissions here — `skip` and move on,")
-				fmt.Fprintln(os.Stderr, "       or run it again with sudo if you need the kernel log.]")
+				printKernelLogBlockedNote()
 			}
 		}
 		return c
@@ -674,6 +778,24 @@ func (s *Session) runAndCaptureFiltered(cmdStr string, filter func(CapturedComma
 	s.appendCaptured(c)
 	return c
 }
+
+func printKernelLogBlockedNote() {
+	if ui.gutter {
+		fmt.Fprintln(os.Stderr)
+		for _, line := range reflowProse(kernelLogBlockedNote, proseWidth()) {
+			fmt.Fprintln(os.Stderr, gutterPrefix()+line)
+		}
+		return
+	}
+	fmt.Fprintln(os.Stderr, "[note: both dmesg and journalctl -k are blocked for this user on this host")
+	fmt.Fprintln(os.Stderr, "       (usually kernel.dmesg_restrict=1). The 'Errors' leg of USE")
+	fmt.Fprintln(os.Stderr, "       can't be checked without permissions here — `skip` and move on,")
+	fmt.Fprintln(os.Stderr, "       or run it again with sudo if you need the kernel log.]")
+}
+
+const kernelLogBlockedNote = "Note: both dmesg and journalctl -k are blocked for this user on this host " +
+	"(usually kernel.dmesg_restrict=1). The 'Errors' leg of USE can't be checked without " +
+	"permissions here — `skip` and move on, or run it again with sudo if you need the kernel log."
 
 func isDmesgPermissionFailure(output string) bool {
 	low := strings.ToLower(output)
@@ -750,7 +872,7 @@ func (s *Session) appendCaptured(c CapturedCommand) {
 	if len(s.Captured) >= maxCapturedItems {
 		dropped := s.Captured[0].Cmd
 		s.Captured = append(s.Captured[:0], s.Captured[1:]...)
-		fmt.Fprintf(os.Stderr, "(history cap reached; dropped oldest: %q)\n", dropped)
+		fmt.Fprint(os.Stderr, gutterize(faint(fmt.Sprintf("(history cap reached; dropped oldest: %q)", dropped))+"\n"))
 	}
 	s.Captured = append(s.Captured, c)
 	s.warnCapturedNearLimit()
@@ -765,7 +887,7 @@ func (s *Session) warnCapturedNearLimit() {
 		return
 	}
 	s.historyCapWarned = true
-	fmt.Fprintf(os.Stderr, "(report evidence warning: %d/%d command slots used; report findings are derived from this history, and older evidence will be dropped when the cap is exceeded.)\n", len(s.Captured), maxCapturedItems)
+	fmt.Fprint(os.Stderr, gutterize(fmt.Sprintf("(report evidence warning: %d/%d command slots used; report findings are derived from this history, and older evidence will be dropped when the cap is exceeded.)\n", len(s.Captured), maxCapturedItems)))
 }
 
 func confirmShellCommand(cmdStr string) bool {
@@ -773,11 +895,16 @@ func confirmShellCommand(cmdStr string) bool {
 	if !ok {
 		return true
 	}
-	fmt.Fprintf(os.Stderr, "[warning: %s]\n", reason)
-	fmt.Fprint(os.Stderr, "Type `run` to execute anyway: ")
+	if ui.gutter {
+		fmt.Fprint(os.Stderr, gutterize(warn("Warning:")+" "+reason+"\n"))
+		fmt.Fprint(os.Stderr, gutterize("Type `run` to execute anyway, or anything else to cancel: "))
+	} else {
+		fmt.Fprintf(os.Stderr, "[warning: %s]\n", reason)
+		fmt.Fprint(os.Stderr, "Type `run` to execute anyway: ")
+	}
 	line, ok := readLine()
 	if !ok || strings.TrimSpace(line) != "run" {
-		fmt.Fprintln(os.Stderr, "(command cancelled)")
+		fmt.Fprint(os.Stderr, gutterize("(command cancelled)\n"))
 		return false
 	}
 	return true
@@ -1120,6 +1247,7 @@ func exitOnSigint() {
 				}
 				continue
 			}
+			restoreWindowTitle()
 			fmt.Fprintln(os.Stderr, "\nInterrupted. Exiting.")
 			os.Exit(130)
 		}
@@ -1147,14 +1275,7 @@ func requireInteractive(mode string) {
 }
 
 func stdinIsTerminal() bool {
-	var termios syscall.Termios
-	_, _, errno := syscall.Syscall(
-		syscall.SYS_IOCTL,
-		os.Stdin.Fd(),
-		uintptr(syscall.TCGETS),
-		uintptr(unsafe.Pointer(&termios)),
-	)
-	return errno == 0
+	return isTerminal(os.Stdin)
 }
 
 func plural(n int) string {

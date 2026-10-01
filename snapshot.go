@@ -228,6 +228,12 @@ func commandContributesObservation(inv *Investigation, si SystemInfo, c Captured
 
 func (s Snapshot) Print() {
 	fmt.Println()
+	s.PrintBody()
+}
+
+// PrintBody prints the snapshot without a leading blank line, for callers
+// that put a heading directly above it.
+func (s Snapshot) PrintBody() {
 	tutorln(faint(strings.Repeat("=", 60)))
 	if len(s.Sources) == 0 {
 		if s.CapturedCount == 0 {

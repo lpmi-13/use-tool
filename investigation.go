@@ -334,7 +334,9 @@ func askQuestionWithFocus(q Question, run questionCommandRunner, history *answer
 			return QuestionResult{Quit: true}
 		}
 		if strings.TrimSpace(line) == "skip" {
+			fmt.Println()
 			tutorln(faint("– Skipped."))
+			endFeedback()
 			return QuestionResult{Skipped: true}
 		}
 		if cmd, ok := stripCopiedShellPrompt(line); ok {
@@ -373,6 +375,7 @@ func askQuestionWithFocus(q Question, run questionCommandRunner, history *answer
 		fmt.Println()
 		if chosen == q.Correct {
 			tutorln(good("✓") + " Correct.")
+			endFeedback()
 			return QuestionResult{Correct: true}
 		}
 		answer := q.Correct
@@ -383,8 +386,17 @@ func askQuestionWithFocus(q Question, run questionCommandRunner, history *answer
 			styledText{Text: "Not quite. The answer is"},
 			styledText{Text: answer, Style: bold},
 		)
+		endFeedback()
 		return QuestionResult{}
 	}
+}
+
+// endFeedback follows a check's feedback with a blank line. Whatever comes
+// next opens with its own blank line, so the feedback sits one line below the
+// answer it grades and two lines above the next block, which groups it with
+// the answer at a glance.
+func endFeedback() {
+	fmt.Println()
 }
 
 // printQuestion shows a check: the stem in bold, optional focus lines, and the

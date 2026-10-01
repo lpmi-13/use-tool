@@ -315,7 +315,7 @@ func TestGuideStepHeaderUsesTitleAndProgress(t *testing.T) {
 	out := captureStdout(func() {
 		printGuideStepHeader(3, 7, GuideStep{Name: "runqueue", Title: "Run queue", Intro: "Intro.", Suggested: "vmstat 1 5"}, "Saturation ●")
 	})
-	if want := "\nStep 3/7  Run queue\nSaturation ●\nIntro.\nSuggested: vmstat 1 5\n"; out != want {
+	if want := "\n\nStep 3/7  Run queue\nSaturation ●\nIntro.\n\nSuggested: vmstat 1 5\n\n"; out != want {
 		t.Fatalf("header = %q, want %q", out, want)
 	}
 }

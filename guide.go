@@ -204,9 +204,12 @@ func finishGuide(s *Session, score, total int) {
 		return
 	}
 
+	// Two blank lines open the snapshot as a new section, like a step header,
+	// and the heading sits directly on the body it names.
+	fmt.Print("\n\n")
 	tutorln(bold("Snapshot of what you observed"))
 	snap := s.Snapshot()
-	snap.Print()
+	snap.PrintBody()
 	printSynopsis(s.Investigation, s.System, snap)
 
 	tutorln(bold("Walkthrough complete"))
@@ -228,18 +231,24 @@ func printGuideStepHeader(n, total int, step GuideStep, progress string) {
 	if title == "" {
 		title = step.Name
 	}
-	fmt.Println()
+	// Two blank lines, against one inside a step, mark where a step begins.
+	fmt.Print("\n\n")
 	tutorln(bold(fmt.Sprintf("Step %d/%d  %s", n, total, title)))
 	if progress != "" {
 		tutorln(progress)
 	}
 	if step.Intro != "" {
 		printProse(step.Intro, nil)
+		// Set the commands apart from the intro so they read as what to do
+		// next rather than the end of the explanation.
+		railBreak()
 	}
 	tutorf("Suggested: %s\n", step.Suggested)
 	for _, alt := range step.Alternatives {
 		tutorln(faint("Alternative: " + alt))
 	}
+	// Leave the prompt off the rail so it reads as the learner's turn.
+	fmt.Println()
 }
 
 // guidePrompt is the shell prompt for the walkthrough, showing the position
@@ -382,6 +391,7 @@ func guideStepCommand(s *Session, step GuideStep) *CapturedCommand {
 		}
 		if isLikelyChoiceAnswer(line) {
 			printProse(fmt.Sprintf("(`%s` looks like an answer, but this is the shell prompt; the `Choice` prompt comes after a command runs. Run a command (try `%s`), or type `skip`.)", line, step.Suggested), nil)
+			fmt.Println()
 			continue
 		}
 		if !confirmShellCommand(line) {
@@ -390,6 +400,7 @@ func guideStepCommand(s *Session, step GuideStep) *CapturedCommand {
 		c := s.runAndCaptureFiltered(line, step.Filter)
 		if c.Failed {
 			tutorln("(Command failed; fix it and try again, or `skip`.)")
+			fmt.Println()
 			continue
 		}
 		if step.Filter == nil && c.Output != "" && !strings.HasSuffix(c.Output, "\n") {
@@ -436,7 +447,9 @@ func printUnrecognizedGuideOutput(c CapturedCommand, step GuideStep) {
 		fmt.Print("\n\n")
 	}
 	printProse(fmt.Sprintf("(That command didn't produce output this step recognizes — try `%s`, or `skip`.)", step.Suggested), nil)
-	fmt.Println()
+	// One blank line above and two below group the hint with the output it
+	// is about rather than with the next prompt.
+	fmt.Print("\n\n")
 }
 
 // columnFocusLines points at the table column a check asks about by repeating

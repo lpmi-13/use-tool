@@ -637,6 +637,28 @@ func TestAskQuestionRunsPromptCommandThenAcceptsAnswer(t *testing.T) {
 	}
 }
 
+func TestAskQuestionFeedbackGroupsWithAnswer(t *testing.T) {
+	withUI(t, uiConfig{}, 80)
+	oldStdin := stdin
+	defer func() { stdin = oldStdin }()
+	for _, tc := range []struct{ input, feedback string }{
+		{"1\n", "✓ Correct."},
+		{"skip\n", "– Skipped."},
+	} {
+		stdin = bufio.NewReader(strings.NewReader(tc.input))
+		out := captureStdout(func() {
+			askQuestion(Question{Stem: "Which answer?", Correct: "the only option"})
+		})
+		// Piped input isn't echoed; on a terminal the learner's Enter ends the
+		// prompt line and the newline after it is the blank line above the
+		// feedback. The trailing blank line plus the next block's own puts two
+		// below it, grouping the feedback with the answer it grades.
+		if !strings.HasSuffix(out, "): \n"+tc.feedback+"\n\n") {
+			t.Fatalf("answer %q: output = %q, want feedback %q set off by one blank line above and a trailing blank line", tc.input, out, tc.feedback)
+		}
+	}
+}
+
 func TestRunAndCaptureSkipsFailedCommand(t *testing.T) {
 	s := &Session{}
 	c := s.runAndCapture("echo 'unterminated")
@@ -889,8 +911,8 @@ func TestGuideStepCommandSeparatesUnrecognizedFeedbackFromOutput(t *testing.T) {
 				t.Fatalf("expected a blank line before unrecognized-output feedback:\n%s", out)
 			}
 			feedback := "(That command didn't produce output this step recognizes — try `echo expected`, or `skip`.)"
-			if !strings.Contains(out, feedback+"\n\n[guide] $ ") {
-				t.Fatalf("expected a blank line between unrecognized-output feedback and the next prompt:\n%s", out)
+			if !strings.Contains(out, feedback+"\n\n\n[guide] $ ") {
+				t.Fatalf("expected two blank lines between unrecognized-output feedback and the next prompt:\n%s", out)
 			}
 		})
 	}

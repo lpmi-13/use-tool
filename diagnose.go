@@ -840,11 +840,13 @@ func printDiagnoseFeedback(grades []dimensionGrade, multiResource bool) {
 		// In multi-resource mode, restart the section per resource so the
 		// learner sees a clear CPU / Memory / Disk / Network breakdown.
 		if multiResource && g.Resource != prevResource {
-			fmt.Println()
+			fmt.Print("\n\n")
 			tutorln(bold(g.Resource))
 			prevResource = g.Resource
 		}
-		fmt.Println()
+		// Each dimension block has single blank lines inside it, so two
+		// between blocks keep their notes visibly with the block above.
+		fmt.Print("\n\n")
 		header := g.Dimension
 		if multiResource {
 			header = g.Resource + " " + g.Dimension

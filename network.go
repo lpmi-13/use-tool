@@ -352,6 +352,7 @@ func networkTCPVariants() []stepVariant {
 				"vs `segments sent out` (the retransmit ratio) and TcpExt entries like\n" +
 				"`times the listen queue of a socket overflowed` (the listen-overflow\n" +
 				"count). All of these are running totals since boot.",
+			Available: func(SystemInfo) bool { return haveCmd("netstat") },
 		},
 	}
 }
@@ -1929,9 +1930,10 @@ var networkCommands = []CommandRef{
 		DiagnoseRank: 1,
 	},
 	{
-		Cmd:     "ethtool eth0",
-		Section: "Utilization",
-		Summary: "Link speed/duplex for an interface.\nNeeded to convert sar's kB/s into a percent of capacity.\nReports 'Speed: Unknown!' on many virtual interfaces.",
+		Cmd:      "ethtool eth0",
+		Section:  "Utilization",
+		Summary:  "Link speed/duplex for an interface.\nNeeded to convert sar's kB/s into a percent of capacity.\nReports 'Speed: Unknown!' on many virtual interfaces.",
+		Requires: []string{"ethtool"},
 	},
 	{
 		Cmd:     "ss -s",
@@ -1957,9 +1959,10 @@ var networkCommands = []CommandRef{
 		Summary: "TCP listen sockets with Recv-Q (current queue) vs Send-Q (max backlog).\nRecv-Q approaching Send-Q is the live signal that ListenOverflows is climbing.",
 	},
 	{
-		Cmd:     "netstat -s",
-		Section: "Saturation",
-		Summary: "Human-readable summary of /proc/net/snmp + /proc/net/netstat.\nFound almost everywhere but being phased out in favour of `ss`.\nCounters are running totals since boot; compare two readings for a rate.",
+		Cmd:      "netstat -s",
+		Section:  "Saturation",
+		Summary:  "Human-readable summary of /proc/net/snmp + /proc/net/netstat.\nFound almost everywhere but being phased out in favour of `ss`.\nCounters are running totals since boot; compare two readings for a rate.",
+		Requires: []string{"netstat"},
 	},
 	{
 		Cmd:     "cat /proc/net/dev",

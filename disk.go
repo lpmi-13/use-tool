@@ -1076,14 +1076,16 @@ var diskCommands = []CommandRef{
 		DiagnoseRank: 2,
 	},
 	{
-		Cmd:     "pidstat -d 1 N",
-		Section: "Saturation",
-		Summary: "Per-process I/O rates over N intervals.\nFinds the process responsible for device load. (sysstat package.)\nNote: shows host PID namespace. I/O from processes inside Docker/\ncontainerd containers (separate PID namespace) appears under the\ncontainer's runtime or not at all; switch to `docker stats` to see\nwhich service, or `nsenter` into the container's PID ns.",
+		Cmd:      "pidstat -d 1 N",
+		Section:  "Saturation",
+		Summary:  "Per-process I/O rates over N intervals.\nFinds the process responsible for device load. (sysstat package.)\nNote: shows host PID namespace. I/O from processes inside Docker/\ncontainerd containers (separate PID namespace) appears under the\ncontainer's runtime or not at all; switch to `docker stats` to see\nwhich service, or `nsenter` into the container's PID ns.",
+		Requires: []string{"pidstat"},
 	},
 	{
-		Cmd:     "iotop -bn1",
-		Section: "Saturation",
-		Summary: "Friendlier per-process I/O snapshot.\nBatch mode (-b -n1) avoids needing a TTY. (iotop package.)",
+		Cmd:      "iotop -bn1",
+		Section:  "Saturation",
+		Summary:  "Friendlier per-process I/O snapshot.\nBatch mode (-b -n1) avoids needing a TTY. (iotop package.)",
+		Requires: []string{"iotop"},
 	},
 	{
 		Cmd:          "sudo dmesg -T | grep -iE '" + diskKernelLogErrorGrep + "'",
@@ -1100,9 +1102,10 @@ var diskCommands = []CommandRef{
 		DiagnoseRank:        2,
 	},
 	{
-		Cmd:     "smartctl -a /dev/sda",
-		Section: "Errors",
-		Summary: "SMART self-assessment for a device.\nVendor-specific output; read the OVERALL-HEALTH line and the\nReallocated_Sector_Ct / Pending_Sector counters. (smartmontools package.)",
+		Cmd:      "smartctl -a /dev/sda",
+		Section:  "Errors",
+		Summary:  "SMART self-assessment for a device.\nVendor-specific output; read the OVERALL-HEALTH line and the\nReallocated_Sector_Ct / Pending_Sector counters. (smartmontools package.)",
+		Requires: []string{"smartctl"},
 	},
 	{
 		Cmd:     "cat /proc/diskstats",

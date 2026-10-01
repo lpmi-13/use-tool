@@ -1219,11 +1219,6 @@ var cpuCommands = []CommandRef{
 		DiagnoseRank: 2,
 	},
 	{
-		Cmd:     "top -bcn1 w512",
-		Section: "Utilization",
-		Summary: "One-shot batch snapshot of processes sorted by CPU.\nBatch mode (-b -n1) avoids needing a TTY; -c shows the full\ncommand line and `w 512` widens output so the COMMAND column\nisn't truncated (e.g. `stress-+`).",
-	},
-	{
 		Cmd:      "pidstat 1 N",
 		Section:  "Utilization",
 		Summary:  "Per-process CPU usage over N intervals.\nFinds which process is using time. (sysstat package.)\nNote: shows host PID namespace. Processes inside Docker/containerd\ncontainers appear as their runtime (`runc`, `containerd-shim`) or\nare absent; switch to `docker stats` to see which service.",

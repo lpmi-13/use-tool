@@ -96,14 +96,14 @@ func TestSnapshotSourcesExcludeCommandsUnrelatedToInvestigation(t *testing.T) {
 
 func TestSnapshotSourcesIncludeCuratedCommandWithoutObservation(t *testing.T) {
 	caps := []CapturedCommand{{
-		Cmd:    "top -bcn1 w512",
-		Output: "PID USER PR NI VIRT RES SHR S %CPU %MEM TIME+ COMMAND\n123 root 20 0 1g 1m 1m R 99.0 0.1 0:01.00 worker\n",
+		Cmd:    "ps -eo pid,pcpu,comm --sort=-pcpu | head",
+		Output: "    PID %CPU COMMAND\n    123 99.0 worker\n",
 	}}
 	s := &Session{Investigation: cpuInvestigation, System: SystemInfo{}, Captured: caps}
 	snap := s.Snapshot()
 
-	if len(snap.Sources) != 1 || snap.Sources[0] != "top -bcn1 w512" {
-		t.Fatalf("sources = %v, want top command", snap.Sources)
+	if len(snap.Sources) != 1 || snap.Sources[0] != "ps -eo pid,pcpu,comm --sort=-pcpu | head" {
+		t.Fatalf("sources = %v, want ps command", snap.Sources)
 	}
 }
 

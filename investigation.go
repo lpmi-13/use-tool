@@ -148,7 +148,7 @@ type CommandRef struct {
 	DiagnoseRank        int
 }
 
-const dmesgPermissionNote = "Direct dmesg access reads the kernel buffer; on systems with kernel.dmesg_restrict=1, use sudo."
+const dmesgPermissionNote = "You will probably need sudo: most distros block unprivileged reads of the kernel buffer (kernel.dmesg_restrict=1)."
 
 func journalctlAlternative(si SystemInfo, cmd string) []string {
 	if !si.HasJournalctl {

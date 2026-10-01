@@ -711,7 +711,7 @@ func TestSuggestNextCommandsCoversOtherResources(t *testing.T) {
 			dim:  "Errors",
 			caps: nil,
 			si:   SystemInfo{},
-			want: "dmesg -T | grep -iE 'link is|carrier|nic|ethernet'",
+			want: "sudo dmesg -T | grep -iE 'link is|carrier|nic|ethernet'",
 		},
 		{
 			name: "network utilization suggests sar DEV, not since-boot counters",

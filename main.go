@@ -386,7 +386,7 @@ func runCommandStreaming(cmdStr string, liveOut io.Writer) CapturedCommand {
 		if buf.Len() > 0 && !bytes.HasSuffix(buf.Bytes(), []byte("\n")) {
 			fmt.Fprintln(os.Stderr)
 		}
-		noteLine(os.Stderr, "command failed: journalctl could not read the kernel log; try dmesg or sudo dmesg")
+		noteLine(os.Stderr, "command failed: journalctl could not read the kernel log; try again with sudo journalctl")
 	}
 	return CapturedCommand{Cmd: cmdStr, Output: buf.String(), Failed: failed, ExitCode: exitCode}
 }

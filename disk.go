@@ -29,8 +29,8 @@ func diskSteps(si SystemInfo) []GuideStep {
 
 	throughputVariants := diskThroughputVariants(si)
 	throughputPick := pickStepVariant(si, throughputVariants)
-	dmesgErrorCmd := "dmesg -T | grep -iE '" + diskKernelLogErrorGrep + "' | tail"
-	journalctlErrorCmd := "journalctl -k -b --no-pager | grep -iE '" + diskKernelLogErrorGrep + "' | tail"
+	dmesgErrorCmd := "sudo dmesg -T | grep -iE '" + diskKernelLogErrorGrep + "' | tail"
+	journalctlErrorCmd := "sudo journalctl -k -b --no-pager | grep -iE '" + diskKernelLogErrorGrep + "' | tail"
 
 	steps := []GuideStep{
 		{
@@ -1086,13 +1086,13 @@ var diskCommands = []CommandRef{
 		Summary: "Friendlier per-process I/O snapshot.\nBatch mode (-b -n1) avoids needing a TTY. (iotop package.)",
 	},
 	{
-		Cmd:          "dmesg -T | grep -iE '" + diskKernelLogErrorGrep + "'",
+		Cmd:          "sudo dmesg -T | grep -iE '" + diskKernelLogErrorGrep + "'",
 		Section:      "Errors",
 		Summary:      "Kernel I/O errors and read-only remounts.\nRecurring I/O errors → failing media; read-only remount → kernel\ngave up on writes.\n" + dmesgPermissionNote,
 		DiagnoseRank: 1,
 	},
 	{
-		Cmd:                 "journalctl -k -b --no-pager | grep -iE '" + diskKernelLogErrorGrep + "'",
+		Cmd:                 "sudo journalctl -k -b --no-pager | grep -iE '" + diskKernelLogErrorGrep + "'",
 		Section:             "Errors",
 		Summary:             "Kernel I/O errors and read-only remounts via journald.\nAlternative to dmesg on systemd systems.",
 		Requires:            []string{"journalctl"},

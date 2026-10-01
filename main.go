@@ -207,6 +207,11 @@ type SystemInfo struct {
 	HasMemoryPSI  bool
 	HasIOPSI      bool
 	HasJournalctl bool
+	// DmesgReadable and JournalReadable report whether this user can read
+	// the kernel log without sudo. The zero value keeps `sudo` in
+	// suggestions, which is right on most distros.
+	DmesgReadable   bool
+	JournalReadable bool
 	// HasThermalThrottle is true only where the kernel exposes per-CPU
 	// thermal-throttle counters under sysfs — x86 bare-metal, essentially.
 	// It is absent on ARM and usually absent in VMs and containers.
@@ -224,6 +229,8 @@ func detectSystem() SystemInfo {
 		HasIOPSI:      fileExists("/proc/pressure/io"),
 		HasJournalctl: haveCmd("journalctl"),
 
+		DmesgReadable:      canReadDmesg(),
+		JournalReadable:    canReadKernelJournal(),
 		HasThermalThrottle: hasThermalThrottle(),
 	}
 }
@@ -821,6 +828,9 @@ func isJournalctlFailure(cmdStr, output string) bool {
 		"failed to open files",
 		"failed to connect to bus",
 		"failed to get journal",
+		// Printed (with exit 0 and "-- No entries --") when the user can
+		// only see their own journal, which never holds kernel messages.
+		"you are currently not seeing messages from other users and the system",
 	} {
 		if strings.Contains(low, marker) {
 			return true

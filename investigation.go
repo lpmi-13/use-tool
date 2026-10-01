@@ -154,7 +154,7 @@ func journalctlAlternative(si SystemInfo, cmd string) []string {
 	if !si.HasJournalctl {
 		return nil
 	}
-	return []string{cmd}
+	return []string{si.adaptSudo(cmd)}
 }
 
 // Resource labels used by whole-system diagnose to group prompts. These are
@@ -778,6 +778,7 @@ func printCommands(inv *Investigation, si SystemInfo) {
 		tutorln(bold(sec))
 		tutorln(strings.Repeat("-", len(sec)))
 		for _, c := range cmds {
+			c = c.forSystem(si)
 			status := commandStatus(c, si)
 			if status != "" && c.HideWhenUnavailable {
 				continue

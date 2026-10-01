@@ -246,25 +246,18 @@ func networkSynopsis(snap Snapshot) []SynopsisIssue {
 			Evidence: fmt.Sprintf("sar -n EDEV rxdrop/s max was %s", formatNumber(v.Number, "")),
 		})
 	}
-	if v, ok := snap.Values["tcp_retransmit_ratio_pct"]; ok && v.Number >= 1 {
+	if v, ok := snap.Values["tcp_ss_retrans_sockets"]; ok && v.Number > 0 {
 		issues = append(issues, SynopsisIssue{
 			Section:  "Saturation",
-			Summary:  "TCP retransmits were high",
-			Evidence: fmt.Sprintf("TCP retransmit ratio was %s", formatNumber(v.Number, "%")),
+			Summary:  "established TCP sockets were retransmitting",
+			Evidence: fmt.Sprintf("ss -tin showed %s socket(s) with retrans", formatNumber(v.Number, "")),
 		})
 	}
-	if v, ok := snap.Values["tcp_listen_overflows"]; ok && v.Number > 0 {
-		issues = append(issues, SynopsisIssue{
-			Section:  "Saturation",
-			Summary:  "TCP listen queues overflowed",
-			Evidence: fmt.Sprintf("ListenOverflows was %s", formatNumber(v.Number, "")),
-		})
-	}
-	if v, ok := snap.Values["net_iface_errors_total"]; ok && v.Number > 0 {
+	if v, ok := snap.Values["net_errors_per_sec_max"]; ok && v.Number > 0 {
 		issues = append(issues, SynopsisIssue{
 			Section:  "Errors",
-			Summary:  "interface RX/TX errors were seen",
-			Evidence: fmt.Sprintf("interface error total was %s", formatNumber(v.Number, "")),
+			Summary:  "interface errors were seen during the sample",
+			Evidence: fmt.Sprintf("sar -n EDEV rxerr/s + txerr/s max was %s", formatNumber(v.Number, "")),
 		})
 	}
 	if v, ok := snap.Values["dmesg_net_keywords"]; ok && textCountPositive(v.Text) {

@@ -89,10 +89,15 @@ type Observation struct {
 }
 
 type Snapshot struct {
-	Sections      []SnapshotSection
-	NotCaptured   []Observation
-	Sources       []string
-	Values        map[string]Value
+	Sections    []SnapshotSection
+	NotCaptured []Observation
+	Sources     []string
+	Values      map[string]Value
+	// Origins records which command each value came from, as an evidence
+	// source key (see evidenceSourceKey). Diagnose uses it to tell several
+	// readings from one command apart from independent signals. A missing
+	// entry means the source is unknown and the value counts on its own.
+	Origins       map[string]string
 	CapturedCount int
 }
 
@@ -109,12 +114,16 @@ type SnapshotItem struct {
 func (s *Session) Snapshot() Snapshot {
 	grouped := map[string][]SnapshotItem{}
 	values := map[string]Value{}
+	origins := map[string]string{}
 	var notCaptured []Observation
 	for _, obs := range s.Investigation.Observations {
 		v, ok := obs.Extract(s.System, s.Captured)
 		if ok {
 			grouped[obs.Section] = append(grouped[obs.Section], SnapshotItem{Title: obs.Title, Value: v})
 			values[obs.Name] = v
+			if origin := valueOrigin(obs, s.System, s.Captured); origin != "" {
+				origins[obs.Name] = origin
+			}
 		} else {
 			notCaptured = append(notCaptured, obs)
 		}
@@ -131,7 +140,39 @@ func (s *Session) Snapshot() Snapshot {
 		NotCaptured:   notCaptured,
 		Sources:       srcs,
 		Values:        values,
+		Origins:       origins,
 		CapturedCount: len(s.Captured),
+	}
+}
+
+// valueOrigin finds the most recent single command that produces obs's value
+// and returns its evidence source key, or "" if no single command does.
+func valueOrigin(obs Observation, si SystemInfo, caps []CapturedCommand) string {
+	if obs.Extract == nil {
+		return ""
+	}
+	for i := len(caps) - 1; i >= 0; i-- {
+		if _, ok := obs.Extract(si, caps[i:i+1]); ok {
+			return evidenceSourceKey(caps[i].Cmd)
+		}
+	}
+	return ""
+}
+
+// evidenceSourceKey names the measurement a command takes, so readings from
+// the same measurement count as one source. It is the command name, except
+// that sar reports and cat'd files are told apart, since `sar -n DEV` and
+// `sar -n EDEV`, or /proc/meminfo and /proc/pressure/memory, are different
+// measurements. Different flags to the same tool (iostat -x vs -xz) are not,
+// and dmesg and journalctl both read the one kernel log.
+func evidenceSourceKey(cmd string) string {
+	switch base := commandBase(cmd); base {
+	case "dmesg", "journalctl":
+		return "kernel log"
+	case "sar", "cat":
+		return commandFamilyKey(cmd)
+	default:
+		return base
 	}
 }
 

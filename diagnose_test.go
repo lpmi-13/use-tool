@@ -281,13 +281,6 @@ func TestNetworkVerdicts(t *testing.T) {
 		{"zero low", verdictPositiveIsHigh(si, Value{Number: 0}, Snapshot{}), SignalLow},
 		{"drops present", verdictNetDrops(si, Value{Number: 5}, Snapshot{}), SignalHigh},
 		{"drops absent", verdictNetDrops(si, Value{Number: 0}, Snapshot{}), SignalLow},
-		{"retrans high", verdictRetransRatio(si, Value{Number: 1.2}, Snapshot{}), SignalHigh},
-		{"retrans some", verdictRetransRatio(si, Value{Number: 0.1}, Snapshot{}), SignalModerate},
-		{"retrans clean", verdictRetransRatio(si, Value{Number: 0}, Snapshot{}), SignalLow},
-		{"overflows seen", verdictListenOverflows(si, Value{Number: 12}, Snapshot{}), SignalHigh},
-		{"overflows none", verdictListenOverflows(si, Value{Number: 0}, Snapshot{}), SignalLow},
-		{"iface errors", verdictNetIfaceErrors(si, Value{Number: 4}, Snapshot{}), SignalHigh},
-		{"iface clean", verdictNetIfaceErrors(si, Value{Number: 0}, Snapshot{}), SignalLow},
 		{"dmesg net events", verdictDmesgNet(si, Value{Number: 2}, Snapshot{}), SignalHigh},
 		{"dmesg net quiet", verdictDmesgNet(si, Value{Number: 0}, Snapshot{}), SignalLow},
 	}
@@ -705,12 +698,28 @@ func TestSuggestNextCommandsCoversOtherResources(t *testing.T) {
 			want: "sar -n EDEV 1 N",
 		},
 		{
-			name: "network errors suggest proc net dev first",
+			name: "network errors suggest live sar EDEV error rates first",
+			inv:  networkInvestigation,
+			dim:  "Errors",
+			caps: nil,
+			si:   SystemInfo{HasSar: true},
+			want: "sar -n EDEV 1 N",
+		},
+		{
+			name: "network errors fall back to the kernel log without sar",
 			inv:  networkInvestigation,
 			dim:  "Errors",
 			caps: nil,
 			si:   SystemInfo{},
-			want: "cat /proc/net/dev",
+			want: "dmesg -T | grep -iE 'link is|carrier|nic|ethernet'",
+		},
+		{
+			name: "network utilization suggests sar DEV, not since-boot counters",
+			inv:  networkInvestigation,
+			dim:  "Utilization",
+			caps: nil,
+			si:   SystemInfo{HasSar: true},
+			want: "sar -n DEV 1 N",
 		},
 	}
 	for _, tc := range cases {
@@ -1008,5 +1017,84 @@ func TestAskEvidenceFallsBackToIndexInput(t *testing.T) {
 		if names[i] != want[i] {
 			t.Fatalf("askEvidence() = %v, want %v", names, want)
 		}
+	}
+}
+
+func TestEvidenceSourceKey(t *testing.T) {
+	same := [][2]string{
+		{"iostat -x 1 3", "iostat -xz 1 5 | grep -v loop"},
+		{"vmstat 1 5", "sudo vmstat -w 1 2"},
+		{"ss -tin", "ss -tin state established"},
+		{"dmesg -T | grep -i oom", "journalctl -k -b --no-pager | grep -i oom"},
+	}
+	for _, pair := range same {
+		if evidenceSourceKey(pair[0]) != evidenceSourceKey(pair[1]) {
+			t.Errorf("%q and %q should be one evidence source", pair[0], pair[1])
+		}
+	}
+	different := [][2]string{
+		{"sar -n DEV 1 3", "sar -n EDEV 1 3"},
+		{"sar -B 1 3", "sar -q 1 3"},
+		{"cat /proc/meminfo", "cat /proc/pressure/memory"},
+		{"vmstat 1 5", "mpstat -P ALL 1 3"},
+	}
+	for _, pair := range different {
+		if evidenceSourceKey(pair[0]) == evidenceSourceKey(pair[1]) {
+			t.Errorf("%q and %q should be independent evidence sources", pair[0], pair[1])
+		}
+	}
+}
+
+// One idle `ss -tin` yields three "absent" saturation readings. Citing all
+// three is still one command, so the verdict must not be "well supported".
+func TestReadingsFromOneCommandAreNotIndependentSupport(t *testing.T) {
+	s := &Session{
+		Investigation: networkInvestigation,
+		Captured:      []CapturedCommand{{Cmd: "ss -tin", Output: sampleSsTinHeaderOnly}},
+	}
+	snap := s.Snapshot()
+	cited := []string{"tcp_ss_retrans_sockets", "tcp_ss_sendq_max", "tcp_ss_limited_pct_max"}
+	g := gradeDimension(s.System, snap, networkObservations, "Saturation", "absent", cited)
+	if g.Supports != 3 || g.SupportSources != 1 {
+		t.Fatalf("supports=%d sources=%d, want 3 readings from 1 source", g.Supports, g.SupportSources)
+	}
+	if got := g.assessment(); !strings.HasPrefix(got, "supported, but thin — everything you cited comes from one command") {
+		t.Fatalf("assessment = %q", got)
+	}
+}
+
+func TestReadingsFromTwoCommandsAreWellSupported(t *testing.T) {
+	cleanEdev := strings.NewReplacer("8.00", "0.00", "12.50", "0.00").Replace(sampleSarEdev)
+	s := &Session{
+		Investigation: networkInvestigation,
+		Captured: []CapturedCommand{
+			{Cmd: "ss -tin", Output: sampleSsTinHeaderOnly},
+			{Cmd: "sar -n EDEV 1 2", Output: cleanEdev},
+		},
+	}
+	snap := s.Snapshot()
+	g := gradeDimension(s.System, snap, networkObservations, "Saturation", "absent",
+		[]string{"tcp_ss_retrans_sockets", "net_rx_drops_per_sec_max"})
+	if g.SupportSources != 2 || g.assessment() != "well supported" {
+		t.Fatalf("sources=%d assessment=%q, want 2 sources, well supported", g.SupportSources, g.assessment())
+	}
+}
+
+func TestHintsSkipMoreReadingsFromACitedCommand(t *testing.T) {
+	s := &Session{
+		Investigation: networkInvestigation,
+		Captured:      []CapturedCommand{{Cmd: "ss -tin", Output: sampleSsTinHeaderOnly}},
+	}
+	snap := s.Snapshot()
+	g := gradeDimension(s.System, snap, networkObservations, "Saturation", "absent", []string{"tcp_ss_retrans_sockets"})
+	if len(g.Uncited) == 0 {
+		t.Fatal("expected the other ss -tin readings to be uncited")
+	}
+	if n := supportingUncitedCount(g); n != 0 {
+		t.Fatalf("supportingUncitedCount = %d, want 0: the other readings come from the same command", n)
+	}
+	out := captureStdout(func() { printUncitedEvidenceHints(g) })
+	if strings.Contains(out, "Max TCP Send-Q") {
+		t.Fatalf("hint suggests another reading from the same command:\n%s", out)
 	}
 }

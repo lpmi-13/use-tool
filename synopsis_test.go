@@ -170,8 +170,10 @@ func TestNetworkSynopsisIdentifiesSaturationAndErrors(t *testing.T) {
 		"net_peak_throughput_mbps": {Number: 316},
 		"net_rx_drops_per_sec_max": {Number: 3},
 		"tcp_retransmit_ratio_pct": {Number: 2.5},
+		"tcp_ss_retrans_sockets":   {Number: 2},
 		"tcp_listen_overflows":     {Number: 7},
 		"net_iface_errors_total":   {Number: 9},
+		"net_errors_per_sec_max":   {Number: 2},
 		"dmesg_net_keywords":       {Text: "1/5 lines mention link/NIC events"},
 	}}
 	issues := networkSynopsis(snap)
@@ -182,11 +184,22 @@ func TestNetworkSynopsisIdentifiesSaturationAndErrors(t *testing.T) {
 	if !hasSynopsis(issues, "Saturation", "receive drops") {
 		t.Fatalf("expected network drop saturation issue, got %#v", issues)
 	}
-	if !hasSynopsis(issues, "Saturation", "TCP retransmits") {
-		t.Fatalf("expected retransmit issue, got %#v", issues)
+	if !hasSynopsis(issues, "Saturation", "TCP sockets were retransmitting") {
+		t.Fatalf("expected live retransmit issue, got %#v", issues)
 	}
-	if !hasSynopsis(issues, "Errors", "interface RX/TX errors") {
-		t.Fatalf("expected interface error issue, got %#v", issues)
+	if !hasSynopsis(issues, "Errors", "interface errors were seen during the sample") {
+		t.Fatalf("expected live interface error issue, got %#v", issues)
+	}
+}
+
+func TestNetworkSynopsisIgnoresSinceBootCounters(t *testing.T) {
+	snap := Snapshot{Values: map[string]Value{
+		"tcp_listen_overflows":     {Number: 7},
+		"net_iface_errors_total":   {Number: 9},
+		"tcp_retransmit_ratio_pct": {Number: 2.5},
+	}}
+	if issues := networkSynopsis(snap); len(issues) != 0 {
+		t.Fatalf("since-boot counters produced summary issues: %#v", issues)
 	}
 }
 

@@ -101,6 +101,17 @@ type citedEvidence struct {
 	Heuristic string
 	Value     Value
 	HasValue  bool
+	// Source is the evidence source key of the command the value came from.
+	Source string
+}
+
+// observationSource returns the evidence source of an observation's value,
+// falling back to the observation itself when the command is unknown.
+func observationSource(snap Snapshot, name string) string {
+	if source := snap.Origins[name]; source != "" {
+		return source
+	}
+	return "observation:" + name
 }
 
 type dimensionGrade struct {
@@ -115,6 +126,10 @@ type dimensionGrade struct {
 	NextCommands []CommandRef
 	Supports     int
 	Contradicts  int
+	// SupportSources counts the distinct commands behind the supporting
+	// citations. Several readings from one command are one source, so a
+	// verdict is only well supported when this reaches 2.
+	SupportSources int
 }
 
 // classifyCitation grades a single cited observation against a claim.
@@ -168,6 +183,7 @@ func gradeDimension(si SystemInfo, snap Snapshot, dimObs []Observation, dim, cla
 		byName[obs.Name] = obs
 	}
 	cited := map[string]bool{}
+	supportSources := map[string]bool{}
 	for _, name := range citedNames {
 		cited[name] = true
 		obs, ok := byName[name]
@@ -182,15 +198,17 @@ func gradeDimension(si SystemInfo, snap Snapshot, dimObs []Observation, dim, cla
 		}
 		g.Cited = append(g.Cited, citedEvidence{
 			Name: obs.Name, Title: obs.Title, Verdict: cv, Reads: reads, Heuristic: obs.Heuristic,
-			Value: v, HasValue: hasValue,
+			Value: v, HasValue: hasValue, Source: observationSource(snap, obs.Name),
 		})
 		switch cv {
 		case citeSupports:
 			g.Supports++
+			supportSources[observationSource(snap, obs.Name)] = true
 		case citeContradicts:
 			g.Contradicts++
 		}
 	}
+	g.SupportSources = len(supportSources)
 	if claim != "" {
 		for _, obs := range dimObs {
 			if cited[obs.Name] || obs.Section != dim || obs.Verdict == nil {
@@ -207,6 +225,7 @@ func gradeDimension(si SystemInfo, snap Snapshot, dimObs []Observation, dim, cla
 			g.Uncited = append(g.Uncited, citedEvidence{
 				Name: obs.Name, Title: obs.Title, Verdict: classifyCitation(si, snap, dim, claim, obs, v),
 				Reads: reads, Heuristic: obs.Heuristic, Value: v, HasValue: true,
+				Source: observationSource(snap, obs.Name),
 			})
 		}
 	}
@@ -225,8 +244,10 @@ func gradeDimension(si SystemInfo, snap Snapshot, dimObs []Observation, dim, cla
 // assessment summarises the evidence support for a real claim.
 func (g dimensionGrade) assessment() string {
 	switch {
-	case g.Supports >= 2 && g.Contradicts == 0:
+	case g.SupportSources >= 2 && g.Contradicts == 0:
 		return "well supported"
+	case g.Supports >= 2 && g.Contradicts == 0:
+		return "supported, but thin — everything you cited comes from one command; strong claims want a second, independent signal"
 	case g.Supports == 1 && g.Contradicts == 0:
 		return "supported, but thin — strong claims want a second, independent signal"
 	case g.Supports >= 1 && g.Contradicts > 0:
@@ -310,7 +331,7 @@ func practiceDiagnose(s *Session) bool {
 			}
 			g := gradeDimension(s.System, snap, candidates, dim, claim, cited)
 			g.Resource = resource
-			if claim != "" && g.Supports < 2 && supportingUncitedCount(g) == 0 {
+			if claim != "" && g.SupportSources < 2 && supportingUncitedCount(g) == 0 {
 				g.NextCommands = suggestNextCommands(notesInv, dim, s.Captured, s.System, 2)
 			}
 			grades = append(grades, g)
@@ -826,7 +847,7 @@ func printDiagnoseFeedback(grades []dimensionGrade, multiResource bool) {
 				}
 			}
 		}
-		if g.Supports < 2 {
+		if g.SupportSources < 2 {
 			if printUncitedEvidenceHints(g) {
 				fmt.Println()
 			}
@@ -850,7 +871,7 @@ func printDiagnoseFeedback(grades []dimensionGrade, multiResource bool) {
 func printUncitedEvidenceHints(g dimensionGrade) bool {
 	var relevant []citedEvidence
 	for _, c := range g.Uncited {
-		if c.Verdict == citeSupports || c.Verdict == citeContradicts {
+		if c.Verdict == citeContradicts || c.Verdict == citeSupports && g.isNewSource(c) {
 			relevant = append(relevant, c)
 		}
 	}
@@ -882,14 +903,31 @@ func printNextCommandHints(cmds []CommandRef) {
 	}
 }
 
+// supportingUncitedCount counts uncited supporting evidence that would add
+// an independent source to the verdict.
 func supportingUncitedCount(g dimensionGrade) int {
 	n := 0
 	for _, c := range g.Uncited {
-		if c.Verdict == citeSupports {
+		if c.Verdict == citeSupports && g.isNewSource(c) {
 			n++
 		}
 	}
 	return n
+}
+
+// isNewSource reports whether c comes from a command none of the supporting
+// citations came from. Another reading from the same command would not make
+// the verdict any better supported, so hints leave it out.
+func (g dimensionGrade) isNewSource(c citedEvidence) bool {
+	if c.Source == "" {
+		return true
+	}
+	for _, cited := range g.Cited {
+		if cited.Verdict == citeSupports && cited.Source == c.Source {
+			return false
+		}
+	}
+	return true
 }
 
 func suggestNextCommands(inv *Investigation, dim string, caps []CapturedCommand, si SystemInfo, limit int) []CommandRef {

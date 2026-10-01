@@ -857,3 +857,72 @@ func TestNetworkTCPVariantsDispatch(t *testing.T) {
 		t.Errorf("expected netstat -s-style question; got %v", stems(qs))
 	}
 }
+
+func TestExtractSarEdevErrorPeak(t *testing.T) {
+	caps := []CapturedCommand{{Cmd: "sar -n EDEV 1 2", Output: sampleSarEdev}}
+	v, ok := extractSarEdevErrorPeak(SystemInfo{}, caps)
+	if !ok || v.Number != 0 {
+		t.Fatalf("clean EDEV sample = %+v, %v; want 0, true", v, ok)
+	}
+
+	withErrors := strings.Replace(sampleSarEdev,
+		"14:00:03         eth0      0.00      0.00",
+		"14:00:03         eth0      1.50      2.00", 1)
+	v, ok = extractSarEdevErrorPeak(SystemInfo{}, []CapturedCommand{{Cmd: "sar -n EDEV 1 2", Output: withErrors}})
+	if !ok || v.Number != 3.5 {
+		t.Fatalf("EDEV sample with errors = %+v, %v; want 3.5, true", v, ok)
+	}
+
+	if _, ok := extractSarEdevErrorPeak(SystemInfo{}, []CapturedCommand{{Cmd: "sar -n DEV 1 3", Output: sampleSarDev}}); ok {
+		t.Fatal("sar -n DEV output should not produce an error reading")
+	}
+}
+
+// Since-boot counters can't show what is happening now, so they must never
+// be citable diagnosis evidence, whichever orientation command produced them.
+func TestSinceBootNetworkCountersAreNotDiagnosisEvidence(t *testing.T) {
+	for _, name := range []string{"net_iface_errors_total", "tcp_listen_overflows", "tcp_retransmit_ratio_pct"} {
+		obs, ok := findObservationByName(networkObservations, name)
+		if !ok {
+			t.Fatalf("missing observation %s", name)
+		}
+		if obs.Verdict != nil {
+			t.Errorf("%s has a Verdict; since-boot totals must be informational", name)
+		}
+	}
+
+	s := &Session{
+		Investigation: networkInvestigation,
+		Captured:      []CapturedCommand{{Cmd: "cat /proc/net/dev", Output: sampleProcNetDev}},
+	}
+	snap := s.Snapshot()
+	if _, ok := snap.Values["net_iface_errors_total"]; !ok {
+		t.Fatal("/proc/net/dev should still be shown in the report")
+	}
+	if got := candidatesByResource(networkInvestigation, snap); len(got) != 0 {
+		t.Fatalf("/proc/net/dev produced diagnose candidates: %v", got)
+	}
+}
+
+func TestOrientationCommandsAreNeverDiagnoseSuggestions(t *testing.T) {
+	si := SystemInfo{HasSar: true, HasJournalctl: true}
+	for _, inv := range []*Investigation{diskInvestigation, networkInvestigation} {
+		for _, dim := range useDimensions {
+			for _, ref := range suggestNextCommands(inv, dim, nil, si, 10) {
+				for _, cmd := range []string{"lsblk", "cat /proc/partitions", "ip -s link", "cat /proc/net/dev"} {
+					if ref.Cmd == cmd {
+						t.Errorf("%s %s suggests orientation command %q", inv.Name, dim, cmd)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestNetstatSIsNotADiagnoseSuggestion(t *testing.T) {
+	for _, ref := range suggestNextCommands(networkInvestigation, "Saturation", nil, SystemInfo{HasSar: true}, 10) {
+		if ref.Cmd == "netstat -s" {
+			t.Fatal("netstat -s only yields since-boot totals and should not be suggested as evidence")
+		}
+	}
+}

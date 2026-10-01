@@ -85,9 +85,11 @@ func networkSteps(si SystemInfo) []GuideStep {
 			QuestionCount:    3,
 			Teaching: "`netstat -s` is the reliable first pass here because it always shows\n" +
 				"cumulative TCP counters like retransmits and listen-queue overflows.\n" +
-				"`ss -tin` is the live complement: it shows per-socket TCP state only\n" +
-				"for currently established TCP connections, so on an idle host it may\n" +
-				"print only the header line.",
+				"Those are running totals since boot: they tell you whether trouble has\n" +
+				"ever happened, not whether it is happening now. To see it now, compare\n" +
+				"two readings taken a known interval apart, or use `ss -tin`, the live\n" +
+				"complement: it shows per-socket TCP state only for currently established\n" +
+				"TCP connections, so on an idle host it may print only the header line.",
 		},
 		{
 			Name:          "sockets",
@@ -337,7 +339,7 @@ func networkTCPVariants() []stepVariant {
 				"/proc/net/netstat. Look for the Tcp section's `segments retransmitted`\n" +
 				"vs `segments sent out` (the retransmit ratio) and TcpExt entries like\n" +
 				"`times the listen queue of a socket overflowed` (the listen-overflow\n" +
-				"count).",
+				"count). All of these are running totals since boot.",
 		},
 	}
 }
@@ -1065,12 +1067,14 @@ var networkObservations = []Observation{
 		Heuristic: "rxdrop/s > 0 = NIC ring buffer or kernel queue is filling = receive-side saturation",
 	},
 	{
-		Name:      "tcp_retransmit_ratio_pct",
-		Title:     "TCP retransmit ratio",
-		Section:   "Saturation",
-		Extract:   extractTCPRetransmitRatio,
-		Verdict:   verdictRetransRatio,
-		Heuristic: "retransmit ratio > ~0.5% steady = end-to-end packet loss somewhere between this host and its peers",
+		Name:    "tcp_retransmit_ratio_pct",
+		Title:   "TCP retransmit ratio",
+		Section: "Saturation",
+		Extract: extractTCPRetransmitRatio,
+		// No Verdict: RetransSegs / OutSegs are running totals since boot,
+		// so one reading averages over the whole uptime and can't show loss
+		// happening now. ss -tin supplies the live reading.
+		Heuristic: "retransmitted / sent segments as a running total since boot — context only, since one reading can't show whether loss is happening now (look for `retrans:` in `ss -tin`, or compare two readings)",
 	},
 	{
 		Name:      "tcp_ss_retrans_sockets",
@@ -1097,20 +1101,32 @@ var networkObservations = []Observation{
 		Heuristic: "rwnd_limited or sndbuf_limited time in `ss -tin` means TCP spent time blocked by peer receive-window or local send-buffer limits",
 	},
 	{
-		Name:      "tcp_listen_overflows",
-		Title:     "Listen overflows (since boot)",
-		Section:   "Saturation",
-		Extract:   extractListenOverflows,
-		Verdict:   verdictListenOverflows,
-		Heuristic: "ListenOverflows > 0 = SYNs the kernel dropped because the app's accept queue was full = application-side saturation (counter is a running total since boot — context matters)",
+		Name:    "tcp_listen_overflows",
+		Title:   "Listen overflows (since boot)",
+		Section: "Saturation",
+		Extract: extractListenOverflows,
+		// No Verdict: the counter is a running total since boot, so a
+		// non-zero value can be weeks old. It is context, not evidence of
+		// saturation now.
+		Heuristic: "ListenOverflows counts SYNs dropped because an app's accept queue was full, as a running total since boot — context only, since it can't show whether it is happening now (watch Recv-Q vs Send-Q in `ss -lnt`, or compare two readings)",
 	},
 	{
-		Name:      "net_iface_errors_total",
-		Title:     "Interface errors (since boot)",
+		Name:      "net_errors_per_sec_max",
+		Title:     "Max rxerr/s + txerr/s (sar -n EDEV)",
 		Section:   "Errors",
-		Extract:   extractInterfaceErrors,
-		Verdict:   verdictNetIfaceErrors,
-		Heuristic: "RX/TX errors on a NIC = link- or driver-level failures (counter is a running total since boot — a single old value isn't necessarily current)",
+		Extract:   extractSarEdevErrorPeak,
+		Verdict:   verdictPositiveIsHigh,
+		Heuristic: "rxerr/s or txerr/s > 0 during the sample = the NIC is reporting bad frames or failed transmits right now = link- or driver-level errors",
+	},
+	{
+		Name:    "net_iface_errors_total",
+		Title:   "Interface errors (since boot)",
+		Section: "Errors",
+		Extract: extractInterfaceErrors,
+		// No Verdict: a running total since boot can't say whether errors
+		// are happening now, which is what the guide teaches about these
+		// counters. sar -n EDEV supplies the current reading.
+		Heuristic: "RX/TX error totals since boot — context only, since an old value isn't current (read rxerr/s and txerr/s in `sar -n EDEV` for errors happening now)",
 	},
 	{
 		Name:      "dmesg_net_keywords",
@@ -1154,31 +1170,6 @@ func verdictPositiveIsHigh(_ SystemInfo, v Value, _ Snapshot) Signal {
 }
 
 func verdictNetDrops(_ SystemInfo, v Value, _ Snapshot) Signal {
-	if v.Number > 0 {
-		return SignalHigh
-	}
-	return SignalLow
-}
-
-func verdictRetransRatio(_ SystemInfo, v Value, _ Snapshot) Signal {
-	switch {
-	case v.Number > 0.5:
-		return SignalHigh
-	case v.Number > 0:
-		return SignalModerate
-	default:
-		return SignalLow
-	}
-}
-
-func verdictListenOverflows(_ SystemInfo, v Value, _ Snapshot) Signal {
-	if v.Number > 0 {
-		return SignalHigh
-	}
-	return SignalLow
-}
-
-func verdictNetIfaceErrors(_ SystemInfo, v Value, _ Snapshot) Signal {
 	if v.Number > 0 {
 		return SignalHigh
 	}
@@ -1297,6 +1288,36 @@ func extractSarNetPeak(column string) func(SystemInfo, []CapturedCommand) (Value
 		}
 		return Value{Number: max, Unit: " kB/s"}, true
 	}
+}
+
+// extractSarEdevErrorPeak finds the highest rxerr/s + txerr/s for a single
+// non-loopback interface sample in any captured `sar -n EDEV` output.
+func extractSarEdevErrorPeak(si SystemInfo, caps []CapturedCommand) (Value, bool) {
+	max := 0.0
+	seen := false
+	for _, c := range caps {
+		if baseCmd(c.Cmd) != "sar" {
+			continue
+		}
+		for _, r := range parseSarTable(c.Output, "rxdrop/s", "rxerr/s") { // only matches EDEV
+			if r["IFACE"] == "lo" {
+				continue
+			}
+			rx, rxErr := strconv.ParseFloat(r["rxerr/s"], 64)
+			tx, txErr := strconv.ParseFloat(r["txerr/s"], 64)
+			if rxErr != nil || txErr != nil {
+				continue
+			}
+			seen = true
+			if rx+tx > max {
+				max = rx + tx
+			}
+		}
+	}
+	if !seen {
+		return Value{}, false
+	}
+	return Value{Number: max, Unit: " /s", Note: "across non-loopback interfaces"}, true
 }
 
 // extractSarEdevPeak finds the peak value of the named column in any captured
@@ -1809,8 +1830,8 @@ func leadingNumber(line string) (float64, bool) {
 	return n, err == nil
 }
 
-// findProcNetDev locates a /proc/net/dev capture or an `ip -s link` capture
-// for cumulative interface error totals.
+// findProcNetDev locates the latest /proc/net/dev capture, the source of the
+// cumulative interface error totals.
 func findProcNetDev(caps []CapturedCommand) (string, bool) {
 	for i := len(caps) - 1; i >= 0; i-- {
 		if commandHasPath(caps[i].Cmd, "/proc/net/dev") &&
@@ -1822,8 +1843,7 @@ func findProcNetDev(caps []CapturedCommand) (string, bool) {
 }
 
 // extractInterfaceErrors sums RX errors + TX errors across all non-loopback
-// interfaces from /proc/net/dev. (Falls back gracefully if the user only ran
-// `ip -s link`, which has a different format we don't parse here.)
+// interfaces from /proc/net/dev. `ip -s link` output is not parsed.
 func extractInterfaceErrors(si SystemInfo, caps []CapturedCommand) (Value, bool) {
 	out, ok := findProcNetDev(caps)
 	if !ok {
@@ -1886,14 +1906,15 @@ func networkDmesgQuestions(si SystemInfo, c CapturedCommand) []Question {
 var networkCommands = []CommandRef{
 	{
 		Cmd:     "ip -s link",
-		Section: "Utilization",
+		Section: "Orientation",
 		Summary: "Per-interface RX/TX counters (running totals since boot).\nFastest first look; useful for 'has anything ever gone wrong here'.",
 	},
 	{
-		Cmd:      "sar -n DEV 1 N",
-		Section:  "Utilization",
-		Summary:  "Per-interface throughput rate over N intervals.\nrxkB/s and txkB/s are the headline numbers. (sysstat package.)",
-		Requires: []string{"sar"},
+		Cmd:          "sar -n DEV 1 N",
+		Section:      "Utilization",
+		Summary:      "Per-interface throughput rate over N intervals.\nrxkB/s and txkB/s are the headline numbers. (sysstat package.)",
+		Requires:     []string{"sar"},
+		DiagnoseRank: 1,
 	},
 	{
 		Cmd:     "ethtool eth0",
@@ -1924,15 +1945,20 @@ var networkCommands = []CommandRef{
 		Summary: "TCP listen sockets with Recv-Q (current queue) vs Send-Q (max backlog).\nRecv-Q approaching Send-Q is the live signal that ListenOverflows is climbing.",
 	},
 	{
-		Cmd:          "netstat -s",
-		Section:      "Saturation",
-		Summary:      "Human-readable summary of /proc/net/snmp + /proc/net/netstat.\nFound almost everywhere but being phased out in favour of `ss`.",
-		DiagnoseRank: 3,
+		Cmd:     "netstat -s",
+		Section: "Saturation",
+		Summary: "Human-readable summary of /proc/net/snmp + /proc/net/netstat.\nFound almost everywhere but being phased out in favour of `ss`.\nCounters are running totals since boot; compare two readings for a rate.",
 	},
 	{
-		Cmd:          "cat /proc/net/dev",
+		Cmd:     "cat /proc/net/dev",
+		Section: "Orientation",
+		Summary: "Per-interface counters since boot (bytes, packets, errs, drop, ...).\nField order is stable; raw source for many other tools.\nRunning totals: context, not a reading of what is happening now.",
+	},
+	{
+		Cmd:          "sar -n EDEV 1 N",
 		Section:      "Errors",
-		Summary:      "Per-interface counters since boot (bytes, packets, errs, drop, ...).\nField order is stable; raw source for many other tools.",
+		Summary:      "Same command as for saturation — read rxerr/s and txerr/s.\nNon-zero during the sample = the NIC is reporting errors now.\n(sysstat package.)",
+		Requires:     []string{"sar"},
 		DiagnoseRank: 1,
 	},
 	{

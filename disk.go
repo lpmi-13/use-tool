@@ -1036,7 +1036,7 @@ func diskDmesgQuestions(si SystemInfo, c CapturedCommand) []Question {
 var diskCommands = []CommandRef{
 	{
 		Cmd:     "lsblk",
-		Section: "Utilization",
+		Section: "Orientation",
 		Summary: "Tree of block devices and their partitions/LVMs.\nFastest way to get oriented when you don't know the device names.",
 	},
 	{

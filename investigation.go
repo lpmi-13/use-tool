@@ -706,7 +706,7 @@ func printCommands(inv *Investigation, si SystemInfo) {
 	for _, c := range inv.Commands {
 		bySection[c.Section] = append(bySection[c.Section], c)
 	}
-	for _, sec := range []string{"Utilization", "Saturation", "Errors"} {
+	for _, sec := range []string{"Orientation", "Utilization", "Saturation", "Errors"} {
 		cmds, ok := bySection[sec]
 		if !ok {
 			continue

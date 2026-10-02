@@ -1050,9 +1050,9 @@ var diskCommands = []CommandRef{
 		Summary: "Tree of block devices and their partitions/LVMs.\nFastest way to get oriented when you don't know the device names.",
 	},
 	{
-		Cmd:          "iostat -xz 1 N | grep -vE '^loop'",
+		Cmd:          "iostat -xz 1 3 | grep -vE '^loop'",
 		Section:      "Utilization",
-		Summary:      "Per-device extended stats over N intervals.\n-x adds %util/await/aqu-sz; -z hides idle devices.\nThe grep filters snap loop-mounts so the real devices don't get\nlost in ~25 rows of `loop0..loopN` noise. Drop the pipe if you\nspecifically want to see those.\nThe single most important disk command.",
+		Summary:      "Per-device extended stats over three intervals.\n-x adds %util/await/aqu-sz; -z hides idle devices.\nThe grep filters snap loop-mounts so the real devices don't get\nlost in ~25 rows of `loop0..loopN` noise. Drop the pipe if you\nspecifically want to see those.\nThe single most important disk command.",
 		Requires:     []string{"iostat"},
 		DiagnoseRank: 1,
 	},
@@ -1062,7 +1062,7 @@ var diskCommands = []CommandRef{
 		Summary: "Filesystem capacity (not bandwidth).\nUseful when 'disk full' is the suspected problem.",
 	},
 	{
-		Cmd:          "iostat -xz 1 N | grep -vE '^loop'",
+		Cmd:          "iostat -xz 1 3 | grep -vE '^loop'",
 		Section:      "Saturation",
 		Summary:      "Same command — read aqu-sz (queueing) and await (latency).\nSteady aqu-sz > 1 or await well above your device baseline\n= saturation, no matter what %util shows.",
 		Requires:     []string{"iostat"},
@@ -1076,9 +1076,9 @@ var diskCommands = []CommandRef{
 		DiagnoseRank: 2,
 	},
 	{
-		Cmd:      "pidstat -d 1 N",
+		Cmd:      "pidstat -d 1 3",
 		Section:  "Saturation",
-		Summary:  "Per-process I/O rates over N intervals.\nFinds the process responsible for device load. (sysstat package.)\nNote: shows host PID namespace. I/O from processes inside Docker/\ncontainerd containers (separate PID namespace) appears under the\ncontainer's runtime or not at all; switch to `docker stats` to see\nwhich service, or `nsenter` into the container's PID ns.",
+		Summary:  "Per-process I/O rates over three intervals.\nFinds the process responsible for device load. (sysstat package.)\nNote: shows host PID namespace. I/O from processes inside Docker/\ncontainerd containers (separate PID namespace) appears under the\ncontainer's runtime or not at all; switch to `docker stats` to see\nwhich service, or `nsenter` into the container's PID ns.",
 		Requires: []string{"pidstat"},
 	},
 	{
@@ -1094,12 +1094,11 @@ var diskCommands = []CommandRef{
 		DiagnoseRank: 1,
 	},
 	{
-		Cmd:                 "sudo journalctl -k -b --no-pager | grep -iE '" + diskKernelLogErrorGrep + "'",
-		Section:             "Errors",
-		Summary:             "Kernel I/O errors and read-only remounts via journald.\nAlternative to dmesg on systemd systems.",
-		Requires:            []string{"journalctl"},
-		HideWhenUnavailable: true,
-		DiagnoseRank:        2,
+		Cmd:          "sudo journalctl -k -b --no-pager | grep -iE '" + diskKernelLogErrorGrep + "'",
+		Section:      "Errors",
+		Summary:      "Kernel I/O errors and read-only remounts via journald.\nAlternative to dmesg on systemd systems.",
+		Requires:     []string{"journalctl"},
+		DiagnoseRank: 2,
 	},
 	{
 		Cmd:      "smartctl -a /dev/sda",

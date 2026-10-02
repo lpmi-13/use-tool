@@ -1923,9 +1923,9 @@ var networkCommands = []CommandRef{
 		Summary: "Per-interface RX/TX counters (running totals since boot).\nFastest first look; useful for 'has anything ever gone wrong here'.",
 	},
 	{
-		Cmd:          "sar -n DEV 1 N",
+		Cmd:          "sar -n DEV 1 3",
 		Section:      "Utilization",
-		Summary:      "Per-interface throughput rate over N intervals.\nrxkB/s and txkB/s are the headline numbers. (sysstat package.)",
+		Summary:      "Per-interface throughput rate over three intervals.\nrxkB/s and txkB/s are the headline numbers. (sysstat package.)",
 		Requires:     []string{"sar"},
 		DiagnoseRank: 1,
 	},
@@ -1941,7 +1941,7 @@ var networkCommands = []CommandRef{
 		Summary: "Socket count summary by protocol and state.\nThe TCP estab number is current connection load.",
 	},
 	{
-		Cmd:          "sar -n EDEV 1 N",
+		Cmd:          "sar -n EDEV 1 3",
 		Section:      "Saturation",
 		Summary:      "Per-interface error/drop rates.\nrxdrop/s > 0 = NIC ring buffer or kernel queue is filling.\n(sysstat package.)",
 		Requires:     []string{"sar"},
@@ -1970,7 +1970,7 @@ var networkCommands = []CommandRef{
 		Summary: "Per-interface counters since boot (bytes, packets, errs, drop, ...).\nField order is stable; raw source for many other tools.\nRunning totals: context, not a reading of what is happening now.",
 	},
 	{
-		Cmd:          "sar -n EDEV 1 N",
+		Cmd:          "sar -n EDEV 1 3",
 		Section:      "Errors",
 		Summary:      "Same command as for saturation — read rxerr/s and txerr/s.\nNon-zero during the sample = the NIC is reporting errors now.\n(sysstat package.)",
 		Requires:     []string{"sar"},
@@ -1983,11 +1983,10 @@ var networkCommands = []CommandRef{
 		DiagnoseRank: 2,
 	},
 	{
-		Cmd:                 "sudo journalctl -k -b --no-pager | grep -iE 'link is|carrier|nic|ethernet'",
-		Section:             "Errors",
-		Summary:             "Kernel link-state changes and NIC driver errors via journald.\nAlternative to dmesg on systemd systems.",
-		Requires:            []string{"journalctl"},
-		HideWhenUnavailable: true,
-		DiagnoseRank:        3,
+		Cmd:          "sudo journalctl -k -b --no-pager | grep -iE 'link is|carrier|nic|ethernet'",
+		Section:      "Errors",
+		Summary:      "Kernel link-state changes and NIC driver errors via journald.\nAlternative to dmesg on systemd systems.",
+		Requires:     []string{"journalctl"},
+		DiagnoseRank: 3,
 	},
 }

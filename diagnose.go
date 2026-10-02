@@ -1088,7 +1088,11 @@ func suggestNextCommands(inv *Investigation, dim string, caps []CapturedCommand,
 		if ref.Section != dim || commandStatus(ref, si) != "" || commandWasCaptured(ref, caps) {
 			continue
 		}
-		out = append(out, ref.forSystem(si))
+		ref = ref.forSystem(si)
+		if ref.Cmd == "iotop -bn1" && !referenceCommandAvailable(ref, si) {
+			continue
+		}
+		out = append(out, ref)
 		if len(out) >= limit {
 			return out
 		}

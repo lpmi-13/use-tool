@@ -666,7 +666,7 @@ func TestSuggestNextCommandsSkipsAlreadyCaptured(t *testing.T) {
 		t.Fatalf("first suggested command = %q, want cat /proc/pressure/cpu; all=%+v", got[0].Cmd, got)
 	}
 	for _, cmd := range got {
-		if cmd.Cmd == "vmstat 1 N" {
+		if cmd.Cmd == "vmstat 1 3" {
 			t.Fatalf("suggested already captured vmstat command: %+v", got)
 		}
 	}
@@ -695,7 +695,7 @@ func TestSuggestNextCommandsCoversOtherResources(t *testing.T) {
 			dim:  "Saturation",
 			caps: []CapturedCommand{{Cmd: "sar -n DEV 1 3", Output: sampleSarDev}},
 			si:   SystemInfo{HasSar: true},
-			want: "sar -n EDEV 1 N",
+			want: "sar -n EDEV 1 3",
 		},
 		{
 			name: "network errors suggest live sar EDEV error rates first",
@@ -703,7 +703,7 @@ func TestSuggestNextCommandsCoversOtherResources(t *testing.T) {
 			dim:  "Errors",
 			caps: nil,
 			si:   SystemInfo{HasSar: true},
-			want: "sar -n EDEV 1 N",
+			want: "sar -n EDEV 1 3",
 		},
 		{
 			name: "network errors fall back to the kernel log without sar",
@@ -719,7 +719,7 @@ func TestSuggestNextCommandsCoversOtherResources(t *testing.T) {
 			dim:  "Utilization",
 			caps: nil,
 			si:   SystemInfo{HasSar: true},
-			want: "sar -n DEV 1 N",
+			want: "sar -n DEV 1 3",
 		},
 	}
 	for _, tc := range cases {

@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
@@ -232,6 +233,120 @@ func TestCommandReferenceHidesJournalctlWhenUnavailable(t *testing.T) {
 	})
 	if !strings.Contains(withJournal, "journalctl -k -b") {
 		t.Fatalf("expected journalctl command when available:\n%s", withJournal)
+	}
+}
+
+func TestCommandReferenceShowsCPUPSIOnlyWhenAvailable(t *testing.T) {
+	const command = "cat /proc/pressure/cpu"
+	withoutPSI := captureStdout(func() {
+		printCommands(cpuInvestigation, SystemInfo{})
+	})
+	if strings.Contains(withoutPSI, command) {
+		t.Fatalf("CPU PSI command listed when unavailable:\n%s", withoutPSI)
+	}
+
+	withPSI := captureStdout(func() {
+		printCommands(cpuInvestigation, SystemInfo{HasPSI: true})
+	})
+	if !strings.Contains(withPSI, command) {
+		t.Fatalf("CPU PSI command missing when available:\n%s", withPSI)
+	}
+}
+
+func TestCommandReferencesHideUnavailableCommands(t *testing.T) {
+	binDir := t.TempDir()
+	t.Setenv("PATH", binDir)
+	addCommand := func(name string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	listed := func(inv *Investigation, si SystemInfo, command string) bool {
+		t.Helper()
+		out := captureStdout(func() { printCommands(inv, si) })
+		return strings.Contains(out, "  "+command+"\n")
+	}
+
+	addCommand("cat")
+	for _, tc := range []struct {
+		inv     *Investigation
+		si      SystemInfo
+		command string
+	}{
+		{memoryInvestigation, SystemInfo{HasMemoryPSI: true}, "cat /proc/pressure/memory"},
+		{diskInvestigation, SystemInfo{HasIOPSI: true}, "cat /proc/pressure/io"},
+	} {
+		if listed(tc.inv, SystemInfo{}, tc.command) {
+			t.Errorf("%s listed %q without PSI", tc.inv.Name, tc.command)
+		}
+		if !listed(tc.inv, tc.si, tc.command) {
+			t.Errorf("%s omitted %q with PSI", tc.inv.Name, tc.command)
+		}
+	}
+
+	if listed(networkInvestigation, SystemInfo{HasSar: true}, "sar -n DEV 1 3") {
+		t.Fatal("network listed sar when its executable is missing")
+	}
+	addCommand("sar")
+	if !listed(networkInvestigation, SystemInfo{HasSar: true}, "sar -n DEV 1 3") {
+		t.Fatal("network omitted sar when available")
+	}
+
+	addCommand("iostat")
+	if listed(diskInvestigation, SystemInfo{}, "iostat -xz 1 3 | grep -vE '^loop'") {
+		t.Fatal("disk listed iostat pipeline without grep")
+	}
+	addCommand("grep")
+	if !listed(diskInvestigation, SystemInfo{}, "iostat -xz 1 3 | grep -vE '^loop'") {
+		t.Fatal("disk omitted iostat pipeline when both tools are available")
+	}
+
+	addCommand("ethtool")
+	if listed(networkInvestigation, SystemInfo{}, "ethtool eth0") ||
+		!listed(networkInvestigation, SystemInfo{HasEth0: true}, "ethtool eth0") {
+		t.Fatal("ethtool reference did not follow eth0 availability")
+	}
+	addCommand("smartctl")
+	if listed(diskInvestigation, SystemInfo{}, "smartctl -a /dev/sda") ||
+		!listed(diskInvestigation, SystemInfo{HasSda: true}, "smartctl -a /dev/sda") {
+		t.Fatal("smartctl reference did not follow /dev/sda availability")
+	}
+	addCommand("sudo")
+	iotopSuggestion := &Investigation{Commands: []CommandRef{{
+		Cmd: "iotop -bn1", Section: "Saturation", Requires: []string{"iotop"}, DiagnoseRank: 1,
+	}}}
+	if listed(diskInvestigation, SystemInfo{}, "sudo iotop -bn1") ||
+		len(suggestNextCommands(iotopSuggestion, "Saturation", nil, SystemInfo{}, 1)) != 0 {
+		t.Fatal("iotop appeared when the tool is missing")
+	}
+	addCommand("iotop")
+	if !listed(diskInvestigation, SystemInfo{}, "iotop -bn1") {
+		t.Fatal("disk omitted runnable iotop")
+	}
+	if got := suggestNextCommands(iotopSuggestion, "Saturation", nil, SystemInfo{}, 1); len(got) != 1 || got[0].Cmd != "iotop -bn1" {
+		t.Fatalf("direct iotop suggestion = %+v", got)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "iotop"), []byte("#!/bin/sh\necho 'Operation not permitted' >&2\nexit 1\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	iotopOutput := captureStdout(func() { printCommands(diskInvestigation, SystemInfo{}) })
+	if !strings.Contains(iotopOutput, "  sudo iotop -bn1\n") ||
+		!strings.Contains(iotopOutput, iotopPermissionNote) ||
+		strings.Contains(iotopOutput, "\n  iotop -bn1\n") {
+		t.Fatalf("disk did not show sudo iotop with its note:\n%s", iotopOutput)
+	}
+	if got := suggestNextCommands(iotopSuggestion, "Saturation", nil, SystemInfo{}, 1); len(got) != 1 || got[0].Cmd != "sudo iotop -bn1" {
+		t.Fatalf("sudo iotop suggestion = %+v", got)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "iotop"), []byte("#!/bin/sh\necho 'unsupported kernel' >&2\nexit 1\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if listed(diskInvestigation, SystemInfo{}, "sudo iotop -bn1") {
+		t.Fatal("disk listed sudo iotop for a failure unrelated to permissions")
+	}
+	if got := suggestNextCommands(iotopSuggestion, "Saturation", nil, SystemInfo{}, 1); len(got) != 0 {
+		t.Fatalf("iotop suggestion should be hidden after an unrelated failure: %+v", got)
 	}
 }
 

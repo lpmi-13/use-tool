@@ -1306,7 +1306,7 @@ var memoryCommands = []CommandRef{
 		Summary: "Top processes by PSS (proportional set size), straight from the kernel.\nShared pages are split across sharers, so these sum correctly unlike RSS.\nRun as root to see all processes; map PIDs to names with `ps -p <pid>`.",
 	},
 	{
-		Cmd:          "vmstat 1 N",
+		Cmd:          "vmstat 1 3",
 		Section:      "Saturation",
 		Summary:      "Watch the `si` and `so` columns. Steady non-zero\nvalues mean the working set is bigger than physical memory.",
 		DiagnoseRank: 1,
@@ -1319,13 +1319,13 @@ var memoryCommands = []CommandRef{
 		DiagnoseRank: 2,
 	},
 	{
-		Cmd:      "sar -B 1 N",
+		Cmd:      "sar -B 1 3",
 		Section:  "Saturation",
 		Summary:  "Paging stats (pgpgin/pgpgout/fault/majflt) over time.\n(sysstat package.)",
 		Requires: []string{"sar"},
 	},
 	{
-		Cmd:      "sar -W 1 N",
+		Cmd:      "sar -W 1 3",
 		Section:  "Saturation",
 		Summary:  "Swap-in/swap-out rate over time. (sysstat package.)",
 		Requires: []string{"sar"},
@@ -1337,11 +1337,10 @@ var memoryCommands = []CommandRef{
 		DiagnoseRank: 1,
 	},
 	{
-		Cmd:                 "sudo journalctl -k -b --no-pager | grep -iE 'killed process|out of memory|oom-killer'",
-		Section:             "Errors",
-		Summary:             "OOM events via journald.\nAlternative to dmesg on systemd systems.",
-		Requires:            []string{"journalctl"},
-		HideWhenUnavailable: true,
-		DiagnoseRank:        2,
+		Cmd:          "sudo journalctl -k -b --no-pager | grep -iE 'killed process|out of memory|oom-killer'",
+		Section:      "Errors",
+		Summary:      "OOM events via journald.\nAlternative to dmesg on systemd systems.",
+		Requires:     []string{"journalctl"},
+		DiagnoseRank: 2,
 	},
 }

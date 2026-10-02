@@ -1212,16 +1212,16 @@ var cpuCommands = []CommandRef{
 		Summary: "Load averages plus per-user session info.\nSimilar info to uptime, with logged-in users.",
 	},
 	{
-		Cmd:          "mpstat -P ALL 1 N",
+		Cmd:          "mpstat -P ALL 1 3",
 		Section:      "Utilization",
-		Summary:      "Per-CPU breakdown (%usr, %sys, %iowait, %idle, ...)\nover N one-second intervals. Tells all-cores-busy\napart from one-core-pegged. (sysstat package.)",
+		Summary:      "Per-CPU breakdown (%usr, %sys, %iowait, %idle, ...)\nover three one-second intervals. Tells all-cores-busy\napart from one-core-pegged. (sysstat package.)",
 		Requires:     []string{"mpstat"},
 		DiagnoseRank: 2,
 	},
 	{
-		Cmd:      "pidstat 1 N",
+		Cmd:      "pidstat 1 3",
 		Section:  "Utilization",
-		Summary:  "Per-process CPU usage over N intervals.\nFinds which process is using time. (sysstat package.)\nNote: shows host PID namespace. Processes inside Docker/containerd\ncontainers appear as their runtime (`runc`, `containerd-shim`) or\nare absent; switch to `docker stats` to see which service.",
+		Summary:  "Per-process CPU usage over three intervals.\nFinds which process is using time. (sysstat package.)\nNote: shows host PID namespace. Processes inside Docker/containerd\ncontainers appear as their runtime (`runc`, `containerd-shim`) or\nare absent; switch to `docker stats` to see which service.",
 		Requires: []string{"pidstat"},
 	},
 	{
@@ -1230,7 +1230,7 @@ var cpuCommands = []CommandRef{
 		Summary: "Top CPU-consuming processes right now.\nNo external dependencies; works everywhere.",
 	},
 	{
-		Cmd:          "vmstat 1 N",
+		Cmd:          "vmstat 1 3",
 		Section:      "Saturation",
 		Summary:      "System-wide stats per second: run-queue (r),\nblocked (b), swap (si/so), I/O (bi/bo),\nand CPU breakdown (us/sy/id/wa/st).",
 		DiagnoseRank: 1,
@@ -1248,9 +1248,9 @@ var cpuCommands = []CommandRef{
 		DiagnoseRank: 2,
 	},
 	{
-		Cmd:      "sar -u 1 N",
+		Cmd:      "sar -u 1 3",
 		Section:  "Saturation",
-		Summary:  "Historical CPU utilization, N samples.\nCan also read archived data with -f. (sysstat package.)",
+		Summary:  "Historical CPU utilization, three samples.\nCan also read archived data with -f. (sysstat package.)",
 		Requires: []string{"sar"},
 	},
 	{
@@ -1260,12 +1260,11 @@ var cpuCommands = []CommandRef{
 		DiagnoseRank: 1,
 	},
 	{
-		Cmd:                 "sudo journalctl -k -b -p warning --no-pager -n 30",
-		Section:             "Errors",
-		Summary:             "Recent kernel-level warnings and errors via journald.\nAlternative to dmesg on systemd systems.",
-		Requires:            []string{"journalctl"},
-		HideWhenUnavailable: true,
-		DiagnoseRank:        2,
+		Cmd:          "sudo journalctl -k -b -p warning --no-pager -n 30",
+		Section:      "Errors",
+		Summary:      "Recent kernel-level warnings and errors via journald.\nAlternative to dmesg on systemd systems.",
+		Requires:     []string{"journalctl"},
+		DiagnoseRank: 2,
 	},
 	{
 		Cmd:      "grep . /sys/devices/system/cpu/*/thermal_throttle/* 2>/dev/null",

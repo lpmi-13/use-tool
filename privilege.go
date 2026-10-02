@@ -83,12 +83,19 @@ func (si SystemInfo) dmesgPermissionLine() string {
 	return "\n" + dmesgPermissionNote
 }
 
-// forSystem returns ref as it should be shown on this host: without a
-// needless `sudo`, and without the note saying sudo is probably needed.
+// forSystem returns ref with the privilege prefix and note appropriate for
+// this host.
 func (ref CommandRef) forSystem(si SystemInfo) CommandRef {
 	ref.Cmd = si.adaptSudo(ref.Cmd)
 	if si.DmesgReadable {
 		ref.Summary = strings.TrimSuffix(ref.Summary, "\n"+dmesgPermissionNote)
+	}
+	if ref.Cmd == "iotop -bn1" && haveCmd("iotop") {
+		_, needsSudo := iotopDirectStatus()
+		if needsSudo && haveCmd("sudo") {
+			ref.Cmd = "sudo iotop -bn1"
+			ref.Summary += "\n" + iotopPermissionNote
+		}
 	}
 	return ref
 }

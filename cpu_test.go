@@ -794,16 +794,10 @@ func TestThermalThrottleCommandGating(t *testing.T) {
 	if !found {
 		t.Fatal("thermal_throttle command not found in cpuCommands")
 	}
-	// The reference always documents it — with a note, never hidden — so the
-	// caveat stays visible in `commands` output even where it won't run.
-	if ref.HideWhenUnavailable {
-		t.Error("thermal_throttle should stay listed (with a note), not be hidden from the reference")
-	}
 	if !strings.Contains(ref.Summary, "bare-metal") {
 		t.Errorf("expected an applicability note in the summary, got %q", ref.Summary)
 	}
-	// Gated: reports unavailable where the sysfs counters are absent (VMs,
-	// containers, ARM), which is what keeps it out of diagnose suggestions.
+	// The command is available only where the sysfs counters are present.
 	if got := commandStatus(ref, SystemInfo{HasThermalThrottle: false}); got == "" {
 		t.Error("expected thermal_throttle to report unavailable when sysfs counters are absent")
 	}

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
+	"os/exec"
 	"regexp"
 	"sort"
 	"strconv"
@@ -140,15 +142,15 @@ func combineVariantQuestions(variants []stepVariant) func(SystemInfo, CapturedCo
 }
 
 type CommandRef struct {
-	Cmd                 string
-	Section             string
-	Summary             string
-	Requires            []string
-	HideWhenUnavailable bool
-	DiagnoseRank        int
+	Cmd          string
+	Section      string
+	Summary      string
+	Requires     []string
+	DiagnoseRank int
 }
 
 const dmesgPermissionNote = "You will probably need sudo: most distros block unprivileged reads of the kernel buffer (kernel.dmesg_restrict=1)."
+const iotopPermissionNote = "This system needs sudo for iotop; reading per-process I/O requires elevated privileges."
 
 func journalctlAlternative(si SystemInfo, cmd string) []string {
 	if !si.HasJournalctl {
@@ -767,28 +769,23 @@ func printCommands(inv *Investigation, si SystemInfo) {
 	tutorln(strings.Repeat("=", 60))
 	bySection := map[string][]CommandRef{}
 	for _, c := range inv.Commands {
+		c = c.forSystem(si)
+		if !referenceCommandAvailable(c, si) {
+			continue
+		}
 		bySection[c.Section] = append(bySection[c.Section], c)
 	}
 	for _, sec := range []string{"Orientation", "Utilization", "Saturation", "Errors"} {
-		cmds, ok := bySection[sec]
-		if !ok {
+		cmds := bySection[sec]
+		if len(cmds) == 0 {
 			continue
 		}
 		fmt.Println()
 		tutorln(bold(sec))
 		tutorln(strings.Repeat("-", len(sec)))
 		for _, c := range cmds {
-			c = c.forSystem(si)
-			status := commandStatus(c, si)
-			if status != "" && c.HideWhenUnavailable {
-				continue
-			}
 			fmt.Println()
-			if status == "" {
-				tutorf("  %s\n", c.Cmd)
-			} else {
-				tutorf("  %s  %s\n", c.Cmd, faint("["+status+"]"))
-			}
+			tutorf("  %s\n", c.Cmd)
 			for _, line := range strings.Split(c.Summary, "\n") {
 				if line == "" {
 					fmt.Println()
@@ -799,6 +796,71 @@ func printCommands(inv *Investigation, si SystemInfo) {
 		}
 	}
 	fmt.Println()
+}
+
+// referenceCommandAvailable checks known prerequisites without running the
+// reference itself (samplers and privileged commands may block or prompt).
+func referenceCommandAvailable(c CommandRef, si SystemInfo) bool {
+	if commandStatus(c, si) != "" {
+		return false
+	}
+	for _, segment := range shellCommandSegments(c.Cmd) {
+		fields := strings.Fields(segment)
+		if len(fields) == 0 {
+			continue
+		}
+		if commandName(fields[0]) == "sudo" && !haveCmd("sudo") {
+			return false
+		}
+		if cmd := commandBase(segment); cmd != "" && !haveCmd(cmd) {
+			return false
+		}
+	}
+	// These examples name a specific device. Hide them when that device is
+	// absent, even if the executable itself is installed.
+	switch c.Cmd {
+	case "ethtool eth0":
+		return si.HasEth0 && referenceProbeSucceeds(2*time.Second, "ethtool", "eth0")
+	case "smartctl -a /dev/sda":
+		return si.HasSda && referenceProbeSucceeds(3*time.Second, "smartctl", "-i", "/dev/sda")
+	case "iotop -bn1":
+		available, _ := iotopDirectStatus()
+		return available
+	case "sudo iotop -bn1":
+		return true
+	}
+	fields := commandFields(c.Cmd)
+	if len(fields) == 2 && fields[0] == "cat" &&
+		strings.HasPrefix(fields[1], "/proc/") &&
+		!strings.HasPrefix(fields[1], "/proc/pressure/") {
+		return fileReadable(fields[1])
+	}
+	return true
+}
+
+func referenceProbeSucceeds(timeout time.Duration, name string, args ...string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return exec.CommandContext(ctx, name, args...).Run() == nil
+}
+
+func iotopDirectStatus() (available, needsSudo bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, "iotop", "-bn1").CombinedOutput()
+	if err == nil {
+		return true, false
+	}
+	if ctx.Err() != nil {
+		return false, false
+	}
+	message := strings.ToLower(string(output))
+	return false, strings.Contains(message, "operation not permitted") ||
+		strings.Contains(message, "permission denied") ||
+		strings.Contains(message, "requires root") ||
+		strings.Contains(message, "must be root") ||
+		strings.Contains(message, "must be run as root") ||
+		strings.Contains(message, "net_admin")
 }
 
 func commandStatus(c CommandRef, si SystemInfo) string {

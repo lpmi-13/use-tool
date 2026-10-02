@@ -207,6 +207,8 @@ type SystemInfo struct {
 	HasMemoryPSI  bool
 	HasIOPSI      bool
 	HasJournalctl bool
+	HasEth0       bool
+	HasSda        bool
 	// DmesgReadable and JournalReadable report whether this user can read
 	// the kernel log without sudo. The zero value keeps `sudo` in
 	// suggestions, which is right on most distros.
@@ -224,10 +226,12 @@ func detectSystem() SystemInfo {
 		HasMpstat:     haveCmd("mpstat"),
 		HasPidstat:    haveCmd("pidstat"),
 		HasSar:        haveCmd("sar"),
-		HasPSI:        fileExists("/proc/pressure/cpu"),
-		HasMemoryPSI:  fileExists("/proc/pressure/memory"),
-		HasIOPSI:      fileExists("/proc/pressure/io"),
+		HasPSI:        fileReadable("/proc/pressure/cpu"),
+		HasMemoryPSI:  fileReadable("/proc/pressure/memory"),
+		HasIOPSI:      fileReadable("/proc/pressure/io"),
 		HasJournalctl: haveCmd("journalctl"),
+		HasEth0:       fileExists("/sys/class/net/eth0"),
+		HasSda:        fileOpenable("/dev/sda"),
 
 		DmesgReadable:      canReadDmesg(),
 		JournalReadable:    canReadKernelJournal(),
@@ -251,6 +255,26 @@ func haveCmd(name string) bool {
 
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
+	return err == nil
+}
+
+func fileOpenable(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	f.Close()
+	return true
+}
+
+func fileReadable(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	var b [1]byte
+	_, err = f.Read(b[:])
 	return err == nil
 }
 
